@@ -1,3 +1,40 @@
+"""
+TIF IO Loader Module
+====================
+
+This module provides two main classes to assist with locating and loading .tif/.tiff images:
+
+Classes:
+--------
+1. TifImage(path: str)
+   - Loads a .tif image from disk.
+   - Attributes:
+       - path: file path to the image
+       - metadata: dictionary of parsed metadata and tags
+       - image_data: image content as a NumPy array
+   - Internal Methods:
+       - _load_image(): handles parsing TIFF structure and populating metadata
+
+2. ImageFinder(path: str)
+   - Takes either a folder or single image path.
+   - If folder: recursively searches for .tif/.tiff images.
+   - If file: loads only that image.
+   - Methods:
+       - _find_tif_files(directory: str) -> List[str]: helper to find tif paths
+       - retrieve_images() -> List[TifImage]: returns list of TifImage instances
+
+Usage Example:
+--------------
+    finder = ImageFinder("/path/to/folder_or_file")
+    images = finder.retrieve_images()
+
+    for img in images:
+        print(img.path)
+        print(img.metadata)
+        print(img.image_data.shape)
+
+"""
+
 import os
 from typing import List, Union
 import numpy as np
