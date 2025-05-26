@@ -1,20 +1,23 @@
-from image_tools import load_image, get_red_channel, apply_clahe, otsu_threshold, morph_cleanup, get_blob_props, draw_blobs, remove_scale_bar
+from image_tools import BlobDetector
 import matplotlib.pyplot as plt
 import cv2
 
 # Load and process
-img = load_image("DemoData/G2-ABX/G2-ABX/G2EL-RFP2 40x-4.tif")
-red = get_red_channel(img)
-clahe = apply_clahe(red)
-# Remove scale bar
-mask = remove_scale_bar(clahe, intensity_threshold=200)
-clahe_masked = cv2.bitwise_and(clahe, clahe, mask=mask)
-# continue
-binary = otsu_threshold(clahe_masked)
-cleaned = morph_cleanup(binary)
-label_img, blobs = get_blob_props(cleaned)
-overlay = draw_blobs(clahe, blobs)
+img = "DemoData/G2-ABX/G2-ABX/G2EL-RFP2 40x-4.tif"
+detector = BlobDetector(img)
 
-# Show results
-plt.imshow(overlay)
-plt.show()
+# Remove bars first
+detector.remove_scale_bar()
+
+# Use the bar-removed image for further processing
+red = detector.get_red_channel()  # Will use detector.raw_image
+enhanced = detector.enhance_contrast(red)
+masked = cv2.bitwise_and(enhanced, enhanced, mask=detector.bar_mask)
+
+binary = detector.otsu_threshold(masked)
+cleaned = detector.morph_cleanup(binary)
+blobs = detector.get_blobs(top_n=5)
+overlay = detector.draw_blobs(base_img=enhanced)
+
+# Save or display overlay
+cv2.imwrite("output_overlay.png", overlay)
