@@ -2,3 +2,6 @@ numpy
 opencv-python
 scikit-image 
 tifffile
+matplotlib
+scipy
+jupyter
