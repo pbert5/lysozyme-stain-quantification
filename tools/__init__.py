@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 
 # third-party
+import tifffile
+import scipy
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import ndimage as ndi
@@ -40,7 +42,7 @@ __all__ = [
     "np", "cv2", "tifffile", "img_as_ubyte",
     "color", "measure", "flood", "watershed",
     "dilation", "square", "label2rgb",
-    "scipy", "ndimage",
+    "scipy", "ndi",
     "filters", "segmentation",
     "np", "plt", "filters", "segmentation"
 ]

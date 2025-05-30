@@ -1,25 +1,5 @@
-from __future__ import annotations
-if __name__ == "__main__":
-    # ─────────────────────────────────── stdlib ────────────────────────────────────
-    import os, gc, json
-    from pathlib import Path
-    from typing import List, Dict, Any
 
-
-    # ─────────────────────────────── third‑party libs ─────────────────────────────
-    import numpy as np
-    import tifffile
-    import matplotlib.pyplot as plt
-    from skimage import  img_as_ubyte
-    from skimage.segmentation import watershed, flood
-    from skimage.morphology import dilation, square
-    from skimage.color import label2rgb
-
-    # ───────────────────────────────── user modules ───────────────────────────────
-    from ImagePrep import image_prep              # noqa: F401
-    from detection_methods import DetectionMethods # noqa: F401
-    from expand import CompetitiveFlooding  # noqa: F401
-
+from tools import *
 class BlobDetector:
     def __init__(self, image_path: str | Path, debug: bool = False):
         self.path = Path(image_path)
