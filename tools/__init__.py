@@ -45,5 +45,5 @@ __all__ = [
     "dilation", "square", "label2rgb",
     "scipy", "ndi",
     "filters", "segmentation",
-    "np", "plt", "filters", "segmentation", "Dict"
+    "np", "plt", "filters", "segmentation", "Dict", "Any", "List", "label2rgb"
 ]
