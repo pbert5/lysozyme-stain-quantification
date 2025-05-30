@@ -55,15 +55,17 @@ class BlobDetector:
         return self
     # ───────────────────────────── summary ──────────────────────────────
     def summary(self) -> Dict[str, Any]:
-        top = [{
-            "label": p.label,
-            "area": int(p.area),
-            "centroid": tuple(map(float, p.centroid)),
-            "bbox": tuple(map(int, p.bbox))
-        } for p in self.flood.top_props(5)]
+        # top_props now returns a dict with both the full expanded_labels
+        # array and the list of top‐N blob dicts under 'props'
+        result = self.flood.top_props(5)
+        props = result["props"]
+        # Optionally include JSON string for easy debugging
+        props_json = json.dumps(props, indent=2)
         return {
             "image_path": str(self.path.resolve()),
-            "top_blobs": top
+            "expanded_labels": result["expanded_labels"],
+            "top_blobs": result["props"],
+            "top_blobs_json": props_json
         }
 
     # ───────────────────────────── saving ───────────────────────────────

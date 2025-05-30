@@ -96,17 +96,37 @@ class CompetitiveFlooding:
                     .apply_swallow())
 
     # ───────────────────────────── output ───────────────────────────────
-    def save_results(self, save_dir: str | Path, save_name: str) -> None:
+    def save_results(self, save_dir: str | Path, save_name: str, save_labels = False) -> None:
         save_dir = Path(save_dir); save_dir.mkdir(parents=True, exist_ok=True)
         comp = np.concatenate([
             self.red_image if self.red_image.ndim == 3 else np.stack([self.red_image]*3, -1),
             self._overlay(self.expanded_labels),
             self._overlay(self.swallowed_labels)], axis=1)
         plt.imsave(str(save_dir / save_name), comp.astype(np.uint8))
+        if save_labels is True:
+            # Also save the full labeled arrays
+            np.save(save_dir / "expanded_labels.npy", self.expanded_labels)
+            np.save(save_dir / "swallowed_labels.npy", self.swallowed_labels)
 
-    def top_props(self, n: int = 5) -> List[measure._regionprops._RegionProperties]:
+    def top_props(self, n: int = 5) -> Dict[str, Any]:
+        """
+        Return top `n` blob properties plus the full expanded_labels array.
+
+        Returns a dict:
+          - 'expanded_labels': 2D label array
+          - 'props': list of dicts with 'label','area','centroid','bbox'
+        """
         if self.swallowed_labels is None:
-            raise RuntimeError("apply_swallow() first")
-        props = measure.regionprops(self.swallowed_labels)
-        return sorted(props, key=lambda r: r.area, reverse=True)[:n]
-        
+            raise RuntimeError("apply_swallow() must be called first")
+        regions = measure.regionprops(self.swallowed_labels)
+        top = sorted(regions, key=lambda r: r.area, reverse=True)[:n]
+        props = [
+            {
+                "label": int(r.label),
+                "area": int(r.area),
+                "centroid": [float(c) for c in r.centroid],
+                "bbox": [int(b) for b in r.bbox]
+            }
+            for r in top
+        ]
+        return {"expanded_labels": self.expanded_labels, "props": props}
