@@ -35,7 +35,7 @@ class DetectionMethods:
             # 5️⃣ Create label overlay
             self.label_overlay = color.label2rgb(self.labeled, image=self.image, bg_label=0)
             return self
-        def show_results(self):
+        def save_results(self, save_path='segmentation_results.png'):
             if self.elevation_map is None:
                 raise RuntimeError("Run detect_blobs() first!")
 
@@ -73,7 +73,7 @@ class DetectionMethods:
             axes[1, 2].axis('off')
 
             fig.tight_layout()
-            plt.show()
+            plt.savefig(save_path)
             
 
         

@@ -7,6 +7,14 @@ import tifffile
 import matplotlib.pyplot as plt
 from tools.ImagePrep import image_prep # Importing the image_prep class from tools.ImagePrep
 from tools.detection_methods import DetectionMethods  # Importing the DetectionMethods class from tools.detection_methods
+from tools.expand import CompetitiveFlooding  # Importing the CompetitiveFlooding class from tools.expand
+
+from skimage import measure
+from skimage.segmentation import flood, watershed
+from skimage.morphology import dilation, square
+from skimage.color import label2rgb
+import os
+
 
 class BlobDetector:
     def __init__(self, image_path):
@@ -17,16 +25,19 @@ class BlobDetector:
         self.binary_mask = None
         self.cleaned_mask = None
         self.blob_props = None
-    def save (self, img=None, title = None):
+    def save (self, img=None, title = None, save_path=None):
         if img is None:
             img = self.current_image
         plt.axis('off')
         plt.imshow(img, cmap='gray')
-        if title is not None:
-            plt.title(title)
-            plt.savefig(f"lysozyme-stain-quantification/results/{title}_result.png")
+        if save_path is None:
+            if title is not None:
+                plt.title(title)
+                plt.savefig(f"lysozyme-stain-quantification/results/{title}_result.png")
+            else:
+                plt.savefig(f"lysozyme-stain-quantification/results/result.png")
         else:
-            plt.savefig(f"lysozyme-stain-quantification/results/result.png")
+            plt.savefig(save_path)
         
         
     def display(self, img=None):
@@ -43,13 +54,18 @@ class BlobDetector:
         self.red_image = image_prep.select_image_channels.red(self.current_image)
         self.red_chr_image_enhanced = image_prep.enhance_contrast.enhance_nonblack(self.red_chr_image)
         self.red_image_enhanced = image_prep.enhance_contrast.CLAHE(self.red_image)
-        water_detector = DetectionMethods.region_based_segmentation(self.red_image, low_thresh=30, high_thresh=150)
-        water_detector.detect_blobs()
+        self.chr_binary_mask = image_prep.masker(self.red_chr_image_enhanced).otsu().morph_cleanup().cleaned_mask
+        self.water_detector = DetectionMethods.region_based_segmentation(self.red_image, low_thresh=30, high_thresh=150)
+        self.water_detector.detect_blobs()
+        self.flood = CompetitiveFlooding(tight_labels=self.water_detector.labeled, loose_mask = self.chr_binary_mask, red_image = self.red_image, debug=True).run()
         
 if __name__ == "__main__":
     # Example usage
     image_path = "lysozyme-stain-quantification/DevNotebooks/G2EB-RFP 40x-4.tif"
     detector = BlobDetector(image_path)
     detector.detectTheBlobs()
-    detector.save(detector.red_image_enhanced)
+    detector.save(detector.red_image_enhanced, title="Red Image Enhanced", save_path="lysozyme-stain-quantification/results/Red Image Enhanced_result.png")
+    detector.water_detector.save_results(save_path="lysozyme-stain-quantification/results/segmentation_results.png")
+    
+    
  
