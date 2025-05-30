@@ -1,0 +1,5 @@
+results/result.png
+RemoteViewableDemoOfConsolidatedCode.ipynb
+DevNotebooks/results/
+*.pyc
+results/*

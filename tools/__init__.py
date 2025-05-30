@@ -1,0 +1,46 @@
+# my_pkg/__init__.py
+
+from __future__ import annotations
+
+# stdlib
+import os
+import gc
+import json
+from pathlib import Path
+
+# third-party
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import ndimage as ndi
+import cv2
+from skimage import (
+    filters,
+    segmentation,
+    color,
+    measure,
+    img_as_ubyte,
+)
+from skimage.segmentation import flood, watershed
+from skimage.morphology   import dilation, square
+from skimage.color        import label2rgb
+
+# expose your submodules and classes
+from .detection_methods import DetectionMethods
+from .ImagePrep          import image_prep
+from .expand             import CompetitiveFlooding
+from .blobdetector       import BlobDetector
+
+__all__ = [
+    "DetectionMethods",
+    "image_prep",
+    "CompetitiveFlooding",
+    "BlobDetector",
+    # if you want to export deps too:
+    "os", "gc", "json", "Path",
+    "np", "cv2", "tifffile", "img_as_ubyte",
+    "color", "measure", "flood", "watershed",
+    "dilation", "square", "label2rgb",
+    "scipy", "ndimage",
+    "filters", "segmentation",
+    "np", "plt", "filters", "segmentation"
+]
