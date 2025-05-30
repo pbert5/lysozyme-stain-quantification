@@ -7,6 +7,7 @@ import os
 import gc
 import json
 from pathlib import Path
+from typing import List, Dict, Any
 
 # third-party
 import tifffile
@@ -44,5 +45,5 @@ __all__ = [
     "dilation", "square", "label2rgb",
     "scipy", "ndi",
     "filters", "segmentation",
-    "np", "plt", "filters", "segmentation"
+    "np", "plt", "filters", "segmentation", "Dict"
 ]
