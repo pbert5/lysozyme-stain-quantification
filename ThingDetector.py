@@ -1,76 +1,124 @@
-# import packages
+"""
+Competitive Flooding + Blob Detection bulk-processing toolkit.
+
+This file now contains:
+• CompetitiveFlooding  - fast, fluent pipeline (unchanged speed)
+• BlobDetector         - wraps prep → segmentation → flooding
+• BulkBlobProcessor    - iterate over many images, save outputs and
+                          return summary dicts while freeing memory.
+"""
+from __future__ import annotations
+
+# ─────────────────────────────────── stdlib ────────────────────────────────────
+import os, gc, json
+from pathlib import Path
+from typing import List, Dict, Any
+
+# ─────────────────────────────── third‑party libs ─────────────────────────────
 import numpy as np
 import cv2
-from skimage.measure import label, regionprops
-from skimage import img_as_ubyte
 import tifffile
 import matplotlib.pyplot as plt
-from tools.ImagePrep import image_prep # Importing the image_prep class from tools.ImagePrep
-from tools.detection_methods import DetectionMethods  # Importing the DetectionMethods class from tools.detection_methods
-from tools.expand import CompetitiveFlooding  # Importing the CompetitiveFlooding class from tools.expand
-
-from skimage import measure
-from skimage.segmentation import flood, watershed
+from skimage import measure, img_as_ubyte
+from skimage.segmentation import watershed, flood
 from skimage.morphology import dilation, square
 from skimage.color import label2rgb
-import os
 
+# ───────────────────────────────── user modules ───────────────────────────────
+from tools.ImagePrep import image_prep              # noqa: F401
+from tools.detection_methods import DetectionMethods # noqa: F401
+from tools.expand import CompetitiveFlooding  # noqa: F401
 
+# ═══════════════════════════════════ BlobDetector ═════════════════════════════
 class BlobDetector:
-    def __init__(self, image_path,debug=False):
+    def __init__(self, image_path: str | Path, debug: bool = False):
+        self.path = Path(image_path)
         self.debug = debug
-        self.image_path = image_path
-        self.raw_image = tifffile.imread(image_path)
+        self.raw_image: np.ndarray = tifffile.imread(str(self.path))
+        # populated in detect()
+        self.red_image: np.ndarray | None = None
+        self.flood: CompetitiveFlooding | None = None
         
-        self.bar_mask = None
-        self.binary_mask = None
-        self.cleaned_mask = None
-        self.blob_props = None
-    def save (self, img=None, title = None, save_path=None):
-        if img is None:
-            img = self.current_image
-        plt.axis('off')
-        plt.imshow(img, cmap='gray')
-        if save_path is None:
-            if title is not None:
-                plt.title(title)
-                plt.savefig(f"lysozyme-stain-quantification/results/{title}_result.png")
-            else:
-                plt.savefig(f"lysozyme-stain-quantification/results/result.png")
-        else:
-            plt.savefig(save_path)
-        
-        
-    def display(self, img=None):
-        if img is None:
-            img = self.current_image
-        plt.imshow(img, cmap='gray')
-        plt.axis('off')
-        plt.show()
-    def detectTheBlobs(self):
-        self.current_image = self.raw_image.copy()
-        self.current_image = image_prep.inconvenient_object_remover(self.current_image).remove_scale_bar()
-        
-        self.red_chr_image = image_prep.select_image_channels.red_chromaticity(self.current_image)
-        self.red_image = image_prep.select_image_channels.red(self.current_image)
-        self.red_chr_image_enhanced = image_prep.enhance_contrast.enhance_nonblack(self.red_chr_image)
-        self.red_image_enhanced = image_prep.enhance_contrast.CLAHE(self.red_image)
-        self.chr_binary_mask = image_prep.masker(self.red_chr_image_enhanced).otsu().morph_cleanup().cleaned_mask
-        self.water_detector = DetectionMethods.region_based_segmentation(self.red_image, low_thresh=30, high_thresh=150)
-        self.water_detector.detect_blobs()
-        self.flood = CompetitiveFlooding(tight_labels=self.water_detector.labeled, loose_mask = self.chr_binary_mask, red_image = self.red_image, debug=self.debug).run()
-        
+    def detect(self) -> "BlobDetector":
+        cleaned = image_prep.inconvenient_object_remover(self.raw_image.copy()).remove_scale_bar()
+        self.red_image = image_prep.select_image_channels.red(cleaned)
+        red_chr = image_prep.select_image_channels.red_chromaticity(cleaned)
+        red_chr_enh = image_prep.enhance_contrast.enhance_nonblack(red_chr)
+        bin_mask = image_prep.masker(red_chr_enh).otsu().morph_cleanup().cleaned_mask
+
+        # tight blob segmentation
+        water = DetectionMethods.region_based_segmentation(self.red_image, low_thresh=30, high_thresh=150)
+        water.detect_blobs()
+
+        # competitive flooding
+        self.flood = CompetitiveFlooding(water.labeled, bin_mask, self.red_image, debug=self.debug).run()
+        return self
+    # ───────────────────────────── summary ──────────────────────────────
+    def summary(self) -> Dict[str, Any]:
+        top = [{
+            "label": p.label,
+            "area": int(p.area),
+            "centroid": tuple(map(float, p.centroid)),
+            "bbox": tuple(map(int, p.bbox))
+        } for p in self.flood.top_props(5)]
+        return {
+            "image_path": str(self.path.resolve()),
+            "top_blobs": top
+        }
+
+    # ───────────────────────────── saving ───────────────────────────────
+    def save_outputs(self, out_dir: str | Path) -> None:
+        out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(out_dir / f"{self.path.stem}_red.png"), img_as_ubyte(self.red_image))
+        self.flood.save_results(out_dir, f"{self.path.stem}_cf.png")
+
+    # ─────────────────────────── memory free ────────────────────────────
+    def dispose(self):
+        del self.raw_image, self.red_image, self.flood
+        gc.collect()
+
+# ═══════════════════════════════ BulkBlobProcessor ════════════════════════════
+class BulkBlobProcessor:
+    """Process a list of images, save outputs, and write a master summary JSON."""
+
+    def __init__(self, img_paths: List[str | Path], out_root: str | Path = "results", debug: bool = False):
+        self.paths = [Path(p) for p in img_paths]
+        self.out_root = Path(out_root)
+        self.debug = debug
+        self.summaries: List[Dict[str, Any]] = []
+        self.out_root.mkdir(parents=True, exist_ok=True)
+
+    def process_all(self) -> List[Dict[str, Any]]:
+        for p in self.paths:
+            detector = BlobDetector(p, debug=self.debug).detect()
+            detector.save_outputs(self.out_root)
+            summary = detector.summary()
+            # add file paths to summary
+            summary["red_channel_file"] = str((self.out_root / f"{p.stem}_red.png").resolve())
+            summary["competitive_flooding_file"] = str((self.out_root / f"{p.stem}_cf.png").resolve())
+            self.summaries.append(summary)
+            detector.dispose()
+            if self.debug:
+                print(f"Processed {p.name} ({len(summary['top_blobs'])} blobs)")
+        # master JSON
+        with open(self.out_root / "summary.json", "w") as fh:
+            json.dump(self.summaries, fh, indent=2)
+        return self.summaries
+    
 if __name__ == "__main__":
-    # Example usage
-    image_path = "lysozyme-stain-quantification/DevNotebooks/G2EB-RFP 40x-4.tif"
-    save_path = "lysozyme-stain-quantification/results/"
-    detector = BlobDetector(image_path)
-    detector.detectTheBlobs()
-    detector.save(detector.red_image_enhanced, title="Red Image Enhanced", save_path=f"{save_path}Red Image Enhanced_result.png")
-    detector.water_detector.save_results(save_path=f"{save_path}segmentation_results.png")
-    detector.flood.save_results(save_dir=f"{save_path}")
+    #from tools.expand import BulkBlobProcessor
+    import glob
+
+    imgs = glob.glob("lysozyme-stain-quantification/DevNotebooks/*.tif")
+
+    summaries = BulkBlobProcessor(
+        img_paths=imgs,
+        out_root="lysozyme-stain-quantification/results",
+        debug=True           # prints progress
+    ).process_all()
+
+    print("Master summary JSON:", summaries[0].keys())
     
     
 
- 
  
