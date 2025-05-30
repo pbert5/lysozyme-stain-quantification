@@ -42,8 +42,9 @@ class CompetitiveFlooding:
     # ------------------------------------------------------------------
     # AIO
     # ------------------------------------------------------------------
-    def run(self, save_dir="results"):
-        self.compute_loose_boundaries().run_watershed().compute_adjacency(size_factor=20).plan_swallow().apply_swallow().visualize(save_dir)
+    def run(self):
+        self.compute_loose_boundaries().run_watershed().compute_adjacency(size_factor=20).plan_swallow().apply_swallow()
+        return self
     
     # ------------------------------------------------------------------
     # Public pipeline steps (each returns self for chaining)
@@ -133,7 +134,7 @@ class CompetitiveFlooding:
                   f"into {list(self.swallow_plan.values())}")
         return self
 
-    def visualize(self, save_dir= None,
+    def save_results(self, save_dir= None,
                   save_name = "competitive_flooding.png"):
         """Show and optionally save a three‑panel summary figure.
 
