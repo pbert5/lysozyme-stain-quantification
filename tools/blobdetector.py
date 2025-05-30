@@ -1,4 +1,4 @@
-
+from __future__ import annotations
 from tools import *
 class BlobDetector:
     def __init__(self, image_path: str | Path, debug: bool = False):
