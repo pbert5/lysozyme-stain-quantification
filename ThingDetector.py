@@ -109,7 +109,7 @@ if __name__ == "__main__":
     #from tools.expand import BulkBlobProcessor
     import glob
 
-    imgs = glob.glob("lysozyme-stain-quantification/DevNotebooks/*.tif")
+    imgs = glob.glob("*/DevNotebooks/*.tif")
 
     summaries = BulkBlobProcessor(
         img_paths=imgs,
