@@ -6,7 +6,7 @@ from skimage.color import label2rgb
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-import cv2
+import matplotlib.pyplot as plt
 
 # ─────────────────────────────────── stdlib ────────────────────────────────────
 import os, gc, json
@@ -102,7 +102,7 @@ class CompetitiveFlooding:
             self.red_image if self.red_image.ndim == 3 else np.stack([self.red_image]*3, -1),
             self._overlay(self.expanded_labels),
             self._overlay(self.swallowed_labels)], axis=1)
-        cv2.imwrite(str(save_dir / save_name), cv2.cvtColor(comp, cv2.COLOR_RGB2BGR))
+        plt.imsave(str(save_dir / save_name), comp.astype(np.uint8))
 
     def top_props(self, n: int = 5) -> List[measure._regionprops._RegionProperties]:
         if self.swallowed_labels is None:

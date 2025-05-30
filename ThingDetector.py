@@ -69,8 +69,14 @@ class BlobDetector:
     # ───────────────────────────── saving ───────────────────────────────
     def save_outputs(self, out_dir: str | Path) -> None:
         out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(out_dir / f"{self.path.stem}_red.png"), img_as_ubyte(self.red_image))
-        self.flood.save_results(out_dir, f"{self.path.stem}_cf.png")
+        plt.imsave(out_dir / f"{self.path.stem}_red.png", self.red_image, cmap="gray")
+
+        comp = np.concatenate([
+            self.red_image if self.red_image.ndim == 3 else np.stack([self.red_image]*3, -1),
+            self.flood._overlay(self.flood.expanded_labels),
+            self.flood._overlay(self.flood.swallowed_labels)], axis=1)
+
+        plt.imsave(out_dir / f"{self.path.stem}_cf.png", comp.astype(np.uint8))
 
     # ─────────────────────────── memory free ────────────────────────────
     def dispose(self):
