@@ -97,21 +97,44 @@ class BulkBlobProcessor:
         self.out_root.mkdir(parents=True, exist_ok=True)
 
     def process_all(self) -> List[Dict[str, Any]]:
+        """
+        Iterate over images, saving outputs, collecting full blob data for next step,
+        and writing a debug summary JSON containing only the top blob props for each image.
+        Returns a list of dicts: each with 'image_path', 'expanded_labels' array, and 'props' list.
+        """
+        full_results: List[Dict[str, Any]] = []
+        debug_props_list: List[List[Dict[str, Any]]] = []
+
         for p in self.paths:
+            # 1) Run detection
             detector = BlobDetector(p, debug=self.debug).detect()
             detector.save_outputs(self.out_root)
-            summary = detector.summary()
-            # add file paths to summary
-            summary["red_channel_file"] = str((self.out_root / f"{p.stem}_red.png").resolve())
-            summary["competitive_flooding_file"] = str((self.out_root / f"{p.stem}_cf.png").resolve())
-            self.summaries.append(summary)
+
+            # 2) Extract top props & expanded_labels
+            top_dict = detector.flood.top_props(5)
+            props = top_dict["props"]
+            labels = top_dict["expanded_labels"]
+
+            # 3) Store full result for downstream processing
+            full_results.append({
+                "image_path": str(p.resolve()),
+                "expanded_labels": labels,
+                "props": props
+            })
+
+            # 4) Collect props-only for debug JSON
+            debug_props_list.append(props)
+
+            # 5) Clean up memory
             detector.dispose()
             if self.debug:
-                print(f"Processed {p.name} ({len(summary['top_blobs'])} blobs)")
-        # master JSON
+                print(f"Processed {p.name}: {len(props)} top blobs")
+
+        # Write debug summary JSON (props only)
         with open(self.out_root / "summary.json", "w") as fh:
-            json.dump(self.summaries, fh, indent=2)
-        return self.summaries
+            json.dump(debug_props_list, fh, indent=2)
+
+        return full_results
     
 if __name__ == "__main__":
     #from tools.expand import BulkBlobProcessor
