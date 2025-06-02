@@ -16,6 +16,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import ndimage as ndi
 import cv2
+import json
+from shapely import geometry
 from skimage import (
     filters,
     segmentation,
@@ -33,6 +35,7 @@ from .ImagePrep          import image_prep
 from .expand             import CompetitiveFlooding
 from .blobdetector       import BlobDetector
 
+
 __all__ = [
     "DetectionMethods",
     "image_prep",
@@ -45,5 +48,5 @@ __all__ = [
     "dilation", "square", "label2rgb",
     "scipy", "ndi",
     "filters", "segmentation",
-    "np", "plt", "filters", "segmentation", "Dict", "Any", "List", "label2rgb"
+    "np", "plt", "filters", "segmentation", "Dict", "Any", "List", "label2rgb", "geometry", "json"
 ]

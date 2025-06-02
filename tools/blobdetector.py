@@ -1,5 +1,57 @@
 from __future__ import annotations
 from tools import *
+
+def labels_to_geojson(label_array, output_path, pixel_size=1.0, origin=(0, 0), label_prefix="ROI"):
+    """
+    Converts a labeled numpy array into a GeoJSON file compatible with QuPath.
+
+    Args:
+        label_array (np.ndarray): Labeled array where each integer >0 is a separate ROI.
+        output_path (str): Path to save the GeoJSON file.
+        pixel_size (float): Pixel scaling factor (default=1.0 for 1:1 mapping).
+        origin (tuple): (x0, y0) origin offset in real-world units.
+        label_prefix (str): Prefix for label names.
+
+    Returns:
+        None
+    """
+    features = []
+    for label in np.unique(label_array):
+        if label == 0:
+            continue  # Skip background
+
+        mask = (label_array == label).astype(np.uint8)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for contour in contours:
+            contour = contour.squeeze().astype(float)
+            if contour.ndim != 2:
+                continue  # Skip invalid contours
+
+            # Scale and translate coordinates
+            contour[:, 0] = contour[:, 0] * pixel_size + origin[0]
+            contour[:, 1] = contour[:, 1] * pixel_size + origin[1]
+
+            poly = geometry.Polygon(contour)
+            if not poly.is_valid:
+                poly = poly.buffer(0)  # Fix self-intersections
+
+            features.append({
+                "type": "Feature",
+                "properties": {"name": f"{label_prefix}_{label}"},
+                "geometry": geometry.mapping(poly)
+            })
+
+    geojson = {"type": "FeatureCollection", "features": features}
+
+    with open(output_path, "w") as f:
+        json.dump(geojson, f, indent=2)
+
+    print(f"[QuPath Exporter] Saved {len(features)} ROIs to {output_path}")
+
+
+
+
 class BlobDetector:
     def __init__(self, image_path: str | Path, debug: bool = False):
         self.path = Path(image_path)
@@ -67,6 +119,22 @@ class BlobDetector:
                 self.flood._overlay(self.flood.swallowed_labels)], axis=1)
 
         plt.imsave(out_dir / f"{self.path.stem}_cf.png", comp.astype(np.uint8))
+        
+    def export_rois_to_qupath(self, output_geojson=None):
+        results_dir = Path("lysozyme-stain-quantification/results/ROIs")
+        results_dir.mkdir(parents=True, exist_ok=True)
+        if output_geojson is None:
+            # Create a new output filename based on the original image name
+            output_filename = Path(self.path).stem + "_rois.geojson"
+            output_geojson = results_dir / output_filename
+
+        labels_to_geojson(
+            self.flood.swallowed_labels
+,
+            output_path=output_geojson,
+            pixel_size=1.0,  # Adjust if your image has a physical pixel size
+            origin=(0, 0)
+        )
 
     # ─────────────────────────── memory free ────────────────────────────
     def dispose(self):

@@ -13,6 +13,7 @@ from __future__ import annotations
 # import os, gc, json
 from pathlib import Path
 from typing import List, Dict, Any
+from tools.qupath_exporter import labels_to_geojson
 
 # # ─────────────────────────────── third‑party libs ─────────────────────────────
 # import numpy as np
@@ -34,6 +35,8 @@ from tools import *
 
 
 # ═══════════════════════════════ BulkBlobProcessor ════════════════════════════
+
+    
 class BulkBlobProcessor:
     """Process a list of images, save outputs, and write a master summary JSON."""
 
@@ -57,6 +60,7 @@ class BulkBlobProcessor:
             # 1) Run detection
             detector = BlobDetector(p, debug=self.debug).detect()
             detector.save_outputs(self.out_root, )
+            detector.export_rois_to_qupath()
 
             # 2) Extract top props & expanded_labels
             top_dict = detector.flood.top_props(5)
