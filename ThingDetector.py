@@ -56,7 +56,7 @@ class BulkBlobProcessor:
         for p in self.paths:
             # 1) Run detection
             detector = BlobDetector(p, debug=self.debug).detect()
-            detector.save_outputs(self.out_root)
+            detector.save_outputs(self.out_root, )
 
             # 2) Extract top props & expanded_labels
             top_dict = detector.flood.top_props(5)

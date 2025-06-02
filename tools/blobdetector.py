@@ -55,14 +55,16 @@ class BlobDetector:
         }
 
     # ───────────────────────────── saving ───────────────────────────────
-    def save_outputs(self, out_dir: str | Path) -> None:
+    def save_outputs(self, out_dir: str | Path, simple = False) -> None:
         out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
         #plt.imsave(out_dir / f"{self.path.stem}_red.png", self.red_image, cmap="gray")
-
-        comp = np.concatenate([
-            self.red_image if self.red_image.ndim == 3 else np.stack([self.red_image]*3, -1),
-            self.flood._overlay(self.flood.expanded_labels),
-            self.flood._overlay(self.flood.swallowed_labels)], axis=1)
+        if simple:
+            comp = self.flood.swallowed_labels
+        else:
+            comp = np.concatenate([
+                self.red_image if self.red_image.ndim == 3 else np.stack([self.red_image]*3, -1),
+                self.flood._overlay(self.flood.expanded_labels),
+                self.flood._overlay(self.flood.swallowed_labels)], axis=1)
 
         plt.imsave(out_dir / f"{self.path.stem}_cf.png", comp.astype(np.uint8))
 
