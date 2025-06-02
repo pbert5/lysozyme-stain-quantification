@@ -13,7 +13,7 @@ from __future__ import annotations
 # import os, gc, json
 from pathlib import Path
 from typing import List, Dict, Any
-from tools.qupath_exporter import labels_to_geojson
+
 
 # # ─────────────────────────────── third‑party libs ─────────────────────────────
 # import numpy as np
