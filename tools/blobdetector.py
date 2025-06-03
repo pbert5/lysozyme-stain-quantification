@@ -125,7 +125,7 @@ class BlobDetector:
 
         plt.imsave(out_dir / f"{self.path.stem}_cf.png", comp.astype(np.uint8))
         
-    def export_rois_to_qupath(self, output_geojson=None):
+    def export_rois_to_qupath(self, output_geojson=None, expand_by=0.0):
         results_dir = Path("lysozyme-stain-quantification/results/ROIs")
         results_dir.mkdir(parents=True, exist_ok=True)
         if output_geojson is None:
@@ -139,7 +139,7 @@ class BlobDetector:
             output_path=output_geojson,
             pixel_size=1.0,  # Adjust if your image has a physical pixel size
             origin=(0, 0),
-            expand_by=2
+            expand_by=expand_by
         )
 
     # ─────────────────────────── memory free ────────────────────────────
