@@ -88,11 +88,11 @@ class BulkBlobProcessor:
 
         return full_results
     
-if __name__ == "__main__":
+"""if __name__ == "__main__":
     #from tools.expand import BulkBlobProcessor
     import glob
 
-    imgs = glob.glob("DemoData/ClearedForProcessing/*.tif")
+    imgs = glob.glob("QupathProj-Stt4 Lysozyme stain quantification/Stt4 Lysozyme stain quantification/*/*.tif")
 
     summaries = BulkBlobProcessor(
         img_paths=imgs,
@@ -100,7 +100,7 @@ if __name__ == "__main__":
         debug=True           # prints progress
     ).process_all()
 
-    print("Master summary JSON:", summaries[0].keys())
+    print("Master summary JSON:", summaries[0].keys())"""
     
     
 
