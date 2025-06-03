@@ -1,7 +1,7 @@
 from __future__ import annotations
 from skimage import measure
 from skimage.segmentation import flood, watershed
-from skimage.morphology import dilation, square
+from skimage.morphology import dilation, footprint_rectangle
 from skimage.color import label2rgb
 import numpy as np
 import matplotlib.pyplot as plt
@@ -62,7 +62,7 @@ class CompetitiveFlooding:
                 continue
             area_lbl = self.original_areas.get(lbl, 0)
             mask = self.expanded_labels == lbl
-            dil = dilation(mask, square(3))
+            dil = dilation(mask, footprint_rectangle(3))
             neigh = [n for n in np.unique(self.expanded_labels[dil]) if n not in (0, lbl)]
             for n in neigh:
                 if self.original_areas.get(n, 0) >= area_lbl * size_factor:

@@ -26,7 +26,7 @@ from skimage import (
     img_as_ubyte,
 )
 from skimage.segmentation import flood, watershed
-from skimage.morphology   import dilation, square
+from skimage.morphology   import dilation, footprint_rectangle
 from skimage.color        import label2rgb
 
 # expose your submodules and classes
@@ -45,7 +45,7 @@ __all__ = [
     "os", "gc", "json", "Path",
     "np", "cv2", "tifffile", "img_as_ubyte",
     "color", "measure", "flood", "watershed",
-    "dilation", "square", "label2rgb",
+    "dilation", "footprint_rectangle", "label2rgb",
     "scipy", "ndi",
     "filters", "segmentation",
     "np", "plt", "filters", "segmentation", "Dict", "Any", "List", "label2rgb", "geometry", "json"
