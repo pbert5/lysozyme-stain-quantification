@@ -40,12 +40,14 @@ from tools import *
 class BulkBlobProcessor:
     """Process a list of images, save outputs, and write a master summary JSON."""
 
-    def __init__(self, img_paths: List[str | Path], out_root: str | Path = "results", debug: bool = False):
+    def __init__(self, img_paths: List[str | Path], out_root: str | Path = "results", results_dir: str | Path = None, ROI_expand_by: int=0.0, debug: bool = False):
         self.paths = [Path(p) for p in img_paths]
         self.out_root = Path(out_root)
         self.debug = debug
         self.summaries: List[Dict[str, Any]] = []
         self.out_root.mkdir(parents=True, exist_ok=True)
+        self.results_dir = Path(results_dir) if results_dir else None
+        self.ROI_expand_by = ROI_expand_by
 
     def process_all(self) -> List[Dict[str, Any]]:
         """
@@ -60,7 +62,7 @@ class BulkBlobProcessor:
             # 1) Run detection
             detector = BlobDetector(p, debug=self.debug).detect()
             detector.save_outputs(self.out_root, )
-            detector.export_rois_to_qupath()
+            detector.export_rois_to_qupath(results_dir=self.results_dir, expand_by=self.ROI_expand_by)
 
             # 2) Extract top props & expanded_labels
             top_dict = detector.flood.top_props(5)

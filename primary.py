@@ -15,7 +15,9 @@ if __name__ == "__main__":
 
     summaries = BulkBlobProcessor(
         img_paths=imgs,
-        out_root="lysozyme-stain-quantification/results",
+        out_root="code/results",
+        results_dir="QupathProj-Stt4 Lysozyme stain quantification/GeoJSON",
+        ROI_expand_by=1.0,  # Expand ROIs by 5 microns
         debug=True           # prints progress
     ).process_all()
 

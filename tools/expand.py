@@ -62,7 +62,7 @@ class CompetitiveFlooding:
                 continue
             area_lbl = self.original_areas.get(lbl, 0)
             mask = self.expanded_labels == lbl
-            dil = dilation(mask, footprint_rectangle(3))
+            dil = dilation(mask, footprint_rectangle((3,3)))
             neigh = [n for n in np.unique(self.expanded_labels[dil]) if n not in (0, lbl)]
             for n in neigh:
                 if self.original_areas.get(n, 0) >= area_lbl * size_factor:
