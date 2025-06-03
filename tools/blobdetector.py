@@ -1,9 +1,10 @@
 from __future__ import annotations
 from tools import *
 
-def labels_to_geojson(label_array, output_path, pixel_size=1.0, origin=(0, 0), label_prefix="ROI"):
+def labels_to_geojson(label_array, output_path, pixel_size=1.0, origin=(0, 0), label_prefix="ROI", expand_by=0.0):
     """
-    Converts a labeled numpy array into a GeoJSON file compatible with QuPath.
+    Converts a labeled numpy array into a GeoJSON file compatible with QuPath,
+    with optional expansion of ROI borders.
 
     Args:
         label_array (np.ndarray): Labeled array where each integer >0 is a separate ROI.
@@ -11,6 +12,7 @@ def labels_to_geojson(label_array, output_path, pixel_size=1.0, origin=(0, 0), l
         pixel_size (float): Pixel scaling factor (default=1.0 for 1:1 mapping).
         origin (tuple): (x0, y0) origin offset in real-world units.
         label_prefix (str): Prefix for label names.
+        expand_by (float): Amount to expand each ROI outward (in same units as pixel_size).
 
     Returns:
         None
@@ -35,6 +37,9 @@ def labels_to_geojson(label_array, output_path, pixel_size=1.0, origin=(0, 0), l
             poly = geometry.Polygon(contour)
             if not poly.is_valid:
                 poly = poly.buffer(0)  # Fix self-intersections
+
+            if expand_by > 0.0:
+                poly = poly.buffer(expand_by)
 
             features.append({
                 "type": "Feature",
@@ -133,7 +138,8 @@ class BlobDetector:
 ,
             output_path=output_geojson,
             pixel_size=1.0,  # Adjust if your image has a physical pixel size
-            origin=(0, 0)
+            origin=(0, 0),
+            expand_by=2
         )
 
     # ─────────────────────────── memory free ────────────────────────────
