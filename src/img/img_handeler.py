@@ -41,17 +41,36 @@ class ImgHandler:
             @staticmethod
             
             def chromaticity(img, channel: int =0, threshold: float = 0.5):
-                ...# Placeholder for chromaticity thresholding logic
-        class gradient:
-            @staticmethod
-            def single_channel(img, channel=0, threshold=0.5):
                 if img.ndim != 3:
-                    raise ValueError("Gradient channel requires an RGB image.")
-                gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-                grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=5)
-                grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=5)
-                magnitude = np.sqrt(grad_x**2 + grad_y**2)
-                return (magnitude > threshold * magnitude.max()).astype(np.uint8) * 255
+                    raise ValueError("Red chromaticity requires an RGB image.")
+                R = img[:, :, 0].astype(float)
+                G = img[:, :, 1].astype(float)
+                B = img[:, :, 2].astype(float)
+        
+                epsilon = 1e-8  # Avoid division by zero
+                sum_rgb = R + G + B + epsilon
+                chroma = img[:, :, channel].astype(float) / sum_rgb
+        
+                return (chroma * 255).astype(np.uint8)  # Scale back to 0-255 for image-like display
+        class gray_scale:
+            @staticmethod
+            def single_channel(img, channel=0):
+                """
+                Extracts a single channel from an RGB image.
+
+                Args:
+                    img (np.ndarray): RGB image of shape (H, W, 3)
+                    channel (int): Channel index to extract (0=R, 1=G, 2=B)
+
+                Returns:
+                    np.ndarray: Grayscale image of selected channel (H, W)
+                """
+                if img.ndim != 3 or img.shape[2] != 3:
+                    raise ValueError("Expected an RGB image with 3 channels.")
+                if channel not in (0, 1, 2):
+                    raise ValueError("Channel must be 0 (R), 1 (G), or 2 (B).")
+                
+                return img[:, :, channel]
     class enhance_contrast:
         @staticmethod
         def CLAHE(img, clip_limit=2.0, tile_grid_size=(8,8)):
@@ -82,6 +101,7 @@ class ImgHandler:
 
             return enhanced
     class segmentation:
+        
         class region_based_segmentation:
 
             @staticmethod
