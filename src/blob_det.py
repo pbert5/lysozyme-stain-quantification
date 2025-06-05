@@ -25,7 +25,8 @@ class BlobDetector:
         labels = BlobHandeler.merge_labels(
             BlobHandeler.flood_fill(
                 labels = ImgHandler.segmentation.region_based_segmentation.water_shed_segmentation(
-                    ImgHandler.gray_scale.single_channel(image, channel=self.channel),
+                    ImgHandler.masker(
+                        ImgHandler.EnhanceContrast.EnhanceNonblack(ImgHandler.gray_scale.single_channel(image, channel=self.channel))).otsu().morph_cleanup().cleaned_mask,
                     ...
                 ),
                 positive_mask=positive_mask

@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from skimage import filters, segmentation, color, measure, img_as_ubyte
 from scipy import ndimage as ndi
 class ImgHandler:
+    
     class InconvenientObjectRemover:
         def __init__(self, raw_image):
             self.raw_image = raw_image
@@ -96,14 +97,14 @@ class ImgHandler:
                     raise ValueError("Channel must be 0 (R), 1 (G), or 2 (B).")
                 
                 return img[:, :, channel]
-    class enhance_contrast:
+    class EnhanceContrast:
         @staticmethod
         def CLAHE(img, clip_limit=2.0, tile_grid_size=(8,8)):
             clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
             img_8bit = img_as_ubyte(img / img.max())  # Normalize to 8-bit
             return clahe.apply(img_8bit)
         @staticmethod
-        def enhance_nonblack(img, value=255):
+        def EnhanceNonblack(img, value=255):
             """
             Set all non-zero pixels in a grayscale image to a fixed value.
             Black (0) pixels remain black.
@@ -125,6 +126,19 @@ class ImgHandler:
             enhanced[img > 0] = value
 
             return enhanced
+    class masker:            
+        def __init__(self, image):
+            self.current_image = image
+        def otsu(self):
+            _, binary = cv2.threshold(self.current_image, 20, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            self.binary_mask = binary
+            return self
+        def morph_cleanup(self, kernel_size=5):
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+            cleaned = cv2.morphologyEx(self.binary_mask, cv2.MORPH_OPEN, kernel)
+            cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
+            self.cleaned_mask = cleaned
+            return self
     class segmentation:
         
         class region_based_segmentation:
@@ -149,16 +163,4 @@ class ImgHandler:
                 ## 5️⃣ Create label overlay
                 #label_overlay = color.label2rgb(labeled, image=image, bg_label=0)
                 return labeled
-    # class masker:            
-    #     def __init__(self, image):
-    #         self.current_image = image
-    #     def otsu(self):
-    #         _, binary = cv2.threshold(self.current_image, 20, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    #         self.binary_mask = binary
-    #         return self
-    #     def morph_cleanup(self, kernel_size=5):
-    #         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-    #         cleaned = cv2.morphologyEx(self.binary_mask, cv2.MORPH_OPEN, kernel)
-    #         cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
-    #         self.cleaned_mask = cleaned
-    #         return self
+   
