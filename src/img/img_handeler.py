@@ -1,8 +1,8 @@
+import numpy as np
 import cv2
 from skimage import img_as_ubyte
-import numpy as np
 
-class image_prep:
+class ImgHandler:
     class inconvenient_object_remover:
         def __init__(self, raw_image):
             self.raw_image = raw_image
@@ -33,28 +33,22 @@ class image_prep:
             else:
                 self.current_image = cv2.bitwise_and(img, img, mask=mask)
             return self.current_image
-    class select_image_channels:
-        @staticmethod
-        def red(img):
+    class transform:
+        class threshold:
+            @staticmethod
             
-            if img.ndim == 3:
-                current_image = img[:, :, 0]
-            else:
-                current_image = img.copy()
-            return current_image
-        @staticmethod
-        def red_chromaticity(img):
-            if img.ndim != 3:
-                raise ValueError("Red chromaticity requires an RGB image.")
-            R = img[:, :, 0].astype(float)
-            G = img[:, :, 1].astype(float)
-            B = img[:, :, 2].astype(float)
-    
-            epsilon = 1e-8  # Avoid division by zero
-            sum_rgb = R + G + B + epsilon
-            red_chroma = R / sum_rgb
-    
-            return (red_chroma * 255).astype(np.uint8)  # Scale back to 0-255 for image-like display
+            def chromaticity(img, channel: int =0, threshold: float = 0.5):
+                ...# Placeholder for chromaticity thresholding logic
+        class gradient:
+            @staticmethod
+            def single_channel(img, channel=0, threshold=0.5):
+                if img.ndim != 3:
+                    raise ValueError("Gradient channel requires an RGB image.")
+                gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+                grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=5)
+                grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=5)
+                magnitude = np.sqrt(grad_x**2 + grad_y**2)
+                return (magnitude > threshold * magnitude.max()).astype(np.uint8) * 255
     class enhance_contrast:
         @staticmethod
         def CLAHE(img, clip_limit=2.0, tile_grid_size=(8,8)):
@@ -97,6 +91,3 @@ class image_prep:
             cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
             self.cleaned_mask = cleaned
             return self
-        
-            
-    
