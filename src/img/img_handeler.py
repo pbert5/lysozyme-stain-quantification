@@ -6,10 +6,24 @@ import matplotlib.pyplot as plt
 from skimage import filters, segmentation, color, measure, img_as_ubyte
 from scipy import ndimage as ndi
 class ImgHandler:
-    class inconvenient_object_remover:
+    class InconvenientObjectRemover:
         def __init__(self, raw_image):
             self.raw_image = raw_image
         def remove_scale_bar(self, intensity_threshold=240, min_area=500, aspect_ratio_thresh=4.0):
+            """
+            Removes the scale bar from an image based on intensity threshold, minimum area, and aspect ratio.
+
+            Args:
+                intensity_threshold (int): Pixel intensity threshold for detecting the scale bar. Default is 240.
+                min_area (int): Minimum area of a contour to be considered as a scale bar. Default is 500.
+            # Ensure the input image is grayscale
+            if gray.ndim != 2:
+                raise ValueError("Input image must be a grayscale image for thresholding.")
+            _, binary = cv2.threshold(gray, intensity_threshold, 255, cv2.THRESH_BINARY)
+
+            Returns:
+                np.ndarray: The image with the scale bar removed.
+            """
             img = self.raw_image
             if img.ndim == 3:
                 gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
@@ -41,6 +55,17 @@ class ImgHandler:
             @staticmethod
             
             def chromaticity(img, channel: int =0, threshold: float = 0.5):
+                """
+                Computes the chromaticity of a specified channel in an RGB image.
+            
+                Args:
+                    img (np.ndarray): Input RGB image of shape (H, W, 3).
+                    channel (int): Channel index to compute chromaticity for (0=R, 1=G, 2=B). Default is 0 (Red).
+                    threshold (float): Threshold value for chromaticity computation (not used in this implementation). Default is 0.5.
+            
+                Returns:
+                    np.ndarray: Grayscale image of the specified channel's chromaticity, scaled to 0-255.
+                """
                 if img.ndim != 3:
                     raise ValueError("Red chromaticity requires an RGB image.")
                 R = img[:, :, 0].astype(float)
