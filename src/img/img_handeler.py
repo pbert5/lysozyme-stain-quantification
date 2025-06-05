@@ -121,9 +121,9 @@ class ImgHandler:
                 # 4️⃣ Label blobs
                 labeled, _ = ndi.label(segmentation)
 
-                # 5️⃣ Create label overlay
-                label_overlay = color.label2rgb(labeled, image=image, bg_label=0)
-                return self
+                ## 5️⃣ Create label overlay
+                #label_overlay = color.label2rgb(labeled, image=image, bg_label=0)
+                return labeled
     # class masker:            
     #     def __init__(self, image):
     #         self.current_image = image
