@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 class LabelHandeler:
     def __init__(self, labels: list[int]):
         """
@@ -22,21 +23,8 @@ class LabelHandeler:
         ...
         return self
     
-    class segmentation:
-        @staticmethod
-        def watershed_segmentation(image, **kwargs) -> LabelHandeler:
-            """
-            Perform watershed segmentation on the image.
-
-            Parameters:
-                image (np.ndarray): The input image for segmentation.
-                **kwargs: Additional keyword arguments for segmentation parameters.
-
-            Returns:
-                LabelHandeler: The instance with segmented labels.
-            """
-            ...
-            return LabelHandeler([])
+    
+            
 
     
     

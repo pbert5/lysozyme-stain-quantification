@@ -1,7 +1,10 @@
+from __future__ import annotations
 import numpy as np
 import cv2
-from skimage import img_as_ubyte
-
+import numpy as np
+import matplotlib.pyplot as plt
+from skimage import filters, segmentation, color, measure, img_as_ubyte
+from scipy import ndimage as ndi
 class ImgHandler:
     class inconvenient_object_remover:
         def __init__(self, raw_image):
@@ -78,16 +81,48 @@ class ImgHandler:
             enhanced[img > 0] = value
 
             return enhanced
-    class masker:            
-        def __init__(self, image):
-            self.current_image = image
-        def otsu(self):
-            _, binary = cv2.threshold(self.current_image, 20, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            self.binary_mask = binary
-            return self
-        def morph_cleanup(self, kernel_size=5):
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-            cleaned = cv2.morphologyEx(self.binary_mask, cv2.MORPH_OPEN, kernel)
-            cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
-            self.cleaned_mask = cleaned
-            return self
+    class segmentation:
+        class region_based_segmentation:
+            def __init__(self, image, low_thresh: int=10, high_thresh:int=150):
+                self.image = image
+                self.low_thresh = low_thresh
+                self.high_thresh = high_thresh
+
+                self.elevation_map = None
+                self.markers = None
+                self.segmentation = None
+                self.labeled = None
+                self.label_overlay = None
+
+            def water_shed_segmentation(self):
+                # 1️⃣ Compute elevation map
+                self.elevation_map = filters.sobel(self.image)
+
+                # 2️⃣ Generate markers
+                self.markers = np.zeros_like(self.image, dtype=np.uint8)
+                self.markers[self.image < self.low_thresh] = 1
+                self.markers[self.image > self.high_thresh] = 2
+
+                # 3️⃣ Watershed segmentation
+                self.segmentation = segmentation.watershed(self.elevation_map, self.markers)
+                self.segmentation = ndi.binary_fill_holes(self.segmentation - 1)
+
+                # 4️⃣ Label blobs
+                self.labeled, _ = ndi.label(self.segmentation)
+
+                # 5️⃣ Create label overlay
+                self.label_overlay = color.label2rgb(self.labeled, image=self.image, bg_label=0)
+                return self
+    # class masker:            
+    #     def __init__(self, image):
+    #         self.current_image = image
+    #     def otsu(self):
+    #         _, binary = cv2.threshold(self.current_image, 20, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    #         self.binary_mask = binary
+    #         return self
+    #     def morph_cleanup(self, kernel_size=5):
+    #         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    #         cleaned = cv2.morphologyEx(self.binary_mask, cv2.MORPH_OPEN, kernel)
+    #         cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
+    #         self.cleaned_mask = cleaned
+    #         return self
