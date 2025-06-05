@@ -8,7 +8,7 @@ class BlobDetector:
         self.channel = channel # Default channel for blob detection
     
     
-    def detect(self, image: np.ndarray) -> "BlobDetector":
+    def detect(self, image: np.ndarray, low_thresh: int=10, high_thresh:int=150) -> "BlobDetector":
         """
         Detect blobs in the provided image.
         
@@ -27,10 +27,10 @@ class BlobDetector:
                 labels = ImgHandler.segmentation.region_based_segmentation.water_shed_segmentation(
                     ImgHandler.masker(
                         ImgHandler.EnhanceContrast.EnhanceNonblack(ImgHandler.gray_scale.single_channel(image, channel=self.channel))).otsu().morph_cleanup().cleaned_mask,
-                    ...
+                    low_thresh=low_thresh, high_thresh=high_thresh
                 ),
                 positive_mask=positive_mask
         )
         )
         return labels
-        self.blobs = [] 
+        
