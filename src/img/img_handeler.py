@@ -83,35 +83,26 @@ class ImgHandler:
             return enhanced
     class segmentation:
         class region_based_segmentation:
-            def __init__(self, image, low_thresh: int=10, high_thresh:int=150):
-                self.image = image
-                self.low_thresh = low_thresh
-                self.high_thresh = high_thresh
 
-                self.elevation_map = None
-                self.markers = None
-                self.segmentation = None
-                self.labeled = None
-                self.label_overlay = None
-
-            def water_shed_segmentation(self):
+            @staticmethod
+            def water_shed_segmentation(image, low_thresh: int=10, high_thresh:int=150):
                 # 1️⃣ Compute elevation map
-                self.elevation_map = filters.sobel(self.image)
+                elevation_map = filters.sobel(image)
 
                 # 2️⃣ Generate markers
-                self.markers = np.zeros_like(self.image, dtype=np.uint8)
-                self.markers[self.image < self.low_thresh] = 1
-                self.markers[self.image > self.high_thresh] = 2
+                markers = np.zeros_like(image, dtype=np.uint8)
+                markers[image < low_thresh] = 1
+                markers[image > high_thresh] = 2
 
                 # 3️⃣ Watershed segmentation
-                self.segmentation = segmentation.watershed(self.elevation_map, self.markers)
-                self.segmentation = ndi.binary_fill_holes(self.segmentation - 1)
+                segmentation = segmentation.watershed(elevation_map, markers)
+                segmentation = ndi.binary_fill_holes(segmentation - 1)
 
                 # 4️⃣ Label blobs
-                self.labeled, _ = ndi.label(self.segmentation)
+                labeled, _ = ndi.label(segmentation)
 
                 # 5️⃣ Create label overlay
-                self.label_overlay = color.label2rgb(self.labeled, image=self.image, bg_label=0)
+                label_overlay = color.label2rgb(labeled, image=image, bg_label=0)
                 return self
     # class masker:            
     #     def __init__(self, image):
