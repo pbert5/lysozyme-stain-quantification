@@ -24,8 +24,8 @@ class Blob_Detector:
         positive_mask = ImgHandler.threshold.chromaticity(image, channel=self.channel, threshold=0.5)
         blobs = BlobHandeler.merge_labels(
             BlobHandeler.flood_fill(
-                blobs = BlobHandeler.segmentation.watershed_segmentation(
-                    ImgHandler.gradient.single_channel(image, channel=self.channel, threshold=0.5),
+                blobs = ImgHandler.segmentation.region_based_segmentation.water_shed_segmentation(
+                    ImgHandler.gray_scale.single_channel(image, channel=self.channel),
                     ...
                 ),
                 positive_mask=positive_mask
