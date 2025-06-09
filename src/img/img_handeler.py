@@ -10,7 +10,7 @@ class ImgHandler:
     class InconvenientObjectRemover:
         def __init__(self, raw_image):
             self.raw_image = raw_image
-        def remove_scale_bar(self, intensity_threshold=240, min_area=500, aspect_ratio_thresh=4.0):
+        def RemoveScaleBar(self, intensity_threshold=240, min_area=500, aspect_ratio_thresh=4.0):
             """
             Removes the scale bar from an image based on intensity threshold, minimum area, and aspect ratio.
 
@@ -154,11 +154,11 @@ class ImgHandler:
                 markers[image > high_thresh] = 2
 
                 # 3️⃣ Watershed segmentation
-                segmentation = segmentation.watershed(elevation_map, markers)
-                segmentation = ndi.binary_fill_holes(segmentation - 1)
+                segmented = segmentation.watershed(elevation_map, markers)
+                segmented = ndi.binary_fill_holes(segmented - 1)
 
                 # 4️⃣ Label blobs
-                labeled, _ = ndi.label(segmentation)
+                labeled, _ = ndi.label(segmented)
 
                 ## 5️⃣ Create label overlay
                 #label_overlay = color.label2rgb(labeled, image=image, bg_label=0)
