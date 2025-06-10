@@ -183,3 +183,10 @@ It’s almost always more efficient to **do the quick Stage 1 filter first**, an
 ---
 
 **Bottom line:** a two-stage approach yields dramatically fewer candidates for the expensive scoring step, so you’ll save both CPU time and development effort.
+
+
+
+
+
+# iterate
+Ok, so I basically want to find all cliques up to 3 members in size, and then for the first stage I want iterate through each label and find the best clique or combination of cliques for it to belong to, where Each combination of cliques is only valid if they are composed of either adjacent or indirectly adjacent cliques where adjacency is defined by two cliques that  share at least two label members including the label of interest
