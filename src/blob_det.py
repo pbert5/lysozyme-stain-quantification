@@ -22,28 +22,28 @@ class BlobDetector:
         # This should be replaced with actual blob detection code
         image = ImgHandler.InconvenientObjectRemover(image).RemoveScaleBar(intensity_threshold=240, min_area=500, aspect_ratio_thresh=4.0)
         positive_mask = ImgHandler.transform.threshold.chromaticity(image, channel=self.channel, threshold=0.5)
-        labels = BlobHandeler(
+        blob_labels = BlobHandeler(
             labels = ImgHandler.segmentation.region_based_segmentation.water_shed_segmentation(
                     ImgHandler.masker(
-                        ImgHandler.EnhanceContrast.EnhanceNonblack(ImgHandler.transform.gray_scale.single_channel(image, channel=self.channel))).otsu().morph_cleanup().cleaned_mask,
+                        ImgHandler.EnhanceContrast.CLAHE(ImgHandler.transform.gray_scale.single_channel(image, channel=self.channel))).otsu().morph_cleanup().cleaned_mask,
                     low_thresh=low_thresh, high_thresh=high_thresh
                 ),
                 positive_mask=positive_mask
             ).flood_fill()#.merge_labels(size_factor=20)
         if self.debug is True:
-            labels.save_expanded_labels("component development/mergeLogic/unmerged_labels", save_csv=True)
-        return labels.merged_labels
+            blob_labels.save_expanded_labels("component development/mergeLogic/unmerged_labels", save_csv=True)
+        return blob_labels.merged_labels
         
 if __name__ == "__main__":
-    import cv2
+    import tifffile
     import matplotlib.pyplot as plt
 
     # Example usage
-    image = cv2.imread('DemoData/G2-ABX/G2-ABX/G2FL - 2.tif')
+    image = tifffile.imread('/home/user/documents/PiereLab/lysozyme/DemoData/ClearedForProcessing/G2ER-RFP2 40x-4.tif')
     detector = BlobDetector(channel=0, debug=True)
-    blobs = detector.detect(image)
+    blobs = detector.detect(image, low_thresh=30, high_thresh=150)
 
     # Display the detected blobs
-    plt.imshow(blobs, cmap='gray')
+    #plt.imshow(blobs, cmap='gray')
     plt.title('Detected Blobs')
     plt.show()

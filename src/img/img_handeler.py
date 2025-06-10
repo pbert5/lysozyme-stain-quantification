@@ -12,45 +12,49 @@ class ImgHandler:
             self.raw_image = raw_image
         def RemoveScaleBar(self, intensity_threshold=240, min_area=500, aspect_ratio_thresh=4.0):
             """
-            Removes the scale bar from an image based on intensity threshold, minimum area, and aspect ratio.
-
-            Args:
-                intensity_threshold (int): Pixel intensity threshold for detecting the scale bar. Default is 240.
-                min_area (int): Minimum area of a contour to be considered as a scale bar. Default is 500.
-            # Ensure the input image is grayscale
-            if gray.ndim != 2:
-                raise ValueError("Input image must be a grayscale image for thresholding.")
-            _, binary = cv2.threshold(gray, intensity_threshold, 255, cv2.THRESH_BINARY)
+            Detects and removes the scale bar, intelligently filling it with a gradient
+            interpolated from the pixel values on either side.
 
             Returns:
-                np.ndarray: The image with the scale bar removed.
+                np.ndarray: Image with scale bar removed and region inpainted.
             """
-            img = self.raw_image
-            if img.ndim == 3:
-                gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-            else:
-                gray = img.copy()
-    
+            img = self.raw_image.copy()
+            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY) if img.ndim == 3 else img.copy()
+
+            # Detect bright rectangular regions
             _, binary = cv2.threshold(gray, intensity_threshold, 255, cv2.THRESH_BINARY)
             contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-            mask = np.ones_like(gray, dtype=np.uint8)
+
             for cnt in contours:
                 x, y, w, h = cv2.boundingRect(cnt)
                 area = cv2.contourArea(cnt)
                 aspect_ratio = max(w / h, h / w)
+
                 if area > min_area and aspect_ratio > aspect_ratio_thresh:
-                    cv2.rectangle(mask, (x, y), (x + w, y + h), 0, -1)
-    
-            self.bar_mask = mask
-            if img.ndim == 3:
-                self.current_image = cv2.merge([
-                    cv2.bitwise_and(img[:, :, c], img[:, :, c], mask=mask)
-                    for c in range(img.shape[2])
-                ])
-            else:
-                self.current_image = cv2.bitwise_and(img, img, mask=mask)
-            return self.current_image
+                    # We'll fill in this region
+                    region = (slice(y, y + h), slice(x, x + w))
+
+                    if w >= h:
+                        # Horizontal bar: interpolate top to bottom
+                        top = img[y - 1, x:x + w].astype(np.float32) if y > 0 else img[y + h, x:x + w].astype(np.float32)
+                        bottom = img[y + h, x:x + w].astype(np.float32) if y + h < img.shape[0] else top
+                        for i in range(h):
+                            weight = i / max(1, h - 1)
+                            interpolated = ((1 - weight) * top + weight * bottom).astype(np.uint8)
+                            img[y + i, x:x + w] = interpolated
+
+                    else:
+                        # Vertical bar: interpolate left to right
+                        left = img[y:y + h, x - 1].astype(np.float32)[:, None] if x > 0 else img[y:y + h, x + w].astype(np.float32)[:, None]
+                        right = img[y:y + h, x + w].astype(np.float32)[:, None] if x + w < img.shape[1] else left
+                        for i in range(w):
+                            weight = i / max(1, w - 1)
+                            interpolated = ((1 - weight) * left + weight * right).astype(np.uint8)
+                            img[y:y + h, x + i] = interpolated
+
+            self.current_image = img
+            return img
+
     class transform:
         class threshold:
             @staticmethod

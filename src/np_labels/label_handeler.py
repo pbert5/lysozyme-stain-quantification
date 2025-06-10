@@ -70,6 +70,7 @@ class LabelHandeler:
 
         # Save as .npy
         np.save(f"{save_path}.npy", self.expanded_labels)
+        np.save(f"{save_path}_prev.npy", self.labels)
 
         
 
