@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 import numpy as np
 from blob_det import BlobDetector
 from np_labels.labels_to_geojson import LabelsToGeoJSON
-
+import tifffile
 
 
 class BulkBlobProcessor:
@@ -16,36 +16,40 @@ class BulkBlobProcessor:
         self.debug = debug
         self.results_dir = Path(results_dir) if results_dir else None
         self.ROI_expand_by = ROI_expand_by
-    def load_images(self) -> List[Path]:
-        """
-        Load images from the provided paths.
-        Returns a list the images.
-        """
-        self.images: List[Dict[str, np.ndarray]] = []
-        ... # Placeholder for actual image loading logic
-
+    def load_images(self) -> List[Dict[str, Any]]:
+        """Read each file in self.paths into memory."""
+        self.images = []
+        for p in self.paths:
+            arr = tifffile.imread(p)
+            self.images.append({
+                "id": p.stem,
+                "array": arr,
+                "path": p,
+            })
+        return self.images
     def process_all(self) -> List[Dict[str, Any]]:
         """
         Iterate over images, saving outputs, collecting full blob data for next step,
         and writing a debug summary JSON containing only the top blob props for each image.
         Returns a list of dicts: each with 'image_path', and the blob labels.
         """
-        self.full_results: [{image_path: str, labels: np.ndarray }] = [] # this would be a list of all the labels from each image
+        self.full_results = []
+        
+        for entry in self.images:
+            # run detection on the ndarray, get back a label array
+            labels = BlobDetector(channel=0, debug=self.debug).detect(
+                image=entry["array"]
+            )
 
-        for p in self.images:
-            # 1) Run detection
-            labels = BlobDetector(channel =0).detect(image = p)
-            
-            # 2) Collect full results for next step
             self.full_results.append({
-                "id": p.name,
-                "image_path": str | Path(p),
-                "labels": labels
-                })
+                "id": entry["id"],
+                "image_path": entry["path"],
+                "labels": labels,
+            })
+            # if you really need to free memory:
+            # del entry["array"]
 
-
-            #  Clean up memory
-            labels.dispose()
+        return self.full_results
 
         return self
     def save_results(self) -> None:
@@ -57,11 +61,11 @@ class BulkBlobProcessor:
             output_geojson = self.out_root / output_filename
 
             LabelsToGeoJSON(
-                labels,
+                labels["labels"],
                 output_path=output_geojson,
                 pixel_size=1.0,  # Adjust if your image has a physical pixel size
                 origin=(0, 0),
-                expand_by=self.expand_by
+                expand_by=self.ROI_expand_by
             )
             out_path = self.out_root / f"{labels['id']}_labels.npy"
             np.save(out_path, labels['labels'])
