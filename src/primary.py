@@ -5,6 +5,8 @@ import numpy as np
 from blob_det import BlobDetector
 from np_labels.labels_to_geojson import LabelsToGeoJSON
 import tifffile
+from skimage.color import label2rgb
+import matplotlib.pyplot as plt
 
 
 class BulkBlobProcessor:
@@ -71,13 +73,20 @@ class BulkBlobProcessor:
             np.save(out_path, labels['labels'])
             print(f"Saved labels for {labels['id']} to {out_path}")
         # Save master summary JSON
-    def save_visuals(self, out_dir: str | Path, simple: bool = False) -> None:
-        """Emit quick‐look PNGs side by side for each image."""
+    def save_visuals(self, out_dir: str | Path) -> None:
+        """
+        Quick‐look renderer of the final labels only.
+        Will produce <id>_cf.png with label2rgb of the labels.
+        """
         out = Path(out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+
         for r in self.full_results:
-            r["detector"].save_outputs(out, simple=simple)
+            viz = label2rgb(r["labels"].astype(np.uint8))
+            plt.imsave(out / f"{r['id']}_cf.png", viz)
         
 if __name__ == "__main__":
+    print("Running BulkBlobProcessor...")
     from pathlib import Path
 
     # 1) Define your inputs:
@@ -99,10 +108,14 @@ if __name__ == "__main__":
         ROI_expand_by=expand_by,
         debug=debug,
     )
+    print(f"Processing {len(processor.paths)} images...")
     processor.load_images()     # read all images into memory
+    print("Loaded images, starting processing...")
     processor.process_all()     # run your BlobDetector on each
+    print("Processing complete, saving results...")
     processor.save_results()    # emit .geojson, .npy, and prints
-    processor.save_visuals(out_root / "quick_check", simple=False)
+    print("Results saved, generating visuals...")
+    processor.save_visuals(out_root / "quick_check")
 
 
 """
