@@ -71,3 +71,40 @@ class BulkBlobProcessor:
             np.save(out_path, labels['labels'])
             print(f"Saved labels for {labels['id']} to {out_path}")
         # Save master summary JSON
+    def save_visuals(self, out_dir: str | Path, simple: bool = False) -> None:
+        """Emit quick‐look PNGs side by side for each image."""
+        out = Path(out_dir)
+        for r in self.full_results:
+            r["detector"].save_outputs(out, simple=simple)
+        
+if __name__ == "__main__":
+    from pathlib import Path
+
+    # 1) Define your inputs:
+    img_dir    = Path("/home/user/documents/PiereLab/lysozyme/DemoData/ClearedForProcessing")       # ← change this
+    img_glob   = "*.tif"                            # ← or "*.png", etc.
+    img_paths  = sorted(img_dir.glob(img_glob))
+
+    # 2) Define output + options:
+    out_root   = Path("results")                    # where to save
+    results_dir = None                              # not used for now
+    expand_by  = 1.5                                # how much to expand each ROI
+    debug      = True                               # dump debug artifacts?
+
+    # 3) Instantiate & run:
+    processor = BulkBlobProcessor(
+        img_paths=img_paths,
+        out_root=out_root,
+        results_dir=results_dir,
+        ROI_expand_by=expand_by,
+        debug=debug,
+    )
+    processor.load_images()     # read all images into memory
+    processor.process_all()     # run your BlobDetector on each
+    processor.save_results()    # emit .geojson, .npy, and prints
+    processor.save_visuals(out_root / "quick_check", simple=False)
+
+
+"""
+python blob_bulk.py /path/to/images/*.tif --out_root=results --expand_by=2.0 --debug
+"""
