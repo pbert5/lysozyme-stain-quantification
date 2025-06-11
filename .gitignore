@@ -3,3 +3,5 @@ RemoteViewableDemoOfConsolidatedCode.ipynb
 DevNotebooks/results/
 *.pyc
 results/*
+*.npy
+*.csv
