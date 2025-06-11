@@ -56,7 +56,7 @@ class LabelHandeler:
         return self
         
         
-        return self
+        
     
     def save_expanded_labels(self, save_path: str | Path,  save_csv: bool = False ) -> None:
         """

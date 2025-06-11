@@ -80,17 +80,24 @@ class BulkBlobProcessor:
             np.save(out_path, labels['labels'])
             print(f"Saved labels for {labels['id']} to {out_path}")
         # Save master summary JSON
-    def save_visuals(self, out_dir: str | Path) -> None:
+    def save_visuals(self, out_dir: str | Path, alpha: float = 0.5) -> None:
         """
-        Quick‐look renderer of the final labels only.
-        Will produce <id>_cf.png with label2rgb of the labels.
+        Quick-look renderer: overlays labels on original image.
         """
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
 
         for r in self.full_results:
-            viz = label2rgb(r["labels"].astype(np.uint8))
-            plt.imsave(out / f"{r['id']}_cf.png", viz)
+            # load original image
+            original = tifffile.imread(r["image_path"])
+            # overlay colored labels on top
+            overlay = label2rgb(
+                r["labels"].astype(np.uint8),
+                image=original,
+                alpha=alpha,
+                bg_label=0,
+            )
+            plt.imsave(out / f"{r['id']}_overlay.png", overlay)
         
 if __name__ == "__main__":
     print("Running BulkBlobProcessor...")
@@ -106,7 +113,7 @@ if __name__ == "__main__":
     results_dir = None                              # not used for now
     expand_by  = 1.0                                # how much to expand each ROI
     debug      = True                               # dump debug artifacts?
-    singleton_penalty = 2                                # proportion of how much more perimeter needs to be in contact then not for merge to happen
+    singleton_penalty = 4                                # proportion of how much more perimeter needs to be in contact then not for merge to happen
 
     # 3) Instantiate & run:
     processor = BulkBlobProcessor(

@@ -102,7 +102,11 @@ class BlobDetector:
         # Placeholder for blob detection logic
         # This should be replaced with actual blob detection code
         image = ImgHandler.InconvenientObjectRemover(image).RemoveScaleBar(intensity_threshold=scale_bar_intensity_threshold, min_area=scale_bar_min_area, aspect_ratio_thresh=scale_bar_aspect_ratio_thresh)
-        positive_mask = ImgHandler.masker(ImgHandler.transform.threshold.chromaticity(img=image, channel=self.channel, threshold=positive_mask_threshold)).otsu().morph_cleanup().cleaned_mask
+        positive_mask = ImgHandler.masker(
+            ImgHandler.EnhanceContrast.EnhanceNonblack(
+                ImgHandler.transform.threshold.chromaticity(img=image, channel=self.channel, threshold=positive_mask_threshold)
+                )
+        ).otsu().morph_cleanup().cleaned_mask
         self.labels = BlobHandeler(
                     labels = ImgHandler.segmentation.region_based_segmentation.water_shed_segmentation(
                             ImgHandler.EnhanceContrast.CLAHE(ImgHandler.transform.gray_scale.single_channel(image, channel=self.channel)),
