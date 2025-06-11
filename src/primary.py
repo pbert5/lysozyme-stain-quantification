@@ -29,7 +29,7 @@ class BulkBlobProcessor:
                 "path": p,
             })
         return self.images
-    def process_all(self) -> List[Dict[str, Any]]:
+    def process_all(self, low_thresh=30, high_thresh=150, singleton_penalty=10) -> List[Dict[str, Any]]:
         """
         Iterate over images, saving outputs, collecting full blob data for next step,
         and writing a debug summary JSON containing only the top blob props for each image.
@@ -40,7 +40,14 @@ class BulkBlobProcessor:
         for entry in self.images:
             # run detection on the ndarray, get back a label array
             labels = BlobDetector(channel=0, debug=self.debug).detect(
-                image=entry["array"]
+                image=entry["array"],
+                segmentation_low_thresh=low_thresh,
+                segmentation_high_thresh=high_thresh,
+                scale_bar_intensity_threshold=240,
+                scale_bar_min_area=500,
+                scale_bar_aspect_ratio_thresh=4.0,
+                positive_mask_threshold=0.5,
+                singleton_penalty=singleton_penalty
             )
 
             self.full_results.append({
@@ -97,8 +104,9 @@ if __name__ == "__main__":
     # 2) Define output + options:
     out_root   = Path("results")                    # where to save
     results_dir = None                              # not used for now
-    expand_by  = 1.5                                # how much to expand each ROI
+    expand_by  = 1.0                                # how much to expand each ROI
     debug      = True                               # dump debug artifacts?
+    singleton_penalty = 2                                # proportion of how much more perimeter needs to be in contact then not for merge to happen
 
     # 3) Instantiate & run:
     processor = BulkBlobProcessor(
@@ -111,11 +119,12 @@ if __name__ == "__main__":
     print(f"Processing {len(processor.paths)} images...")
     processor.load_images()     # read all images into memory
     print("Loaded images, starting processing...")
-    processor.process_all()     # run your BlobDetector on each
+    processor.process_all(low_thresh=30, high_thresh=150, singleton_penalty=singleton_penalty)     # run your BlobDetector on each
     print("Processing complete, saving results...")
     processor.save_results()    # emit .geojson, .npy, and prints
     print("Results saved, generating visuals...")
     processor.save_visuals(out_root / "quick_check")
+    print("Visuals saved, all done!")
 
 
 """

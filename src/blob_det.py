@@ -85,7 +85,7 @@ class BlobDetector:
         else:
             self.red_image = None
     
-    def detect(self, image: np.ndarray, low_thresh: int=10, high_thresh:int=150, path: str = None    ) -> "BlobDetector":
+    def detect(self, image: np.ndarray, segmentation_low_thresh: int=10, segmentation_high_thresh:int=150, path: str = None, scale_bar_intensity_threshold=240, scale_bar_min_area=500, scale_bar_aspect_ratio_thresh=4.0, positive_mask_threshold=0.5, singleton_penalty=10) -> "BlobDetector":
         """
         Detect blobs in the provided image.
         
@@ -101,18 +101,19 @@ class BlobDetector:
             self.path = Path("blob_detection_output.tif")
         # Placeholder for blob detection logic
         # This should be replaced with actual blob detection code
-        image = ImgHandler.InconvenientObjectRemover(image).RemoveScaleBar(intensity_threshold=240, min_area=500, aspect_ratio_thresh=4.0)
-        positive_mask = ImgHandler.transform.threshold.chromaticity(image, channel=self.channel, threshold=0.5)
+        image = ImgHandler.InconvenientObjectRemover(image).RemoveScaleBar(intensity_threshold=scale_bar_intensity_threshold, min_area=scale_bar_min_area, aspect_ratio_thresh=scale_bar_aspect_ratio_thresh)
+        positive_mask = ImgHandler.transform.threshold.chromaticity(image, channel=self.channel, threshold=positive_mask_threshold)
         self.expanded_labels = BlobHandeler(
                     labels = ImgHandler.segmentation.region_based_segmentation.water_shed_segmentation(
                             ImgHandler.masker(
                                 ImgHandler.EnhanceContrast.CLAHE(ImgHandler.transform.gray_scale.single_channel(image, channel=self.channel))).otsu().morph_cleanup().cleaned_mask,
-                            low_thresh=low_thresh, high_thresh=high_thresh
+                            low_thresh=segmentation_low_thresh, high_thresh=segmentation_high_thresh
                         ),
                         positive_mask=positive_mask
                     ).flood_fill().expanded_labels
         self.swallowed_labels = BlobHandeler.MergePipeline(
-                label_img = self.expanded_labels
+                label_img = self.expanded_labels,
+                singleton_penalty=singleton_penalty
         ).run().merged_label_array
         # if self.debug is True:
         #     self.swallowed_labels.save_expanded_labels("lysozyme-stain-quantification/component development/mergeLogic/unmerged_labels", save_csv=True)
