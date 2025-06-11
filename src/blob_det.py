@@ -31,7 +31,7 @@ class BlobDetector:
                 positive_mask=positive_mask
             ).flood_fill()#.merge_labels(size_factor=20)
         if self.debug is True:
-            blob_labels.save_expanded_labels("component development/mergeLogic/unmerged_labels", save_csv=True)
+            blob_labels.save_expanded_labels("lysozyme-stain-quantification/component development/mergeLogic/unmerged_labels", save_csv=True)
         return blob_labels.merged_labels
         
 if __name__ == "__main__":
@@ -39,7 +39,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     # Example usage
-    image = tifffile.imread('/home/user/documents/PiereLab/lysozyme/DemoData/ClearedForProcessing/G2ER-RFP2 40x-4.tif')
+    image = tifffile.imread('/home/user/documents/PiereLab/lysozyme/DemoData/ClearedForProcessing/G2EL-RFP2 40x-4.tif')
     detector = BlobDetector(channel=0, debug=True)
     blobs = detector.detect(image, low_thresh=30, high_thresh=150)
 
