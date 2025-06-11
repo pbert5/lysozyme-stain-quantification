@@ -1,8 +1,9 @@
+from __future__ import annotations
 from pathlib import Path
 from typing import List, Dict, Any
 import numpy as np
-from .blob_det import BlobDetector
-from .np_labels.labels_to_geojson import LabelsToGeoJSON
+from blob_det import BlobDetector
+from np_labels.labels_to_geojson import LabelsToGeoJSON
 
 
 
@@ -29,7 +30,7 @@ class BulkBlobProcessor:
         and writing a debug summary JSON containing only the top blob props for each image.
         Returns a list of dicts: each with 'image_path', and the blob labels.
         """
-        self.full_results = [{image_path: string, labels: np.ndarray }] = [] # this would be a list of all the labels from each image
+        self.full_results: [{image_path: string, labels: np.ndarray }] = [] # this would be a list of all the labels from each image
 
         for p in self.images:
             # 1) Run detection
