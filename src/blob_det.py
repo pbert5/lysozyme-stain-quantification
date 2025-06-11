@@ -102,33 +102,32 @@ class BlobDetector:
         # Placeholder for blob detection logic
         # This should be replaced with actual blob detection code
         image = ImgHandler.InconvenientObjectRemover(image).RemoveScaleBar(intensity_threshold=scale_bar_intensity_threshold, min_area=scale_bar_min_area, aspect_ratio_thresh=scale_bar_aspect_ratio_thresh)
-        positive_mask = ImgHandler.transform.threshold.chromaticity(image, channel=self.channel, threshold=positive_mask_threshold)
-        self.expanded_labels = BlobHandeler(
+        positive_mask = ImgHandler.masker(ImgHandler.transform.threshold.chromaticity(img=image, channel=self.channel, threshold=positive_mask_threshold)).otsu().morph_cleanup().cleaned_mask
+        self.labels = BlobHandeler(
                     labels = ImgHandler.segmentation.region_based_segmentation.water_shed_segmentation(
-                            ImgHandler.masker(
-                                ImgHandler.EnhanceContrast.CLAHE(ImgHandler.transform.gray_scale.single_channel(image, channel=self.channel))).otsu().morph_cleanup().cleaned_mask,
+                            ImgHandler.EnhanceContrast.CLAHE(ImgHandler.transform.gray_scale.single_channel(image, channel=self.channel)),
                             low_thresh=segmentation_low_thresh, high_thresh=segmentation_high_thresh
                         ),
                         positive_mask=positive_mask
-                    ).flood_fill().expanded_labels
+                    ).flood_fill()
         self.swallowed_labels = BlobHandeler.MergePipeline(
-                label_img = self.expanded_labels,
+                label_img = self.labels.expanded_labels,
                 singleton_penalty=singleton_penalty
-        ).run().merged_label_array
-        # if self.debug is True:
-        #     self.swallowed_labels.save_expanded_labels("lysozyme-stain-quantification/component development/mergeLogic/unmerged_labels", save_csv=True)
-        self.blobs = self.swallowed_labels # for a simple easy access to the labels
-        return self.swallowed_labels
+        ).run()
+        if self.debug is True:
+            self.labels.save_expanded_labels("lysozyme-stain-quantification/component development/mergeLogic/unmerged_labels", save_csv=True)
+        self.merged = self.swallowed_labels.merged_label_array.copy() # for a simple easy access to the labels
+        return self.merged
     def save_outputs(self, out_dir: str | Path, simple = False) -> None:
         out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
         #plt.imsave(out_dir / f"{self.path.stem}_red.png", self.red_image, cmap="gray")
         if simple:
-            comp = self.swallowed_labels
+            comp = self.blobs
         else:
             comp = np.concatenate([
                 
-                self.expanded_labels,
-                self.swallowed_labels], axis=1)
+                self.labels.expanded_labels,
+                self.merged], axis=1)
 
         plt.imsave(out_dir / f"{self.path.stem}_cf.png", label2rgb(comp.astype(np.uint8)))
         
@@ -137,9 +136,17 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     # Example usage
-    image = tifffile.imread('/home/user/documents/PiereLab/lysozyme/DemoData/ClearedForProcessing/G2EL-RFP2 40x-4.tif')
-    detector = BlobDetector(channel=0, debug=False)
-    blobs = detector.detect(image, low_thresh=30, high_thresh=150)
+    image = tifffile.imread('/home/user/documents/PiereLab/lysozyme/DemoData/ClearedForProcessing/G2EL2-RFP 40x-4.tif')
+    detector = BlobDetector(channel=0, debug=True)
+    blobs = detector.detect(
+        image, 
+        segmentation_low_thresh=10, 
+        segmentation_high_thresh=180,
+        scale_bar_intensity_threshold=240,
+        scale_bar_min_area=500,
+        scale_bar_aspect_ratio_thresh=4.0,
+        positive_mask_threshold=0.5,
+        singleton_penalty=4)
     detector.save_outputs(out_dir='/home/user/documents/PiereLab/lysozyme/DemoData/Results', simple=False)
 
  

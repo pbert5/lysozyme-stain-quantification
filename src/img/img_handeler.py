@@ -58,7 +58,6 @@ class ImgHandler:
     class transform:
         class threshold:
             @staticmethod
-            
             def chromaticity(img, channel: int =0, threshold: float = 0.5):
                 """
                 Computes the chromaticity of a specified channel in an RGB image.
