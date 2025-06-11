@@ -67,7 +67,7 @@ class BulkBlobProcessor:
             if self.out_root:
                 self.out_root.mkdir(parents=True, exist_ok=True)
             output_filename = Path(labels["image_path"]).stem + "_rois.geojson"
-            output_geojson = self.out_root / output_filename
+            output_geojson = self.out_root / "geojson" / output_filename
 
             LabelsToGeoJSON(
                 labels["labels"],
@@ -76,7 +76,7 @@ class BulkBlobProcessor:
                 origin=(0, 0),
                 expand_by=self.ROI_expand_by
             )
-            out_path = self.out_root / f"{labels['id']}_labels.npy"
+            out_path = self.out_root / "npy" / f"{labels['id']}_labels.npy"
             np.save(out_path, labels['labels'])
             print(f"Saved labels for {labels['id']} to {out_path}")
         # Save master summary JSON
@@ -104,8 +104,8 @@ if __name__ == "__main__":
     from pathlib import Path
 
     # 1) Define your inputs:
-    img_dir    = Path("/home/user/documents/PiereLab/lysozyme/DemoData/ClearedForProcessing")       # ← change this
-    img_glob   = "*.tif"                            # ← or "*.png", etc.
+    img_dir    = Path("/home/user/documents/PiereLab/lysozyme/DemoData/Stt4 Lysozyme stain quantification")       # ← change this
+    img_glob   = "**/*.tif"                            # ← or "*.png", etc.
     img_paths  = sorted(img_dir.glob(img_glob))
 
     # 2) Define output + options:

@@ -145,12 +145,12 @@ if __name__ == "__main__":
     blobs = detector.detect(
         image, 
         segmentation_low_thresh=10, 
-        segmentation_high_thresh=180,
+        segmentation_high_thresh=150,
         scale_bar_intensity_threshold=240,
         scale_bar_min_area=500,
         scale_bar_aspect_ratio_thresh=4.0,
         positive_mask_threshold=0.5,
-        singleton_penalty=4)
+        singleton_penalty=3)
     detector.save_outputs(out_dir='/home/user/documents/PiereLab/lysozyme/DemoData/Results', simple=False)
 
  
