@@ -82,6 +82,8 @@ class BlobDetector:
                 self.red_image = red_image
             else:
                 raise ValueError("red_image must be a file path or a numpy array.")
+        else:
+            self.red_image = None
     
     def detect(self, image: np.ndarray, low_thresh: int=10, high_thresh:int=150, path: str = None    ) -> "BlobDetector":
         """
@@ -123,11 +125,11 @@ class BlobDetector:
             comp = self.swallowed_labels
         else:
             comp = np.concatenate([
-                self.red_image if self.red_image.ndim == 3 else np.stack([self.red_image]*3, -1) if self.red_image is not None else None,
-                self.expanded_labels ,
+                
+                self.expanded_labels,
                 self.swallowed_labels], axis=1)
 
-        plt.imsave(out_dir / f"{self.path.stem}_cf.png", comp.astype(np.uint8))
+        plt.imsave(out_dir / f"{self.path.stem}_cf.png", label2rgb(comp.astype(np.uint8)))
         
 if __name__ == "__main__":
     import tifffile
