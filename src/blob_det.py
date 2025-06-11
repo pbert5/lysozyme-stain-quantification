@@ -8,6 +8,70 @@ from skimage.color import label2rgb
 import matplotlib.pyplot as plt
 
 class BlobDetector:
+    """
+    BlobDetector
+
+    A utility class for detecting and processing “blobs” (connected regions of interest)
+    in microscopy or histology images. Supports a configurable detection pipeline,
+    two-stage merging of segmented regions, and easy saving of results.
+
+    Usage:
+        # 1. Initialize with an optional reference image (e.g., raw red channel)
+        detector = BlobDetector(channel=0, debug=True, red_image="path/to/image.tif")
+
+        # 2. Run detection on a new image array (or file path) with threshold parameters
+        merged_labels = detector.detect(
+            image_array,
+            low_thresh=10,
+            high_thresh=150,
+            path="output_basename"
+        )
+
+        # 3. Save outputs to disk
+        #    - simple=True saves only the final merged labels
+        #    - simple=False concatenates raw/red, expanded, and merged label overlays
+        detector.save_outputs(out_dir="results_folder", simple=False)
+
+    Class Initialization:
+        __init__(channel: int = 0,
+                debug: bool = False,
+                red_image: Union[str, np.ndarray, None] = None)
+            - channel: which color channel to use for threshold-based mask creation.
+            - debug:   if True, intermediate artifacts (e.g., CSV of raw labels) can be saved.
+            - red_image: either a file path or ndarray to use as the background/reference.
+
+    Key Methods:
+        detect(image: np.ndarray,
+            low_thresh: int = 10,
+            high_thresh: int = 150,
+            path: Optional[str] = None) -> np.ndarray
+            - image: raw image in which to detect blobs.
+            - low_thresh / high_thresh: parameters controlling the watershed segmentation.
+            - path: base name for saving output files.
+            - Returns the 2nd-stage merged label array.
+
+        save_outputs(out_dir: Union[str, Path], simple: bool = False) -> None
+            - out_dir: directory to write results.
+            - simple: if True, only final merged labels are saved; otherwise, a side-by-side
+                    montage of raw/red, expanded_labels, and swallowed_labels is written.
+
+    Internal Pipeline:
+        1. Remove scale bar or other artifacts.
+        2. Threshold by chromaticity → positive_mask.
+        3. Watershed on CLAHE-enhanced grayscale → expanded_labels.
+        4. Two-stage merge using MergePipeline:
+            a. Stage 1: choose best neighborhood group per label.
+            b. Stage 2: refine by compactness and distance metrics.
+        → swallowed_labels.
+        5. Expose `blobs` attribute for downstream analysis.
+
+    Attributes After detect():
+        - self.expanded_labels:  label image after initial segmentation.
+        - self.swallowed_labels: label image after two-stage merging.
+        - self.blobs:           alias for swallowed_labels.
+        - self.path:            Path object for naming outputs.
+    """
+
     def __init__(self, channel: int = 0, debug = False, red_image = None): # put the parameters that will be needed for blob detection across all the images #should probobly have some code in here that handles deciding what sourt of detection should be used depending on the image staining
         self.channel = channel # Default channel for blob detection
         self.debug = debug  # Debug mode to save intermediate results
