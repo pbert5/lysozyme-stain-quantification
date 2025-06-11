@@ -30,7 +30,7 @@ class BulkBlobProcessor:
         and writing a debug summary JSON containing only the top blob props for each image.
         Returns a list of dicts: each with 'image_path', and the blob labels.
         """
-        self.full_results: [{image_path: string, labels: np.ndarray }] = [] # this would be a list of all the labels from each image
+        self.full_results: [{image_path: str, labels: np.ndarray }] = [] # this would be a list of all the labels from each image
 
         for p in self.images:
             # 1) Run detection
