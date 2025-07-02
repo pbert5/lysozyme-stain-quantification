@@ -7,6 +7,9 @@ from np_labels.save_labels import LabelsToGeoJSON
 import tifffile
 from skimage.color import label2rgb
 import matplotlib.pyplot as plt
+import cv2
+from roifile import ImagejRoi
+import zipfile
 
 
 class BulkBlobProcessor:
@@ -65,26 +68,53 @@ class BulkBlobProcessor:
         return self
     def save_results(self) -> None:
         for labels in self.full_results:
-            # Ensure the geojson and npy directories exist
+            img_path = Path(labels["image_path"])
+            base_name = img_path.stem
+
+            # ——— Save original GeoJSON and NPY as before ———
             geojson_dir = self.out_root / "geojson"
             geojson_dir.mkdir(parents=True, exist_ok=True)
-
-            npy_dir = self.out_root / "npy"
-            npy_dir.mkdir(parents=True, exist_ok=True)
-
-            output_filename = Path(labels["image_path"]).stem + "_rois.geojson"
-            output_geojson = geojson_dir / output_filename
-
             LabelsToGeoJSON(
                 labels["labels"],
-                output_path=output_geojson,
-                pixel_size=1.0,  # Adjust if your image has a physical pixel size
+                output_path=geojson_dir / f"{base_name}_rois.geojson",
+                pixel_size=1.0,
                 origin=(0, 0),
                 expand_by=self.ROI_expand_by
             )
-            out_path = npy_dir / f"{labels['id']}_labels.npy"
-            np.save(out_path, labels['labels'])
-            print(f"Saved labels for {labels['id']} to {out_path}")
+
+            npy_dir = self.out_root / "npy"
+            npy_dir.mkdir(parents=True, exist_ok=True)
+            np.save(npy_dir / f"{labels['id']}_labels.npy", labels["labels"])
+
+            # ——— Prepare ImageJ-ready TIFF + ROI ZIP ———
+            out_dir = self.out_root / "ImageJ_ready"
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            # 1) copy the TIFF
+            img = tifffile.imread(img_path)
+            tifffile.imwrite(out_dir / f"{base_name}.tif", img)
+
+            # 2) generate one .roi per contour
+            mask = labels["labels"].astype(np.uint8)
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            roi_files: list[Path] = []
+            for i, cnt in enumerate(contours):
+                if cnt.shape[0] < 3:
+                    continue
+                coords = cnt[:, 0, :].astype(float)  # Nx2 float array
+                roi = ImagejRoi.frompoints(coords, name=f"{base_name}_{i}")
+                roi_path = out_dir / f"{base_name}_{i}.roi"
+                roi.tofile(str(roi_path))  # write the .roi file :contentReference[oaicite:0]{index=0}
+                roi_files.append(roi_path)
+
+            # 3) bundle them into a ZIP named exactly like the TIFF
+            zip_path = out_dir / f"{base_name}.zip"
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                for fn in roi_files:
+                    zf.write(fn, arcname=fn.name)
+
+        print(f"Saved ImageJ-ready TIFF + ROI-zip for {base_name}")
         # Save master summary JSON
     def save_visuals(self, out_dir: str | Path, alpha: float = 0.5) -> None:
         """
@@ -123,7 +153,7 @@ if __name__ == "__main__":
 
     # 3) Instantiate & run:
     # Ensure img_paths is a list of strings
-    max_images = 100  # Set the maximum number of images to process for testing
+    max_images = 10  # Set the maximum number of images to process for testing
     img_paths = [Path(p) for p in img_paths[:max_images]]
 
     # Ensure results_dir is a string if it's not None
