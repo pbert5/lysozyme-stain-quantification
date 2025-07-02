@@ -66,55 +66,58 @@ class BulkBlobProcessor:
         return self.full_results
 
         return self
-    def save_results(self) -> None:
+    def save_results(self, output_format="geojson") -> None:
         for labels in self.full_results:
             img_path = Path(labels["image_path"])
             base_name = img_path.stem
 
-            # ——— Save original GeoJSON and NPY as before ———
-            geojson_dir = self.out_root / "geojson"
-            geojson_dir.mkdir(parents=True, exist_ok=True)
-            LabelsToGeoJSON(
-                labels["labels"],
-                output_path=geojson_dir / f"{base_name}_rois.geojson",
-                pixel_size=1.0,
-                origin=(0, 0),
-                expand_by=self.ROI_expand_by
-            )
+            if output_format == "geojson":
+                # ——— Save original GeoJSON and NPY as before ———
+                geojson_dir = self.out_root / "geojson"
+                geojson_dir.mkdir(parents=True, exist_ok=True)
+                LabelsToGeoJSON(
+                    labels["labels"],
+                    output_path=geojson_dir / f"{base_name}_rois.geojson",
+                    pixel_size=1.0,
+                    origin=(0, 0),
+                    expand_by=self.ROI_expand_by
+                )
 
-            npy_dir = self.out_root / "npy"
-            npy_dir.mkdir(parents=True, exist_ok=True)
-            np.save(npy_dir / f"{labels['id']}_labels.npy", labels["labels"])
+                npy_dir = self.out_root / "npy"
+                npy_dir.mkdir(parents=True, exist_ok=True)
+                np.save(npy_dir / f"{labels['id']}_labels.npy", labels["labels"])
+            elif output_format == "tifffile":
+                # ——— Prepare ImageJ-ready TIFF + ROI ZIP ———
+                out_dir = self.out_root / "ImageJ_ready"
+                out_dir.mkdir(parents=True, exist_ok=True)
 
-            # ——— Prepare ImageJ-ready TIFF + ROI ZIP ———
-            out_dir = self.out_root / "ImageJ_ready"
-            out_dir.mkdir(parents=True, exist_ok=True)
+                # 1) copy the TIFF
+                img = tifffile.imread(img_path)
+                tifffile.imwrite(out_dir / f"{base_name}.tif", img)
 
-            # 1) copy the TIFF
-            img = tifffile.imread(img_path)
-            tifffile.imwrite(out_dir / f"{base_name}.tif", img)
+                # 2) generate one .roi per contour
+                mask = labels["labels"].astype(np.uint8)
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            # 2) generate one .roi per contour
-            mask = labels["labels"].astype(np.uint8)
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                roi_files: list[Path] = []
+                for i, cnt in enumerate(contours):
+                    if cnt.shape[0] < 3:
+                        continue
+                    coords = cnt[:, 0, :].astype(float)  # Nx2 float array
+                    roi = ImagejRoi.frompoints(coords, name=f"{base_name}_{i}")
+                    roi_path = out_dir / f"{base_name}_{i}.roi"
+                    roi.tofile(str(roi_path))  # write the .roi file :contentReference[oaicite:0]{index=0}
+                    roi_files.append(roi_path)
 
-            roi_files: list[Path] = []
-            for i, cnt in enumerate(contours):
-                if cnt.shape[0] < 3:
-                    continue
-                coords = cnt[:, 0, :].astype(float)  # Nx2 float array
-                roi = ImagejRoi.frompoints(coords, name=f"{base_name}_{i}")
-                roi_path = out_dir / f"{base_name}_{i}.roi"
-                roi.tofile(str(roi_path))  # write the .roi file :contentReference[oaicite:0]{index=0}
-                roi_files.append(roi_path)
+                # 3) bundle them into a ZIP named exactly like the TIFF
+                zip_path = out_dir / f"{base_name}.zip"
+                with zipfile.ZipFile(zip_path, "w") as zf:
+                    for fn in roi_files:
+                        zf.write(fn, arcname=fn.name)
+            else:
+                raise ValueError("Unsupported output format. Choose 'geojson' or 'tifffile'.")
 
-            # 3) bundle them into a ZIP named exactly like the TIFF
-            zip_path = out_dir / f"{base_name}.zip"
-            with zipfile.ZipFile(zip_path, "w") as zf:
-                for fn in roi_files:
-                    zf.write(fn, arcname=fn.name)
-
-        print(f"Saved ImageJ-ready TIFF + ROI-zip for {base_name}")
+        print(f"Saved {output_format} results for {base_name}")
         # Save master summary JSON
     def save_visuals(self, out_dir: str | Path, alpha: float = 0.5) -> None:
         """
