@@ -13,7 +13,7 @@ class BulkBlobProcessor:
     """Process a list of images, save outputs, and write a master summary JSON."""
 
     def __init__(self, img_paths: List[Path], out_root: str | Path = "results", results_dir: Optional[Path] = None, ROI_expand_by: int=0, debug: bool = False):
-        self.paths = [Path(p) for p in img_paths]
+        self.paths = img_paths
         self.out_root = Path(out_root)
         self.debug = debug
         self.results_dir = Path(results_dir) if results_dir is not None else None
@@ -57,17 +57,23 @@ class BulkBlobProcessor:
             })
             # if you really need to free memory:
             # del entry["array"]
+            labels_array = np.array(labels)  # Convert labels to a NumPy array
+            print(f"Processed {entry['id']}: found {np.unique(labels_array).size - 1} ROIs (excluding background)") if self.debug else None
 
         return self.full_results
 
         return self
     def save_results(self) -> None:
         for labels in self.full_results:
-            # Save each label set to a file
-            if self.out_root:
-                self.out_root.mkdir(parents=True, exist_ok=True)
+            # Ensure the geojson and npy directories exist
+            geojson_dir = self.out_root / "geojson"
+            geojson_dir.mkdir(parents=True, exist_ok=True)
+
+            npy_dir = self.out_root / "npy"
+            npy_dir.mkdir(parents=True, exist_ok=True)
+
             output_filename = Path(labels["image_path"]).stem + "_rois.geojson"
-            output_geojson = self.out_root / "geojson" / output_filename
+            output_geojson = geojson_dir / output_filename
 
             LabelsToGeoJSON(
                 labels["labels"],
@@ -76,7 +82,7 @@ class BulkBlobProcessor:
                 origin=(0, 0),
                 expand_by=self.ROI_expand_by
             )
-            out_path = self.out_root / "npy" / f"{labels['id']}_labels.npy"
+            out_path = npy_dir / f"{labels['id']}_labels.npy"
             np.save(out_path, labels['labels'])
             print(f"Saved labels for {labels['id']} to {out_path}")
         # Save master summary JSON
@@ -104,12 +110,12 @@ if __name__ == "__main__":
     from pathlib import Path
 
     # 1) Define your inputs:
-    img_dir    = Path("/home/user/documents/PiereLab/lysozyme/DemoData/Stt4 Lysozyme stain quantification")       # ← change this
+    img_dir    = Path("/home/user/nfs/analysisdata/Stt4 Lysozyme stain quantification/Lysozome images")       # ← change this
     img_glob   = "**/*.tif"                            # ← or "*.png", etc.
     img_paths  = sorted(img_dir.glob(img_glob))
 
     # 2) Define output + options:
-    out_root   = Path("results")                    # where to save
+    out_root   = Path("/home/user/nfs/analysisdata/Stt4 Lysozyme stain quantification/results")                    # where to save
     results_dir = None                              # not used for now
     expand_by  = 1.0                                # how much to expand each ROI
     debug      = True                               # dump debug artifacts?
@@ -117,7 +123,8 @@ if __name__ == "__main__":
 
     # 3) Instantiate & run:
     # Ensure img_paths is a list of strings
-    img_paths = [Path(p) for p in img_paths]
+    max_images = 100  # Set the maximum number of images to process for testing
+    img_paths = [Path(p) for p in img_paths[:max_images]]
 
     # Ensure results_dir is a string if it's not None
     results_dir = Path(results_dir) if results_dir else None
