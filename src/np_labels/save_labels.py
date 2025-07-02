@@ -54,3 +54,4 @@ def LabelsToGeoJSON(label_array, output_path, pixel_size=1.0, origin=(0, 0), lab
         json.dump(geojson, f, indent=2)
 
     print(f"[QuPath Exporter] Saved {len(features)} ROIs to {output_path}")
+    
