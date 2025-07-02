@@ -1,9 +1,9 @@
 from __future__ import annotations
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Sequence, Optional
 import numpy as np
 from blob_det import BlobDetector
-from np_labels.labels_to_geojson import LabelsToGeoJSON
+from np_labels.save_labels import LabelsToGeoJSON
 import tifffile
 from skimage.color import label2rgb
 import matplotlib.pyplot as plt
@@ -12,11 +12,11 @@ import matplotlib.pyplot as plt
 class BulkBlobProcessor:
     """Process a list of images, save outputs, and write a master summary JSON."""
 
-    def __init__(self, img_paths: List[str | Path], out_root: str | Path = "results", results_dir: str | Path = None, ROI_expand_by: int=0.0, debug: bool = False):
+    def __init__(self, img_paths: List[Path], out_root: str | Path = "results", results_dir: Optional[Path] = None, ROI_expand_by: int=0, debug: bool = False):
         self.paths = [Path(p) for p in img_paths]
         self.out_root = Path(out_root)
         self.debug = debug
-        self.results_dir = Path(results_dir) if results_dir else None
+        self.results_dir = Path(results_dir) if results_dir is not None else None
         self.ROI_expand_by = ROI_expand_by
     def load_images(self) -> List[Dict[str, Any]]:
         """Read each file in self.paths into memory."""
@@ -27,7 +27,7 @@ class BulkBlobProcessor:
                 "id": p.stem,
                 "array": arr,
                 "path": p,
-            })
+            }) 
         return self.images
     def process_all(self, low_thresh=30, high_thresh=150, singleton_penalty=10) -> List[Dict[str, Any]]:
         """
@@ -116,11 +116,20 @@ if __name__ == "__main__":
     singleton_penalty = 4                                # proportion of how much more perimeter needs to be in contact then not for merge to happen
 
     # 3) Instantiate & run:
+    # Ensure img_paths is a list of strings
+    img_paths = [Path(p) for p in img_paths]
+
+    # Ensure results_dir is a string if it's not None
+    results_dir = Path(results_dir) if results_dir else None
+
+    # Convert expand_by to an integer
+    ROI_expand_by = int(expand_by)
+
     processor = BulkBlobProcessor(
         img_paths=img_paths,
         out_root=out_root,
         results_dir=results_dir,
-        ROI_expand_by=expand_by,
+        ROI_expand_by=ROI_expand_by,
         debug=debug,
     )
     print(f"Processing {len(processor.paths)} images...")
@@ -137,3 +146,4 @@ if __name__ == "__main__":
 """
 python blob_bulk.py /path/to/images/*.tif --out_root=results --expand_by=2.0 --debug
 """
+
