@@ -1,1 +1,1 @@
-for now ur best off testing it by running napari_view
+Usage explanations to follow; please read the documentation.
