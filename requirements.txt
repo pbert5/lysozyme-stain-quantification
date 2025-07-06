@@ -1,8 +1,5 @@
-numpy 
-opencv-python
-scikit-image 
-tifffile
-matplotlib
-scipy
-jupyter
-shapely
+conda install -c conda-forge numpy scikit-image tifffile matplotlib scipy jupyter shapely
+
+
+
+pip install opencv-python roifile
