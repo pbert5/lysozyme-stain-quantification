@@ -17,8 +17,11 @@ singleton_penalty = 4                                # proportion of how much mo
 
 # 3) Instantiate & run:
 # Ensure img_paths is a list of strings
-max_images = 1  # Set the maximum number of images to process for testing
-img_paths = [Path(p) for p in img_paths[:max_images]]
+max_images = 200  # Set the maximum number of images to process for testing
+img_paths = [
+    Path(p) for p in img_paths[:max_images]
+    if not (str(p).endswith("_DAPI.tif") or str(p).endswith("_RFP.tif"))
+]
 
 # Ensure results_dir is a string if it's not None
 results_dir = Path(results_dir) if results_dir else None
