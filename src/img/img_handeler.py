@@ -104,7 +104,11 @@ class ImgHandler:
         @staticmethod
         def CLAHE(img, clip_limit=2.0, tile_grid_size=(8,8)):
             clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-            img_8bit = img_as_ubyte(img / img.max())  # Normalize to 8-bit
+            max_val = img.max()
+            if max_val == 0:
+                img_8bit = np.zeros_like(img, dtype=np.uint8)
+            else:
+                img_8bit = img_as_ubyte(img / max_val)  # Normalize to 8-bit
             return clahe.apply(img_8bit)
         @staticmethod
         def EnhanceNonblack(img, value=255):
