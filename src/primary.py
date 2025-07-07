@@ -67,13 +67,20 @@ class BulkBlobProcessor:
 
         return self
     def save_results(self, output_format="geojson") -> None:
-        for labels in self.full_results:
+        common_prefix = os.path.commonpath([str(p) for p in self.paths])
+        relative_paths = [p.relative_to(common_prefix) for p in self.paths]
+
+        for labels, rel_path in zip(self.full_results, relative_paths):
             img_path = Path(labels["image_path"])
             base_name = img_path.stem
 
+            # Create subdirectory based on the relative path
+            output_subdir = self.out_root / rel_path.parent
+            output_subdir.mkdir(parents=True, exist_ok=True)
+
             if output_format == "geojson":
                 # ——— Save original GeoJSON and NPY as before ———
-                geojson_dir = self.out_root / "geojson"
+                geojson_dir = output_subdir / "geojson"
                 geojson_dir.mkdir(parents=True, exist_ok=True)
                 LabelsToGeoJSON(
                     labels["labels"],
@@ -83,7 +90,7 @@ class BulkBlobProcessor:
                     expand_by=self.ROI_expand_by
                 )
 
-                npy_dir = self.out_root / "npy"
+                npy_dir = output_subdir / "npy"
                 npy_dir.mkdir(parents=True, exist_ok=True)
                 np.save(npy_dir / f"{labels['id']}_labels.npy", labels["labels"])
             elif output_format == "tifffile":
