@@ -120,7 +120,7 @@ class LabelHandeler:
             # Build shared-perimeter adjacency
             for lbl in self.props:
                 mask = self.label_img == lbl
-                dil = dilation(mask, rectangle(3,3))
+                dil = dilation(mask, np.ones((3,3), dtype=bool))
                 neighs = set(np.unique(self.label_img[dil])) - {0, lbl}
                 for n in neighs:
                     shared_p = int(np.logical_and(dil, self.label_img==n).sum())
