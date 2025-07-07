@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import cv2
 from roifile import ImagejRoi
 import zipfile
+import os
 
 
 class BulkBlobProcessor:
