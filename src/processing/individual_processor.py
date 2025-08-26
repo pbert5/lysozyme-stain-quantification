@@ -77,17 +77,23 @@ class IndividualProcessor:
                 unique_labels = np.unique(initial_labels)
                 print(f"[DEBUG] Initial extraction found {len(unique_labels)-1} regions (labels: {unique_labels})")
             
-            # SKIP MERGING FOR LYSOZYME DETECTION - The extractor works perfectly!
-            # The merge pipeline is too aggressive and merges individual lysozyme stains
-            print(f"[INFO] Using extractor results directly (no merging) - found {len(np.unique(initial_labels))-1} regions")
-            merged_labels = initial_labels.copy()
+            # Apply NEW MERGING STRATEGY - Quality-based boundary sharing
+            print(f"[INFO] Applying new quality-based merging strategy...")
+            merger = MergePipeline(initial_labels, red_img, debug=self.debug)
+            merged_labels = merger.merge()
             
             if self.debug:
+                merge_debug = merger.get_debug_info()
                 self.debug_info['merged_labels'] = merged_labels.copy()
-                self.debug_info['merge_stage1'] = {}  # Empty since no merge
-                self.debug_info['merge_stage2'] = {}  # Empty since no merge
-                print(f"[DEBUG] Skipping merge - extractor found {len(np.unique(initial_labels))-1} lysozyme regions")
-                print(f"[DEBUG] This prevents over-aggressive merging of individual stains")
+                self.debug_info['merge_stage1'] = merge_debug.get('properties_df', {})
+                self.debug_info['merge_stage2'] = merge_debug.get('merge_history', {})
+                print(f"[DEBUG] Merging: {merge_debug['original_regions']} -> {merge_debug['merged_regions']} regions")
+                print(f"[DEBUG] Merges performed: {len(merge_debug['merge_history'])}")
+                if len(merge_debug['merge_history']) > 0:
+                    for merge in merge_debug['merge_history']:
+                        print(f"[DEBUG]   {merge['source']} -> {merge['target']} (boundary: {merge['shared_boundary_ratio']:.2f})")
+            else:
+                print(f"[INFO] Merging complete: {len(np.unique(initial_labels))-1} -> {len(np.unique(merged_labels))-1} regions")
             
             # Calculate pixel dimensions
             pixel_dim = calculate_pixel_dimensions(red_path.name, self.pixel_dims_dict)
@@ -108,21 +114,25 @@ class IndividualProcessor:
                 else:
                     print(f"[DEBUG] No regions found in summary")
             
-            # Generate debug visualizations if requested
+            # Generate visualizations
+            # Always generate standard visualization (regardless of debug mode)
+            standard_visual = self._generate_standard_visualization(rgb_img, merged_labels, red_path.stem)
+            
+            # Generate additional debug visualizations if requested
             debug_visuals = {}
             if self.debug:
                 debug_visuals = self._generate_debug_visuals(
                     rgb_img, initial_labels, merged_labels, red_path.stem
                 )
             
-            return merged_labels, label_summary, debug_visuals
+            return merged_labels, label_summary, standard_visual, debug_visuals
             
         except Exception as e:
             print(f"Error processing {red_path.name}/{blue_path.name}: {e}")
             if self.debug:
                 import traceback
                 traceback.print_exc()
-            return None, None, {}
+            return None, None, {}, {}
     
     def _generate_label_summary(self, labels, red_img, pixel_dim):
         """
@@ -184,6 +194,33 @@ class IndividualProcessor:
             # Return empty array with correct shape
             return np.empty((0, 6))
     
+    def _generate_standard_visualization(self, rgb_img, labels, base_name):
+        """
+        Generate standard visualization with detected regions overlaid.
+        This is always generated regardless of debug mode.
+        
+        Args:
+            rgb_img: Combined RGB image
+            labels: Labeled regions array
+            base_name: Base name for the image pair
+        
+        Returns:
+            Dictionary with standard visualization
+        """
+        from skimage.segmentation import find_boundaries
+        import numpy as np
+        
+        # Create overlay with detected region boundaries
+        boundaries = find_boundaries(labels, mode='inner')
+        overlay = rgb_img.copy()
+        overlay[boundaries] = [255, 0, 0]  # Red boundaries
+        
+        return {
+            'standard_overlay': overlay,
+            'num_regions': len(np.unique(labels)) - 1,  # Subtract background
+            'base_name': base_name
+        }
+    
     def _generate_debug_visuals(self, rgb_img, initial_labels, merged_labels, base_name):
         """
         Generate debug visualization images.
@@ -230,7 +267,7 @@ class IndividualProcessor:
         Returns:
             Final merged labels array
         """
-        merged_labels, _, _ = self.process_pair(red_path, blue_path)
+        merged_labels, _, _, _ = self.process_pair(red_path, blue_path)
         return merged_labels
     
     def debug_run(self, red_path, blue_path):
@@ -244,11 +281,12 @@ class IndividualProcessor:
         Returns:
             Dictionary containing debug renderings and information
         """
-        merged_labels, label_summary, debug_visuals = self.process_pair(red_path, blue_path)
+        merged_labels, label_summary, standard_visual, debug_visuals = self.process_pair(red_path, blue_path)
         
         debug_output = {
             'merged_labels': merged_labels,
             'label_summary': label_summary,
+            'standard_visual': standard_visual,
             'visuals': debug_visuals,
             'processing_info': self.debug_info.copy()
         }

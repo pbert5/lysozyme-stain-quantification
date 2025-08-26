@@ -129,6 +129,11 @@ class BulkProcessor:
             # Save debug visualizations
             self._save_debug_visuals(debug_result, red_path.stem, index)
             
+            # Save standard visualization
+            standard_visual = debug_result.get('standard_visual', {})
+            if standard_visual:
+                self._save_standard_visualization(standard_visual, red_path.stem)
+            
             return {
                 'red_path': red_path,
                 'blue_path': blue_path,
@@ -137,11 +142,15 @@ class BulkProcessor:
                 'debug_info': debug_result
             }
         else:
-            # Get just the essential results
-            merged_labels, summary, _ = processor.process_pair(red_path, blue_path)
+            # Get just the essential results + standard visualization
+            merged_labels, summary, standard_visual, _ = processor.process_pair(red_path, blue_path)
             
             if merged_labels is None:
                 return None
+            
+            # Save standard visualization
+            if standard_visual:
+                self._save_standard_visualization(standard_visual, red_path.stem)
             
             return {
                 'red_path': red_path,
@@ -150,6 +159,26 @@ class BulkProcessor:
                 'summary': summary,
                 'debug_info': None
             }
+    
+    def _save_standard_visualization(self, standard_visual, base_name):
+        """
+        Save standard visualization to the visualizations directory.
+        
+        Args:
+            standard_visual: Dictionary containing standard visualization data
+            base_name: Base name for the image pair
+        """
+        from utils.image_utils import save_standard_visualization
+        
+        if 'standard_overlay' in standard_visual:
+            overlay_img = standard_visual['standard_overlay']
+            output_path = self.dirs['visualizations'] / f"{base_name}_detected_regions.png"
+            
+            title = f"{base_name} - {standard_visual.get('num_regions', 0)} regions detected"
+            
+            # Save using the regular save_debug_image since we already have the overlay
+            from utils.image_utils import save_debug_image
+            save_debug_image(overlay_img, output_path, title)
     
     def _save_debug_visuals(self, debug_result, base_name, index):
         """

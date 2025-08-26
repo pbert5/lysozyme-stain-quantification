@@ -38,7 +38,8 @@ def create_output_directories(base_output_dir, debug=False):
     dirs = {
         'base': Path(base_output_dir),
         'results': Path(base_output_dir) / 'results',
-        'summaries': Path(base_output_dir) / 'summaries'
+        'summaries': Path(base_output_dir) / 'summaries',
+        'visualizations': Path(base_output_dir) / 'visualizations'  # Always create this
     }
     
     if debug:
@@ -73,6 +74,43 @@ def save_debug_image(image, filepath, title=None):
     if title:
         plt.title(title)
     plt.axis('off')
+    plt.tight_layout()
+    plt.savefig(filepath, dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def save_standard_visualization(rgb_img, labels, filepath, title=None):
+    """
+    Save standard visualization with detected regions overlaid on RGB image.
+    This is the main visualization for non-debug mode.
+    
+    Args:
+        rgb_img: Original RGB image
+        labels: Labeled regions array
+        filepath: Output file path
+        title: Optional title for the image
+    """
+    import matplotlib.pyplot as plt
+    from skimage.segmentation import find_boundaries
+    import numpy as np
+    
+    # Create overlay with detected region boundaries
+    boundaries = find_boundaries(labels, mode='inner')
+    overlay = rgb_img.copy()
+    overlay[boundaries] = [255, 0, 0]  # Red boundaries
+    
+    plt.figure(figsize=(12, 8))
+    plt.imshow(overlay)
+    if title:
+        plt.title(title, fontsize=14)
+    plt.axis('off')
+    
+    # Add text annotation with region count
+    num_regions = len(np.unique(labels)) - 1  # Subtract 1 for background
+    plt.text(10, 30, f'{num_regions} regions detected', 
+             color='white', fontsize=12, weight='bold',
+             bbox=dict(facecolor='black', alpha=0.7, pad=5))
+    
     plt.tight_layout()
     plt.savefig(filepath, dpi=150, bbox_inches='tight')
     plt.close()

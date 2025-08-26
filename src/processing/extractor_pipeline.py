@@ -172,9 +172,11 @@ class ExtractorPipeline:
             print(f"[EXTRACTOR DEBUG] Final watershed: {len(unique_ws)} regions, max label: {ws_labels.max()}")
             if len(unique_ws) <= 20:
                 print(f"[EXTRACTOR DEBUG] Final labels: {unique_ws}")
-        
+
+        ws_labels[ws_labels == 1] = 0 
+        ws_labels[ws_labels > 1] = -1
         return ws_labels
-    
+
     def get_debug_info(self):
         """
         Get debug information from the last extraction.

@@ -18,6 +18,7 @@ RESULTS_DIR = Path(r"C:\Users\admin\Documents\Pierre lab\projects\Colustrum-ABX\
 RED_CHANNEL = "RFP"        # Identifier substring for red channel files
 BLUE_CHANNEL = "DAPI"      # Identifier substring for blue channel files
 DEBUG = False              # Set True for verbose errors / debug info
+IMAGE_LIMIT = 4            # Limit number of images for testing (set to None for all images)
 
 # Pixel dimensions in micrometers (choose one of the following options):
 
@@ -49,6 +50,12 @@ def main():
         sys.exit(1)
 
     print(f"Found {len(image_pairs)} image pairs")
+
+    # Limit images for testing if specified
+    if IMAGE_LIMIT is not None:
+        original_count = len(image_pairs)
+        image_pairs = image_pairs[:IMAGE_LIMIT]
+        print(f"Limited to first {len(image_pairs)} image pairs for testing (out of {original_count} total)")
 
     # Initialize and run bulk processor
     processor = BulkProcessor(

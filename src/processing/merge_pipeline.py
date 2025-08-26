@@ -1,271 +1,301 @@
 """
-Merge pipeline for combining adjacent labeled regions.
+New merge pipeline for combining adjacent labeled regions based on quality assessment and boundary sharing.
 """
 
 import numpy as np
-from collections import defaultdict
-from itertools import combinations
+import pandas as pd
+from scipy.ndimage import center_of_mass
+from sklearn.linear_model import LinearRegression
 from skimage.measure import regionprops, perimeter
-from skimage.morphology import dilation
-from skimage.color import label2rgb
+from skimage.segmentation import find_boundaries
+from scipy.ndimage import binary_dilation
 import matplotlib.pyplot as plt
 
 
 class MergePipeline:
-    """Pipeline for merging adjacent labeled regions based on shared perimeters."""
+    """Pipeline for merging adjacent labeled regions based on quality assessment and boundary sharing."""
     
-    def __init__(self, label_img, raw_img=None, singleton_penalty=10.0, sample_size=100, debug=False):
+    def __init__(self, label_img, raw_img=None, debug=False):
         """
         Initialize the merge pipeline.
         
         Args:
             label_img: Labeled image array
-            raw_img: Optional raw image for additional analysis
-            singleton_penalty: Penalty factor for singleton regions
-            sample_size: Number of coordinate samples for distance calculations
+            raw_img: Raw red channel image for quality assessment
             debug: Whether to enable debug output
         """
-        self.label_img = label_img
+        self.label_img = label_img.copy()
         self.raw_img = raw_img
-        self.singleton_penalty = singleton_penalty
-        self.sample_size = sample_size
         self.debug = debug
         
-        # Will be populated during processing
-        self.props = {}
-        self.perims = {}
-        self.cents = {}
-        self.areas = {}
-        self.shared = defaultdict(lambda: defaultdict(int))
-        self.triangles = []
-        self.combos = {}
-        self.best_stage1 = {}
-        self.second_stage_results = {}
+        # Results storage
+        self.properties_df = None
+        self.merge_history = []
         self.merged_label_array = None
 
-    def compute_stats(self):
-        """Compute region properties and adjacency statistics."""
-        # Compute region properties
-        self.props = {r.label: r for r in regionprops(self.label_img)}
-        self.perims = {lbl: perimeter(self.label_img == lbl) for lbl in self.props}
-        self.cents = {lbl: self.props[lbl].centroid for lbl in self.props}
-        self.areas = {lbl: self.props[lbl].area for lbl in self.props}
+    def calculate_region_properties(self):
+        """Calculate comprehensive properties for each detected region"""
+        properties = []
         
-        if self.debug:
-            print(f"[MERGE DEBUG] Found {len(self.props)} regions with areas: {[self.areas[lbl] for lbl in sorted(self.props.keys())]}")
-        
-        # Build shared-perimeter adjacency
-        adjacency_count = 0
-        for lbl in self.props:
-            mask = self.label_img == lbl
-            dil = dilation(mask, np.ones((3, 3), dtype=bool))
-            neighs = set(np.unique(self.label_img[dil])) - {0, lbl}
-            for n in neighs:
-                shared_p = int(np.logical_and(dil, self.label_img == n).sum())
-                self.shared[lbl][n] = shared_p
-                self.shared[n][lbl] = shared_p
-                adjacency_count += 1
-        
-        if self.debug:
-            print(f"[MERGE DEBUG] Found {adjacency_count//2} adjacency relationships")
-            # Show first few adjacencies
-            for i, (lbl, neighs) in enumerate(list(self.shared.items())[:3]):
-                if neighs:
-                    print(f"[MERGE DEBUG] Region {lbl} adjacent to: {list(neighs.keys())}")
-        
-        return self
-
-    def find_triangles(self):
-        """Find triangular relationships between regions."""
-        triangles = set()
-        for a in self.shared:
-            neighs = list(self.shared[a])
-            for b, c in combinations(neighs, 2):
-                if b in self.shared[c] and c in self.shared[b]:
-                    triangles.add(tuple(sorted((a, b, c))))
-        self.triangles = sorted(triangles)
-        return self
-
-    def build_candidate_groups(self):
-        """Build candidate groupings for each region."""
-        tri_index = defaultdict(list)
-        for tri in self.triangles:
-            for lbl in tri:
-                tri_index[lbl].append(tri)
-        
-        combos = defaultdict(list)
-        for lbl in self.shared:
-            # Single region
-            combos[lbl].append((lbl,))
+        for label_id in np.unique(self.label_img):
+            if label_id == 0:  # Skip background
+                continue
+                
+            # Get mask for this region
+            mask = self.label_img == label_id
             
-            # Pairs with neighbors
-            for n in self.shared[lbl]:
-                if n != lbl:
-                    combos[lbl].append((lbl, n))
+            # Basic properties
+            area = np.sum(mask)
+            if area == 0:
+                continue
+                
+            # Physical center of mass
+            physical_com = center_of_mass(mask)
             
-            # Triangles containing this label
-            combos[lbl].extend(tri_index[lbl])
-            
-            # Merged triangles
-            seen = set()
-            for t1 in tri_index[lbl]:
-                for t2 in tri_index[lbl]:
-                    if t1 == t2:
-                        continue
-                    inter = set(t1).intersection(t2)
-                    if len(inter) == 2 and lbl in inter:
-                        merged = tuple(sorted(set(t1).union(t2)))
-                        if merged not in seen:
-                            combos[lbl].append(merged)
-                            seen.add(merged)
-        
-        self.combos = combos
-        return self
-
-    def evaluate_stage1(self):
-        """Evaluate stage 1 groupings based on shared perimeter ratios."""
-        best = {}
-        for lbl, clist in self.combos.items():
-            P = self.perims[lbl]
-            best_score, best_combo = -1.0, (lbl,)
-            
-            for combo in clist:
-                if combo == (lbl,):
-                    score = 1.0 / self.singleton_penalty
+            # Red intensity weighted center of mass (if raw image provided)
+            if self.raw_img is not None:
+                red_values = self.raw_img[mask]
+                if np.sum(red_values) > 0:
+                    # Get coordinates of pixels in this region
+                    y_coords, x_coords = np.where(mask)
+                    # Weight by red intensity
+                    red_com_y = np.sum(y_coords * red_values) / np.sum(red_values)
+                    red_com_x = np.sum(x_coords * red_values) / np.sum(red_values)
+                    red_com = (red_com_y, red_com_x)
                 else:
-                    shared_sum = sum(self.shared[lbl][n] for n in combo if n != lbl)
-                    score = shared_sum / (P + 1e-8)
-                
-                if score > best_score:
-                    best_score, best_combo = score, combo
+                    red_com = physical_com
+                    
+                # Red intensity per area
+                total_red_intensity = np.sum(red_values)
+                red_intensity_per_area = total_red_intensity / area if area > 0 else 0
+            else:
+                red_com = physical_com
+                total_red_intensity = 0
+                red_intensity_per_area = 0
             
-            best[lbl] = (best_combo, best_score)
+            # Distance between physical and red-weighted center of mass
+            com_distance = np.sqrt((physical_com[0] - red_com[0])**2 + (physical_com[1] - red_com[1])**2)
+            com_distance_normalized = com_distance / np.sqrt(area)
             
-            if self.debug and lbl <= 5:  # Show debug for first few regions
-                print(f"[MERGE DEBUG] Region {lbl}: best combo {best_combo} with score {best_score:.4f}")
+            # Circularity measure
+            region_perimeter = perimeter(mask.astype(int))
+            circularity = 4 * np.pi * area / (region_perimeter**2) if region_perimeter > 0 else 0
+            
+            properties.append({
+                'label_id': label_id,
+                'area': area,
+                'physical_com': physical_com,
+                'red_com': red_com,
+                'com_distance': com_distance,
+                'com_distance_normalized': com_distance_normalized,
+                'red_intensity_per_area': red_intensity_per_area,
+                'total_red_intensity': total_red_intensity,
+                'circularity': circularity
+            })
         
-        # Catch "no-combo" labels
-        for lbl in self.props:
-            if lbl not in best:
-                best[lbl] = ((lbl,), 1.0 / self.singleton_penalty)
+        return pd.DataFrame(properties)
+
+    def calculate_circularity_from_line_fit(self, properties_df):
+        """Calculate how far each detection center is from line of best fit"""
+        if len(properties_df) < 2:
+            properties_df['distance_from_line'] = 0
+            return properties_df
+        
+        # Get physical centers
+        centers = np.array([prop for prop in properties_df['physical_com']])
+        
+        # Fit line through centers
+        X = centers[:, 1].reshape(-1, 1)  # x coordinates
+        y = centers[:, 0]  # y coordinates
+        
+        reg = LinearRegression().fit(X, y)
+        
+        # Calculate distance from line for each point
+        distances = []
+        for center in centers:
+            x, y = center[1], center[0]
+            # Distance from point to line ax + by + c = 0
+            # Line: y = mx + b -> mx - y + b = 0
+            m = reg.coef_[0]
+            b = reg.intercept_
+            distance = abs(m * x - y + b) / np.sqrt(m**2 + 1)
+            distances.append(distance)
+        
+        properties_df['distance_from_line'] = distances
+        return properties_df
+
+    def quality_score_regions(self, properties_df):
+        """Calculate quality scores and identify best regions"""
+        if len(properties_df) == 0:
+            return properties_df
+        
+        # Normalize metrics (smaller distance from median area is better)
+        median_area = properties_df['area'].median()
+        properties_df['area_deviation'] = np.abs(properties_df['area'] - median_area) / median_area
+        
+        # Normalize other metrics to [0, 1] range
+        for col in ['distance_from_line', 'com_distance_normalized', 'area_deviation']:
+            if col in properties_df.columns:
+                max_val = properties_df[col].max()
+                if max_val > 0:
+                    properties_df[f'{col}_norm'] = properties_df[col] / max_val
+                else:
+                    properties_df[f'{col}_norm'] = 0
+        
+        # Normalize red_intensity_per_area (higher is better, so invert)
+        max_red = properties_df['red_intensity_per_area'].max()
+        if max_red > 0:
+            properties_df['red_intensity_norm'] = 1 - (properties_df['red_intensity_per_area'] / max_red)
+        else:
+            properties_df['red_intensity_norm'] = 0
+        
+        # Circularity (higher is better, so invert)
+        max_circ = properties_df['circularity'].max()
+        if max_circ > 0:
+            properties_df['circularity_norm'] = 1 - (properties_df['circularity'] / max_circ)
+        else:
+            properties_df['circularity_norm'] = 0
+        
+        # Calculate composite quality score (lower is better)
+        properties_df['quality_score'] = (
+            properties_df['distance_from_line_norm'] +
+            properties_df['com_distance_normalized_norm'] +
+            properties_df['area_deviation_norm'] +
+            properties_df['red_intensity_norm'] +
+            properties_df['circularity_norm']
+        ) / 5
+        
+        return properties_df.sort_values('quality_score')
+
+    def find_boundary_sharing_candidates(self, properties_df):
+        """Find regions that share significant boundary length"""
+        merge_candidates = []
+        
+        # Skip background region (label 1 is typically the large background region)
+        actual_stains = properties_df[properties_df['label_id'] != 1].copy()
+        
+        for i, row1 in actual_stains.iterrows():
+            for j, row2 in actual_stains.iterrows():
+                if row1['label_id'] >= row2['label_id']:  # Avoid duplicates
+                    continue
+                    
+                # Get boundaries of both regions
+                mask1 = self.label_img == row1['label_id']
+                mask2 = self.label_img == row2['label_id']
+                
+                boundary1 = find_boundaries(mask1, mode='inner')
+                boundary2 = find_boundaries(mask2, mode='inner')
+                
+                # Dilate boundaries slightly to check for proximity
+                dilated1 = binary_dilation(boundary1, structure=np.ones((3,3)))
+                dilated2 = binary_dilation(boundary2, structure=np.ones((3,3)))
+                
+                # Check overlap
+                overlap = np.sum(dilated1 & dilated2)
+                boundary1_length = np.sum(boundary1)
+                boundary2_length = np.sum(boundary2)
+                
+                if boundary1_length > 0 and boundary2_length > 0:
+                    shared_ratio1 = overlap / boundary1_length
+                    shared_ratio2 = overlap / boundary2_length
+                    avg_shared_ratio = (shared_ratio1 + shared_ratio2) / 2
+                    
+                    # Quality difference
+                    quality_diff = abs(row1['quality_score'] - row2['quality_score'])
+                    
+                    merge_candidates.append({
+                        'label1': row1['label_id'],
+                        'label2': row2['label_id'],
+                        'shared_boundary_ratio': avg_shared_ratio,
+                        'quality_diff': quality_diff,
+                        'should_merge': avg_shared_ratio > 0.3 and quality_diff < 0.15
+                    })
+        
+        return pd.DataFrame(merge_candidates)
+
+    def apply_merges(self, merge_candidates):
+        """Apply the boundary sharing merges"""
+        merged_labels = self.label_img.copy()
+        merge_history = []
+        
+        # Get actual stains (exclude background)
+        actual_stains = self.properties_df[self.properties_df['label_id'] != 1].copy()
+        
+        # Apply boundary sharing merges
+        merges_to_apply = merge_candidates[merge_candidates['should_merge'] == True].copy()
         
         if self.debug:
-            singleton_count = sum(1 for combo, _ in best.values() if len(combo) == 1)
-            group_count = len(best) - singleton_count
-            print(f"[MERGE DEBUG] Stage 1: {singleton_count} singletons, {group_count} groups")
+            print(f"Applying {len(merges_to_apply)} boundary-sharing merges:")
         
-        self.best_stage1 = best
-        return self
-
-    def evaluate_stage2(self):
-        """Evaluate stage 2 groupings with area/perimeter and distance metrics."""
-        # Assign groups and leaders
-        group_map = defaultdict(set)
-        for lbl, (group, _) in self.best_stage1.items():
-            norm = tuple(sorted(int(g) for g in group))
-            group_map[norm].add(int(lbl))
-        
-        group_leaders = {grp: max(grp, key=lambda x: self.areas[x]) for grp in group_map}
-        
-        if self.debug:
-            print(f"[MERGE DEBUG] Stage 2: {len(group_map)} groups identified")
-            for i, (grp, members) in enumerate(list(group_map.items())[:5]):
-                print(f"[MERGE DEBUG] Group {i}: {grp} -> members {members}, leader {group_leaders[grp]}")
-        
-        # Stage2 results
-        results = {}
-        for grp, members in group_map.items():
-            leader = group_leaders[grp]
-            expanded = set(grp)
-            for l in grp:
-                expanded.update(self.shared[l].keys())
-            expanded = {int(l) for l in expanded if int(l) in self.props}
+        for _, merge_info in merges_to_apply.iterrows():
+            label1 = merge_info['label1']
+            label2 = merge_info['label2']
             
-            for lbl in members:
-                # Compute score
-                tot_area = sum(self.areas[l] for l in expanded)
-                tot_perim = sum(self.perims[l] for l in expanded)
-                coords = np.vstack([self.props[l].coords for l in expanded])
-                com = coords.mean(axis=0)
-                
-                lbl_coords = self.props[lbl].coords
-                if len(lbl_coords) > self.sample_size:
-                    idx = np.linspace(0, len(lbl_coords) - 1, self.sample_size).astype(int)
-                    lbl_coords = lbl_coords[idx]
-                
-                dists = np.linalg.norm(lbl_coords - com, axis=1)
-                avg_dist = dists.mean()
-                score2 = (tot_area / (tot_perim + 1e-8)) / (avg_dist + 1e-8)
-                results[lbl] = (leader, score2)
-        
-        # Add true singletons
-        all_lbls = set(self.props.keys())
-        for lbl in all_lbls - set(results):
-            results[int(lbl)] = (int(lbl), 0.0)
-        
-        if self.debug:
-            leader_counts = defaultdict(int)
-            for leader, _ in results.values():
-                leader_counts[leader] += 1
-            print(f"[MERGE DEBUG] Final leaders: {dict(leader_counts)}")
-        
-        self.second_stage_results = results
-        return self
-
-    def relabel(self):
-        """Create the final merged label array."""
-        mapping = {lbl: tgt for lbl, (tgt, _) in self.second_stage_results.items()}
-        out = np.zeros_like(self.label_img)
-        for old, new in mapping.items():
-            out[self.label_img == old] = new
-        self.merged_label_array = out
-        return self
-
-    def run(self):
-        """Run the complete merge pipeline."""
-        return (self.compute_stats()
-                .find_triangles()
-                .build_candidate_groups()
-                .evaluate_stage1()
-                .evaluate_stage2()
-                .relabel())
-
-    def plot_initial(self, title="Original Labels"):
-        """Plot the initial labeled image."""
-        img = label2rgb(self.label_img, bg_label=0)
-        plt.figure(figsize=(6, 6))
-        plt.imshow(img)
-        plt.title(title)
-        plt.axis('off')
-
-    def plot_stage1(self, title="Stage 1 Groupings"):
-        """Plot stage 1 groupings with annotations."""
-        img = label2rgb(self.label_img, bg_label=0)
-        plt.figure(figsize=(6, 6))
-        plt.imshow(img)
-        plt.title(title)
-        plt.axis('off')
-        
-        for region in regionprops(self.label_img):
-            if region.label == 0:
+            # Check if both labels still exist (haven't been merged already)
+            if label1 not in np.unique(merged_labels) or label2 not in np.unique(merged_labels):
                 continue
-            grp, _ = self.best_stage1[region.label]
-            txt = ",".join(str(int(x)) for x in grp)
-            y, x = region.centroid
-            plt.text(x, y, txt, ha='center', va='center', color='white',
-                    bbox=dict(facecolor='black', alpha=0.5, lw=0))
-
-    def plot_final(self, title="Final Merged Labels"):
-        """Plot the final merged labels."""
-        img = label2rgb(self.merged_label_array, bg_label=0)
-        plt.figure(figsize=(6, 6))
-        plt.imshow(img)
-        plt.title(title)
-        plt.axis('off')
+                
+            # Determine merge direction - merge into the higher quality region
+            quality1 = actual_stains[actual_stains['label_id'] == label1]['quality_score'].iloc[0]
+            quality2 = actual_stains[actual_stains['label_id'] == label2]['quality_score'].iloc[0]
+            
+            if quality1 <= quality2:  # Lower score = better quality
+                target, source = label1, label2
+            else:
+                target, source = label2, label1
+                
+            if self.debug:
+                print(f"  Merging {source} -> {target} (shared boundary: {merge_info['shared_boundary_ratio']:.2f})")
+            
+            # Perform the merge
+            merged_labels[merged_labels == source] = target
+            merge_history.append({
+                'source': source,
+                'target': target,
+                'shared_boundary_ratio': merge_info['shared_boundary_ratio'],
+                'quality_diff': merge_info['quality_diff']
+            })
         
-        for region in regionprops(self.merged_label_array):
-            if region.label == 0:
-                continue
-            y, x = region.centroid
-            plt.text(x, y, str(region.label), ha='center', va='center', color='white',
-                    bbox=dict(facecolor='black', alpha=0.5, lw=0))
+        return merged_labels, merge_history
+
+    def merge(self):
+        """
+        Main merging function that applies the quality-based boundary sharing strategy.
+        
+        Returns:
+            Merged label array
+        """
+        if self.debug:
+            print("Starting quality-based boundary sharing merge...")
+        
+        # Step 1: Calculate region properties
+        self.properties_df = self.calculate_region_properties()
+        self.properties_df = self.calculate_circularity_from_line_fit(self.properties_df)
+        self.properties_df = self.quality_score_regions(self.properties_df)
+        
+        if self.debug:
+            actual_stains = self.properties_df[self.properties_df['label_id'] != 1]
+            print(f"Found {len(actual_stains)} actual stain regions")
+            print(f"Top 5 quality regions: {actual_stains.head(5)['label_id'].tolist()}")
+        
+        # Step 2: Find boundary sharing candidates
+        merge_candidates = self.find_boundary_sharing_candidates(self.properties_df)
+        
+        # Step 3: Apply merges
+        self.merged_label_array, self.merge_history = self.apply_merges(merge_candidates)
+        
+        if self.debug:
+            original_count = len(np.unique(self.label_img)) - 1
+            merged_count = len(np.unique(self.merged_label_array)) - 1
+            print(f"Merging complete: {original_count} -> {merged_count} regions ({len(self.merge_history)} merges)")
+        
+        return self.merged_label_array
+
+    def get_debug_info(self):
+        """Return debug information about the merging process"""
+        return {
+            'properties_df': self.properties_df,
+            'merge_history': self.merge_history,
+            'original_regions': len(np.unique(self.label_img)) - 1,
+            'merged_regions': len(np.unique(self.merged_label_array)) - 1 if self.merged_label_array is not None else 0
+        }
