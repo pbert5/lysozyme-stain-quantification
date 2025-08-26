@@ -13,12 +13,12 @@ from utils.file_utils import validate_directories, find_image_pairs
 # ------------------------------------------------------------------
 # User configuration (edit these)
 # ------------------------------------------------------------------
-IMG_DIR = Path(r"C:\Users\admin\Documents\Pierre lab\projects\Colustrum-ABX\lysozyme stain quantification\lysozyme images\Jej LYZ")        # Directory containing TIFF images
-RESULTS_DIR = Path(r"C:\Users\admin\Documents\Pierre lab\projects\Colustrum-ABX\lysozyme stain quantification\results\Jej LYZ")  # Output directory
+IMG_DIR = Path(r"C:\Users\admin\Documents\Pierre lab\projects\Colustrum-ABX\lysozyme stain quantification\lysozyme images")        # Directory containing TIFF images
+RESULTS_DIR = Path(r"C:\Users\admin\Documents\Pierre lab\projects\Colustrum-ABX\lysozyme stain quantification\results\All")  # Output directory
 RED_CHANNEL = "RFP"        # Identifier substring for red channel files
 BLUE_CHANNEL = "DAPI"      # Identifier substring for blue channel files
 DEBUG = False              # Set True for verbose errors / debug info
-IMAGE_LIMIT = 10         # Limit number of images for testing (set to None for all images)
+IMAGE_LIMIT = 100         # Limit number of images for testing (set to None for all images)
 
 # Pixel dimensions in micrometers (choose one of the following options):
 

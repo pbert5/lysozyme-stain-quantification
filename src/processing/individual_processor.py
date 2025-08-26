@@ -161,7 +161,7 @@ class IndividualProcessor:
     
     def _generate_label_summary(self, labels, red_img, pixel_dim):
         """
-        Generate summary statistics for labeled regions.
+        Generate summary statistics for labeled regions - VECTORIZED VERSION.
         
         Args:
             labels: Labeled image array
@@ -179,6 +179,12 @@ class IndividualProcessor:
             print(f"[SUMMARY DEBUG] Region props found: {len(props)} regions")
             print(f"[SUMMARY DEBUG] Red image for intensity: range [{red_img.min():.2f}, {red_img.max():.2f}]")
         
+        if not props:
+            if self.debug:
+                print(f"[SUMMARY DEBUG] No regions to summarize, returning empty array")
+            return np.empty((0, 6))
+        
+        # Vectorized calculation of properties
         summary_data = []
         for i, prop in enumerate(props):
             if prop.label == 0:  # Skip background
@@ -186,17 +192,15 @@ class IndividualProcessor:
                     print(f"[SUMMARY DEBUG] Skipping background region (label 0)")
                 continue
             
-            # Calculate statistics
+            # Calculate statistics using regionprops data directly
             region_id = prop.label
             pos_y, pos_x = prop.centroid  # Note: centroid returns (row, col)
             area_pixels = prop.area
             area_um2 = area_pixels * (pixel_dim ** 2)
             
-            # Get intensity values for this region
-            mask = labels == prop.label
-            red_values = red_img[mask]
-            red_sum = red_values.sum()
-            red_intensity = red_sum / area_pixels if area_pixels > 0 else 0
+            # Use regionprops intensity data - more efficient than manual masking
+            red_sum = prop.mean_intensity * area_pixels  # Total intensity
+            red_intensity = prop.mean_intensity  # Mean intensity
             
             if self.debug and i < 5:  # Only show debug for first 5 regions
                 print(f"[SUMMARY DEBUG] Region {region_id}: area={area_pixels}px ({area_um2:.2f}μm²), "
@@ -320,7 +324,7 @@ class IndividualProcessor:
     
     def _remove_edge_touching_regions(self, labels):
         """
-        Remove any labeled regions that touch the edges of the image.
+        Remove any labeled regions that touch the edges of the image - VECTORIZED VERSION.
         
         Args:
             labels: Labeled image array
@@ -334,36 +338,38 @@ class IndividualProcessor:
         unique_labels = np.unique(labels)
         unique_labels = unique_labels[unique_labels != 0]
         
-        # Find labels that touch edges
-        edge_labels = set()
+        # Vectorized edge detection - get all edge pixels at once
+        edge_mask = np.zeros_like(labels, dtype=bool)
+        edge_mask[0, :] = True    # Top edge
+        edge_mask[-1, :] = True   # Bottom edge
+        edge_mask[:, 0] = True    # Left edge
+        edge_mask[:, -1] = True   # Right edge
         
-        # Check top and bottom edges
-        edge_labels.update(np.unique(labels[0, :]))  # Top edge
-        edge_labels.update(np.unique(labels[-1, :]))  # Bottom edge
-        
-        # Check left and right edges  
-        edge_labels.update(np.unique(labels[:, 0]))  # Left edge
-        edge_labels.update(np.unique(labels[:, -1]))  # Right edge
-        
-        # Remove background label (0) from edge labels
-        edge_labels.discard(0)
+        # Find all labels that touch edges in one operation
+        edge_labels = np.unique(labels[edge_mask])
+        edge_labels = edge_labels[edge_labels != 0]  # Remove background
         
         if self.debug:
             print(f"[DEBUG] Found {len(edge_labels)} edge-touching regions to remove: {sorted(edge_labels)}")
         
-        # Create new label array without edge-touching regions
-        filtered_labels = labels.copy()
-        for edge_label in edge_labels:
-            filtered_labels[labels == edge_label] = 0
+        # Vectorized removal - create mask for non-edge labels
+        keep_mask = ~np.isin(labels, edge_labels)
+        filtered_labels = labels * keep_mask  # Removes edge labels, sets them to 0
         
-        # Relabel remaining regions to be sequential starting from 1
+        # Vectorized relabeling - get remaining labels and create lookup table
         remaining_labels = np.unique(filtered_labels)
         remaining_labels = remaining_labels[remaining_labels != 0]
         
         if len(remaining_labels) > 0:
-            final_labels = np.zeros_like(filtered_labels)
+            # Create vectorized lookup table for relabeling
+            max_label = remaining_labels.max()
+            lookup = np.zeros(max_label + 1, dtype=labels.dtype)
+            
             for new_id, old_id in enumerate(sorted(remaining_labels), start=1):
-                final_labels[filtered_labels == old_id] = new_id
+                lookup[old_id] = new_id
+            
+            # Apply vectorized relabeling
+            final_labels = np.where(filtered_labels > 0, lookup[filtered_labels], 0)
         else:
             final_labels = filtered_labels
         

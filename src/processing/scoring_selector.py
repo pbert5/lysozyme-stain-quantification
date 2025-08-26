@@ -45,69 +45,57 @@ class ScoringSelector:
         self.scoring_history = []
 
     def calculate_region_properties(self):
-        """Calculate comprehensive properties for each detected region"""
+        """Calculate comprehensive properties for each detected region - VECTORIZED VERSION"""
         if self.debug:
             unique_labels = np.unique(self.label_img)
             print(f"[SCORING DEBUG] Input label array has {len(unique_labels)} unique labels: {unique_labels}")
         
-        properties = []
+        # Get all region properties in one call - much faster than looping
+        regions = regionprops(self.label_img, intensity_image=self.raw_img)
         
-        for label_id in np.unique(self.label_img):
-            if label_id == 0:  # Skip background
-                continue
-                
-            # Get mask for this region
-            mask = self.label_img == label_id
-            
-            # Basic properties
-            area = np.sum(mask)
-            if area == 0:
-                if self.debug:
-                    print(f"[SCORING WARNING] Label {label_id} has zero area, skipping")
-                continue
-            
+        if len(regions) == 0:
+            return pd.DataFrame()
+        
+        # Extract properties vectorized
+        properties = []
+        for region in regions:
             if self.debug:
-                print(f"[SCORING DEBUG] Processing label {label_id}: area = {area} pixels")
-                
-            # Physical center of mass
-            physical_com = center_of_mass(mask)
+                print(f"[SCORING DEBUG] Processing label {region.label}: area = {region.area} pixels")
             
             # Red intensity calculation (if raw image provided)
             if self.raw_img is not None:
-                red_values = self.raw_img[mask]
-                # Red intensity per area - this is what we want for scoring
-                total_red_intensity = np.sum(red_values)
-                red_intensity_per_area = total_red_intensity / area if area > 0 else 0
+                # Use mean_intensity from regionprops and convert to total/per_area
+                total_red_intensity = region.mean_intensity * region.area
+                red_intensity_per_area = region.mean_intensity
             else:
                 total_red_intensity = 0
                 red_intensity_per_area = 0
             
-            # Circularity measure
-            region_perimeter = perimeter(mask.astype(int))
-            circularity = 4 * np.pi * area / (region_perimeter**2) if region_perimeter > 0 else 0
+            # Circularity measure using regionprops perimeter
+            circularity = 4 * np.pi * region.area / (region.perimeter**2) if region.perimeter > 0 else 0
             
             properties.append({
-                'label_id': label_id,
-                'area': area,
-                'physical_com': physical_com,
+                'label_id': region.label,
+                'area': region.area,
+                'physical_com': region.centroid,
                 'red_intensity_per_area': red_intensity_per_area,
                 'total_red_intensity': total_red_intensity,
                 'circularity': circularity,
-                'perimeter': region_perimeter
+                'perimeter': region.perimeter
             })
         
         return pd.DataFrame(properties)
 
     def calculate_line_fit_deviation(self, properties_df):
         """Calculate how far each detection center is from line of best fit through all centers,
-        normalized by region size (radius approximation)"""
+        normalized by region size (radius approximation) - VECTORIZED VERSION"""
         if len(properties_df) < 2:
             properties_df['distance_from_line'] = 0
             properties_df['normalized_line_distance'] = 0
             return properties_df
         
-        # Get physical centers
-        centers = np.array([prop for prop in properties_df['physical_com']])
+        # Get physical centers as array - vectorized
+        centers = np.array(list(properties_df['physical_com']))
         
         # Fit line through centers
         X = centers[:, 1].reshape(-1, 1)  # x coordinates
@@ -115,24 +103,20 @@ class ScoringSelector:
         
         reg = LinearRegression().fit(X, y)
         
-        # Calculate distance from line for each point
-        distances = []
-        normalized_distances = []
+        # Vectorized distance calculation
+        m = reg.coef_[0]
+        b = reg.intercept_
         
-        for idx, center in enumerate(centers):
-            x, y = center[1], center[0]
-            # Distance from point to line ax + by + c = 0
-            # Line: y = mx + b -> mx - y + b = 0
-            m = reg.coef_[0]
-            b = reg.intercept_
-            distance = abs(m * x - y + b) / np.sqrt(m**2 + 1)
-            distances.append(distance)
-            
-            # Normalize by approximate radius (sqrt(area/2))
-            area = properties_df.iloc[idx]['area']
-            radius_approx = np.sqrt(area / 2)
-            normalized_distance = distance / radius_approx if radius_approx > 0 else 0
-            normalized_distances.append(normalized_distance)
+        # Calculate distances for all points at once using broadcasting
+        x_coords = centers[:, 1]
+        y_coords = centers[:, 0]
+        distances = np.abs(m * x_coords - y_coords + b) / np.sqrt(m**2 + 1)
+        
+        # Vectorized normalization by radius approximation
+        areas = properties_df['area'].values
+        radius_approx = np.sqrt(areas / 2)
+        radius_approx[radius_approx == 0] = 1  # Avoid division by zero
+        normalized_distances = distances / radius_approx
         
         properties_df['distance_from_line'] = distances
         properties_df['normalized_line_distance'] = normalized_distances
@@ -224,23 +208,33 @@ class ScoringSelector:
         return best_regions['label_id'].tolist()
 
     def create_filtered_labels(self, selected_label_ids):
-        """Create new label array with only selected regions"""
+        """Create new label array with only selected regions - VECTORIZED VERSION"""
         
         if self.debug:
             print(f"[SCORING DEBUG] Creating filtered labels from {len(selected_label_ids)} selected regions")
             print(f"[SCORING DEBUG] Selected IDs: {selected_label_ids}")
         
-        # Create new label array with only selected regions
+        # Create new label array with only selected regions - vectorized approach
         filtered_labels = np.zeros_like(self.label_img)
         
-        # Relabel selected regions with sequential IDs starting from 1
-        for new_id, old_id in enumerate(selected_label_ids, start=1):
-            mask = self.label_img == old_id
-            filtered_labels[mask] = new_id
+        # Create mapping for vectorized relabeling
+        old_to_new = {old_id: new_id for new_id, old_id in enumerate(selected_label_ids, start=1)}
+        
+        # Vectorized relabeling using fancy indexing
+        if selected_label_ids:
+            # Create a lookup table for all possible label values
+            max_label = max(selected_label_ids) if selected_label_ids else 0
+            lookup = np.zeros(max_label + 1, dtype=filtered_labels.dtype)
             
-            if self.debug:
-                pixels_count = np.sum(mask)
-                print(f"[SCORING DEBUG] Relabeled {old_id} -> {new_id}, {pixels_count} pixels")
+            for old_id, new_id in old_to_new.items():
+                lookup[old_id] = new_id
+                if self.debug:
+                    pixels_count = np.sum(self.label_img == old_id)
+                    print(f"[SCORING DEBUG] Relabeled {old_id} -> {new_id}, {pixels_count} pixels")
+            
+            # Apply vectorized lookup - much faster than loops
+            mask = np.isin(self.label_img, selected_label_ids)
+            filtered_labels[mask] = lookup[self.label_img[mask]]
         
         if self.debug:
             print(f"[SCORING DEBUG] Filtered label array unique labels: {np.unique(filtered_labels)}")
