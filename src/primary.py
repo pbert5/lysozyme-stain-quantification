@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Dict, Any, Sequence, Optional
 import numpy as np
-from blob_det import BlobDetector
+from blob_det import BlobDetector, get_rfp_dapi_pairs, process_all_rfp_dapi_pairs
 from np_labels.save_labels import LabelsToGeoJSON
 import tifffile
 from skimage.color import label2rgb
@@ -145,6 +145,42 @@ class BulkBlobProcessor:
                 bg_label=0,
             )
             plt.imsave(out / f"{r['id']}_overlay.png", overlay)
+
+
+class RFPDAPIProcessor:
+    """Process RFP/DAPI image pairs using watershed refinement."""
+    
+    def __init__(self, project_root: Path, debug: bool = False):
+        self.project_root = Path(project_root)
+        self.debug = debug
+        self.detector = BlobDetector(debug=debug)
+    
+    def find_image_pairs(self, max_pairs: int = 30) -> List[tuple]:
+        """Find RFP/DAPI image pairs in the project."""
+        images_root = self.project_root / 'lysozyme images'
+        return get_rfp_dapi_pairs(images_root, max_pairs=max_pairs)
+    
+    def process_all_pairs(self, max_pairs: int = 30, show_plots: bool = True) -> List[np.ndarray]:
+        """Process all RFP/DAPI pairs and return watershed results."""
+        return process_all_rfp_dapi_pairs(
+            self.project_root, 
+            max_show=max_pairs, 
+            show_plots=show_plots
+        )
+    
+    def process_single_pair(self, rfp_path: Path, dapi_path: Path, 
+                           show_visualization: bool = True) -> np.ndarray:
+        """Process a single RFP/DAPI pair."""
+        ws_labels = self.detector.process_rfp_dapi_pair(rfp_path, dapi_path)
+        
+        if ws_labels.size > 0 and show_visualization:
+            self.detector.visualize_watershed_results(
+                rfp_path, dapi_path, ws_labels, self.project_root
+            )
+        
+        return ws_labels
+
+
         
 if __name__ == "__main__":
     print("Running BulkBlobProcessor...")
