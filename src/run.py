@@ -18,7 +18,7 @@ RESULTS_DIR = Path(r"C:\Users\admin\Documents\Pierre lab\projects\Colustrum-ABX\
 RED_CHANNEL = "RFP"        # Identifier substring for red channel files
 BLUE_CHANNEL = "DAPI"      # Identifier substring for blue channel files
 DEBUG = False              # Set True for verbose errors / debug info
-IMAGE_LIMIT = 5          # Limit number of images for testing (set to None for all images)
+IMAGE_LIMIT = 10         # Limit number of images for testing (set to None for all images)
 
 # Pixel dimensions in micrometers (choose one of the following options):
 
@@ -36,7 +36,7 @@ PIXEL_DIMS = {
 
 # Scoring weights for region selection (lower is better)
 SCORING_WEIGHTS = {
-    'circularity': 0.3,     # Most important - want circular regions
+    'circularity': 0.1,     # Most important - want circular regions
     'area': 0.4,            # Second - want larger areas
     'line_fit': 0.2,        # Moderate - want aligned regions
     'red_intensity': 0.3,   # Least - want bright regions
