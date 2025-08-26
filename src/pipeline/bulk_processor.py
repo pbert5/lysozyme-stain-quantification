@@ -17,7 +17,7 @@ from utils.file_utils import build_rgb, load_as_gray
 class BulkProcessor:
     """Processor for handling multiple image pairs in bulk."""
     
-    def __init__(self, output_dir, pixel_dims, debug=False, max_workers=None):
+    def __init__(self, output_dir, pixel_dims, debug=False, max_workers=None, scoring_weights=None, max_regions=5):
         """
         Initialize the bulk processor.
         
@@ -26,11 +26,15 @@ class BulkProcessor:
             pixel_dims: Dictionary mapping filename patterns to pixel dimensions
             debug: Whether to enable debug mode
             max_workers: Maximum number of worker processes (None for auto)
+            scoring_weights: Dictionary of scoring weights for region selection
+            max_regions: Maximum number of regions to select per image
         """
         self.output_dir = Path(output_dir)
         self.pixel_dims = pixel_dims
         self.debug = debug
         self.max_workers = max_workers
+        self.scoring_weights = scoring_weights
+        self.max_regions = max_regions
         
         # Create output directories
         self.dirs = create_output_directories(self.output_dir, debug=debug)
@@ -117,13 +121,13 @@ class BulkProcessor:
         Returns:
             Dictionary containing processing results
         """
-        processor = IndividualProcessor(self.pixel_dims, debug=self.debug)
+        processor = IndividualProcessor(self.pixel_dims, debug=self.debug, scoring_weights=self.scoring_weights, max_regions=self.max_regions)
         
         if self.debug:
             # Get full debug information
             debug_result = processor.debug_run(red_path, blue_path)
             
-            if debug_result['merged_labels'] is None:
+            if debug_result['selected_labels'] is None:
                 return None
             
             # Save debug visualizations
@@ -137,15 +141,15 @@ class BulkProcessor:
             return {
                 'red_path': red_path,
                 'blue_path': blue_path,
-                'merged_labels': debug_result['merged_labels'],
+                'selected_labels': debug_result['selected_labels'],
                 'summary': debug_result['label_summary'],
                 'debug_info': debug_result
             }
         else:
             # Get just the essential results + standard visualization
-            merged_labels, summary, standard_visual, _ = processor.process_pair(red_path, blue_path)
+            selected_labels, summary, standard_visual, _ = processor.process_pair(red_path, blue_path)
             
-            if merged_labels is None:
+            if selected_labels is None:
                 return None
             
             # Save standard visualization
@@ -155,7 +159,7 @@ class BulkProcessor:
             return {
                 'red_path': red_path,
                 'blue_path': blue_path,
-                'merged_labels': merged_labels,
+                'selected_labels': selected_labels,
                 'summary': summary,
                 'debug_info': None
             }
@@ -244,12 +248,12 @@ class BulkProcessor:
                                f"{base_name} - Initial Labels")
                 step_num += 1
             
-            if 'merged_labels' in processing_info:
+            if 'selected_labels' in processing_info:
                 from skimage.color import label2rgb
-                merged_img = label2rgb(processing_info['merged_labels'], bg_label=0)
-                save_debug_image(merged_img, 
-                               detailed_dir / f"{base_name}_{step_num:02d}_final_merged_labels.png",
-                               f"{base_name} - Final Merged Labels")
+                selected_img = label2rgb(processing_info['selected_labels'], bg_label=0)
+                save_debug_image(selected_img, 
+                               detailed_dir / f"{base_name}_{step_num:02d}_final_selected_labels.png",
+                               f"{base_name} - Final Selected Labels")
     
     def _save_consolidated_results(self):
         """Save consolidated results to CSV files."""
@@ -308,10 +312,10 @@ class BulkProcessor:
                 blue_img = load_as_gray(result['blue_path'])
                 rgb_img = build_rgb(red_img, blue_img)
                 
-                # Add merged labels overlay
-                merged_boundaries = find_boundaries(result['merged_labels'], mode='inner')
+                # Add selected labels overlay
+                selected_boundaries = find_boundaries(result['selected_labels'], mode='inner')
                 overlay = rgb_img.copy()
-                overlay[merged_boundaries] = [255, 0, 0]  # Red boundaries
+                overlay[selected_boundaries] = [255, 0, 0]  # Red boundaries
                 
                 ax.imshow(overlay)
                 ax.set_title(result['red_path'].stem, fontsize=8)

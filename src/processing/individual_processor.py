@@ -9,7 +9,7 @@ from skimage.segmentation import find_boundaries
 import matplotlib.pyplot as plt
 
 from processing.extractor_pipeline import ExtractorPipeline
-from processing.merge_pipeline import MergePipeline
+from processing.scoring_selector import ScoringSelector
 from utils.file_utils import load_as_gray, build_rgb, remove_rectangles
 from utils.image_utils import calculate_pixel_dimensions
 
@@ -17,16 +17,20 @@ from utils.image_utils import calculate_pixel_dimensions
 class IndividualProcessor:
     """Processor for individual image pairs."""
     
-    def __init__(self, pixel_dims_dict, debug=False):
+    def __init__(self, pixel_dims_dict, debug=False, scoring_weights=None, max_regions=5):
         """
         Initialize the individual processor.
         
         Args:
             pixel_dims_dict: Dictionary mapping filename patterns to pixel dimensions
             debug: Whether to enable debug mode
+            scoring_weights: Dictionary of scoring weights for region selection
+            max_regions: Maximum number of regions to select per image
         """
         self.pixel_dims_dict = pixel_dims_dict
         self.debug = debug
+        self.scoring_weights = scoring_weights
+        self.max_regions = max_regions
         self.debug_info = {}
     
     def process_pair(self, red_path, blue_path):
@@ -38,7 +42,7 @@ class IndividualProcessor:
             blue_path: Path to blue channel image
         
         Returns:
-            Tuple of (merged_labels, label_summary, debug_info)
+            Tuple of (selected_labels, label_summary, debug_info)
         """
         try:
             # Load images
@@ -71,29 +75,50 @@ class IndividualProcessor:
             extractor = ExtractorPipeline(debug=self.debug)
             initial_labels = extractor.extract(red_img, blue_img)
             
+            # Remove regions that touch the image edges
+            initial_labels = self._remove_edge_touching_regions(initial_labels)
+            
             if self.debug:
                 self.debug_info['extractor_debug'] = extractor.get_debug_info()
                 self.debug_info['initial_labels'] = initial_labels.copy()
                 unique_labels = np.unique(initial_labels)
-                print(f"[DEBUG] Initial extraction found {len(unique_labels)-1} regions (labels: {unique_labels})")
+                print(f"[DEBUG] Initial extraction found {len(unique_labels)-1} regions after edge removal (labels: {unique_labels})")
             
-            # Apply NEW MERGING STRATEGY - Quality-based boundary sharing
-            print(f"[INFO] Applying new quality-based merging strategy...")
-            merger = MergePipeline(initial_labels, red_img, debug=self.debug)
-            merged_labels = merger.merge()
+            # Apply NEW SCORING STRATEGY - Quality-based region selection
+            print(f"[INFO] Applying new quality-based scoring strategy...")
+            
+            # Use scoring weights passed from configuration, or defaults
+            scoring_weights = self.scoring_weights if self.scoring_weights is not None else {
+                'circularity': 0.35,    # Most important - want circular regions
+                'area': 0.25,           # Second - want consistent sizes
+                'line_fit': 0.15,       # Moderate - want aligned regions
+                'red_intensity': 0.15,  # Moderate - want bright regions
+                'com_consistency': 0.10 # Least - center consistency
+            }
+            
+            selector = ScoringSelector(initial_labels, red_img, debug=self.debug, max_regions=self.max_regions, weights=scoring_weights)
+            selected_labels = selector.select()
             
             if self.debug:
-                merge_debug = merger.get_debug_info()
-                self.debug_info['merged_labels'] = merged_labels.copy()
-                self.debug_info['merge_stage1'] = merge_debug.get('properties_df', {})
-                self.debug_info['merge_stage2'] = merge_debug.get('merge_history', {})
-                print(f"[DEBUG] Merging: {merge_debug['original_regions']} -> {merge_debug['merged_regions']} regions")
-                print(f"[DEBUG] Merges performed: {len(merge_debug['merge_history'])}")
-                if len(merge_debug['merge_history']) > 0:
-                    for merge in merge_debug['merge_history']:
-                        print(f"[DEBUG]   {merge['source']} -> {merge['target']} (boundary: {merge['shared_boundary_ratio']:.2f})")
+                selection_debug = selector.get_debug_info()
+                self.debug_info['selected_labels'] = selected_labels.copy()
+                self.debug_info['selection_properties'] = selection_debug.get('properties_df', {})
+                self.debug_info['selected_label_ids'] = selection_debug.get('selected_labels', [])
+                print(f"[DEBUG] Selection: {selection_debug['original_regions']} -> {selection_debug['selected_regions']} regions")
+                print(f"[DEBUG] Selected label IDs: {selection_debug['selected_labels']}")
+                if hasattr(selector, 'properties_df') and selector.properties_df is not None:
+                    print(f"[DEBUG] Quality score range: {selector.properties_df['quality_score'].min():.3f} - {selector.properties_df['quality_score'].max():.3f}")
+                
+                # Save scoring plot if we have multiple regions
+                if len(np.unique(initial_labels)) > 3:  # More than just background + 1-2 regions
+                    try:
+                        scoring_plot_path = self.debug_info.get('debug_dir', Path(".")) / f"{red_path.stem}_scoring_breakdown.png"
+                        selector.plot_scoring_results(save_path=scoring_plot_path)
+                        print(f"[DEBUG] Saved scoring breakdown plot to {scoring_plot_path}")
+                    except Exception as e:
+                        print(f"[DEBUG] Could not save scoring plot: {e}")
             else:
-                print(f"[INFO] Merging complete: {len(np.unique(initial_labels))-1} -> {len(np.unique(merged_labels))-1} regions")
+                print(f"[INFO] Selection complete: {len(np.unique(initial_labels))-1} -> {len(np.unique(selected_labels))-1} regions")
             
             # Calculate pixel dimensions
             pixel_dim = calculate_pixel_dimensions(red_path.name, self.pixel_dims_dict)
@@ -103,7 +128,7 @@ class IndividualProcessor:
             
             # Generate label summary
             label_summary = self._generate_label_summary(
-                merged_labels, red_img, pixel_dim
+                selected_labels, red_img, pixel_dim
             )
             
             if self.debug:
@@ -116,16 +141,16 @@ class IndividualProcessor:
             
             # Generate visualizations
             # Always generate standard visualization (regardless of debug mode)
-            standard_visual = self._generate_standard_visualization(rgb_img, merged_labels, red_path.stem)
+            standard_visual = self._generate_standard_visualization(rgb_img, selected_labels, red_path.stem)
             
             # Generate additional debug visualizations if requested
             debug_visuals = {}
             if self.debug:
                 debug_visuals = self._generate_debug_visuals(
-                    rgb_img, initial_labels, merged_labels, red_path.stem
+                    rgb_img, initial_labels, selected_labels, red_path.stem
                 )
             
-            return merged_labels, label_summary, standard_visual, debug_visuals
+            return selected_labels, label_summary, standard_visual, debug_visuals
             
         except Exception as e:
             print(f"Error processing {red_path.name}/{blue_path.name}: {e}")
@@ -221,14 +246,14 @@ class IndividualProcessor:
             'base_name': base_name
         }
     
-    def _generate_debug_visuals(self, rgb_img, initial_labels, merged_labels, base_name):
+    def _generate_debug_visuals(self, rgb_img, initial_labels, selected_labels, base_name):
         """
         Generate debug visualization images.
         
         Args:
             rgb_img: Combined RGB image
             initial_labels: Initial labeled regions
-            merged_labels: Final merged labeled regions
+            selected_labels: Final selected labeled regions
             base_name: Base name for the image pair
         
         Returns:
@@ -242,33 +267,33 @@ class IndividualProcessor:
         initial_overlay[initial_boundaries] = [255, 255, 0]  # Yellow boundaries
         debug_visuals['initial_overlay'] = initial_overlay
         
-        # Merged labels overlay
-        merged_boundaries = find_boundaries(merged_labels, mode='inner')
-        merged_overlay = rgb_img.copy()
-        merged_overlay[merged_boundaries] = [255, 0, 0]  # Red boundaries
-        debug_visuals['merged_overlay'] = merged_overlay
+        # Selected labels overlay
+        selected_boundaries = find_boundaries(selected_labels, mode='inner')
+        selected_overlay = rgb_img.copy()
+        selected_overlay[selected_boundaries] = [255, 0, 0]  # Red boundaries
+        debug_visuals['selected_overlay'] = selected_overlay
         
         # Combined view with both overlays
         combined_overlay = rgb_img.copy()
         combined_overlay[initial_boundaries] = [255, 255, 0]  # Yellow for initial
-        combined_overlay[merged_boundaries] = [255, 0, 0]     # Red for merged (overwrites)
+        combined_overlay[selected_boundaries] = [255, 0, 0]     # Red for selected (overwrites)
         debug_visuals['combined_overlay'] = combined_overlay
         
         return debug_visuals
     
     def run(self, red_path, blue_path):
         """
-        Default run method that returns final merged labels.
+        Default run method that returns final selected labels.
         
         Args:
             red_path: Path to red channel image
             blue_path: Path to blue channel image
         
         Returns:
-            Final merged labels array
+            Final selected labels array
         """
-        merged_labels, _, _, _ = self.process_pair(red_path, blue_path)
-        return merged_labels
+        selected_labels, _, _, _ = self.process_pair(red_path, blue_path)
+        return selected_labels
     
     def debug_run(self, red_path, blue_path):
         """
@@ -281,10 +306,10 @@ class IndividualProcessor:
         Returns:
             Dictionary containing debug renderings and information
         """
-        merged_labels, label_summary, standard_visual, debug_visuals = self.process_pair(red_path, blue_path)
+        selected_labels, label_summary, standard_visual, debug_visuals = self.process_pair(red_path, blue_path)
         
         debug_output = {
-            'merged_labels': merged_labels,
+            'selected_labels': selected_labels,
             'label_summary': label_summary,
             'standard_visual': standard_visual,
             'visuals': debug_visuals,
@@ -292,3 +317,59 @@ class IndividualProcessor:
         }
         
         return debug_output
+    
+    def _remove_edge_touching_regions(self, labels):
+        """
+        Remove any labeled regions that touch the edges of the image.
+        
+        Args:
+            labels: Labeled image array
+            
+        Returns:
+            Filtered label array with edge-touching regions removed
+        """
+        height, width = labels.shape
+        
+        # Get unique labels excluding background
+        unique_labels = np.unique(labels)
+        unique_labels = unique_labels[unique_labels != 0]
+        
+        # Find labels that touch edges
+        edge_labels = set()
+        
+        # Check top and bottom edges
+        edge_labels.update(np.unique(labels[0, :]))  # Top edge
+        edge_labels.update(np.unique(labels[-1, :]))  # Bottom edge
+        
+        # Check left and right edges  
+        edge_labels.update(np.unique(labels[:, 0]))  # Left edge
+        edge_labels.update(np.unique(labels[:, -1]))  # Right edge
+        
+        # Remove background label (0) from edge labels
+        edge_labels.discard(0)
+        
+        if self.debug:
+            print(f"[DEBUG] Found {len(edge_labels)} edge-touching regions to remove: {sorted(edge_labels)}")
+        
+        # Create new label array without edge-touching regions
+        filtered_labels = labels.copy()
+        for edge_label in edge_labels:
+            filtered_labels[labels == edge_label] = 0
+        
+        # Relabel remaining regions to be sequential starting from 1
+        remaining_labels = np.unique(filtered_labels)
+        remaining_labels = remaining_labels[remaining_labels != 0]
+        
+        if len(remaining_labels) > 0:
+            final_labels = np.zeros_like(filtered_labels)
+            for new_id, old_id in enumerate(sorted(remaining_labels), start=1):
+                final_labels[filtered_labels == old_id] = new_id
+        else:
+            final_labels = filtered_labels
+        
+        if self.debug:
+            original_count = len(unique_labels)
+            final_count = len(np.unique(final_labels)) - 1
+            print(f"[DEBUG] Edge removal: {original_count} -> {final_count} regions")
+        
+        return final_labels

@@ -18,7 +18,7 @@ RESULTS_DIR = Path(r"C:\Users\admin\Documents\Pierre lab\projects\Colustrum-ABX\
 RED_CHANNEL = "RFP"        # Identifier substring for red channel files
 BLUE_CHANNEL = "DAPI"      # Identifier substring for blue channel files
 DEBUG = False              # Set True for verbose errors / debug info
-IMAGE_LIMIT = 4            # Limit number of images for testing (set to None for all images)
+IMAGE_LIMIT = 5          # Limit number of images for testing (set to None for all images)
 
 # Pixel dimensions in micrometers (choose one of the following options):
 
@@ -33,6 +33,17 @@ PIXEL_DIMS = {
 
 # 3. Or set to None and let downstream code handle absence
 # PIXEL_DIMS = None
+
+# Scoring weights for region selection (lower is better)
+SCORING_WEIGHTS = {
+    'circularity': 0.3,     # Most important - want circular regions
+    'area': 0.4,            # Second - want larger areas
+    'line_fit': 0.2,        # Moderate - want aligned regions
+    'red_intensity': 0.3,   # Least - want bright regions
+}
+
+# Maximum number of regions to select
+MAX_REGIONS = 5
 # ------------------------------------------------------------------
 
 
@@ -50,6 +61,21 @@ def main():
         sys.exit(1)
 
     print(f"Found {len(image_pairs)} image pairs")
+    
+    # Debug: Check for duplicates
+    if DEBUG:
+        pair_names = [pair[0].name for pair in image_pairs]
+        unique_names = set(pair_names)
+        if len(pair_names) != len(unique_names):
+            print(f"[DEBUG] WARNING: Duplicate image pairs detected!")
+            for name in unique_names:
+                count = pair_names.count(name)
+                if count > 1:
+                    print(f"[DEBUG] {name} appears {count} times")
+        
+        print(f"[DEBUG] First 5 pairs:")
+        for i, (red, blue) in enumerate(image_pairs[:5]):
+            print(f"[DEBUG] {i+1}: {red.name} + {blue.name}")
 
     # Limit images for testing if specified
     if IMAGE_LIMIT is not None:
@@ -61,6 +87,8 @@ def main():
     processor = BulkProcessor(
         output_dir=RESULTS_DIR,
         pixel_dims=PIXEL_DIMS,
+        scoring_weights=SCORING_WEIGHTS,
+        max_regions=MAX_REGIONS,
         debug=DEBUG
     )
 

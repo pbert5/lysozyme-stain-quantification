@@ -59,6 +59,9 @@ def find_image_pairs(img_dir: Path, red_channel: str, blue_channel: str) -> List
         list(img_dir.rglob(red_pattern_tiff.upper()))
     )
     
+    # Remove duplicates while preserving order
+    red_files = list(dict.fromkeys(red_files))
+    
     pairs = []
     
     for red_path in red_files:

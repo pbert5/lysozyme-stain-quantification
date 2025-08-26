@@ -173,8 +173,9 @@ class ExtractorPipeline:
             if len(unique_ws) <= 20:
                 print(f"[EXTRACTOR DEBUG] Final labels: {unique_ws}")
 
-        ws_labels[ws_labels == 1] = 0 
-        ws_labels[ws_labels > 1] = -1
+        # Remove background label (1) and relabel others sequentially starting from 1
+        ws_labels[ws_labels == 1] = 0
+        ws_labels[ws_labels > 1] = ws_labels[ws_labels > 1] - 1
         return ws_labels
 
     def get_debug_info(self):
