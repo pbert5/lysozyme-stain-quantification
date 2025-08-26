@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env pythoIMAGE_LIMIT = 100         # Limit number of images for testing (set to None for all images)3
 """
 Main entry point for the lysozyme stain quantification pipeline.
 All configuration is now hard-coded below for easier usage (no CLI args).
@@ -18,7 +18,7 @@ RESULTS_DIR = Path(r"C:\Users\admin\Documents\Pierre lab\projects\Colustrum-ABX\
 RED_CHANNEL = "RFP"        # Identifier substring for red channel files
 BLUE_CHANNEL = "DAPI"      # Identifier substring for blue channel files
 DEBUG = False              # Set True for verbose errors / debug info
-IMAGE_LIMIT = 100         # Limit number of images for testing (set to None for all images)
+IMAGE_LIMIT = 50         # Limit number of images for testing (set to None for all images)
 
 # Pixel dimensions in micrometers (choose one of the following options):
 
