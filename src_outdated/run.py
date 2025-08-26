@@ -21,7 +21,7 @@ else:
 
     # 2) Define output + options:
     out_root   = Path("results/Jej LYZ")                    # where to save
-    results_dir = None                              # not used for now
+    results_dir = Path("../results/Jej LYZ")                                 # not used for now
     expand_by  = 1.0                                # how much to expand each ROI
     debug      = True                               # dump debug artifacts?
     singleton_penalty = 4                                # proportion of how much more perimeter needs to be in contact then not for merge to happen
