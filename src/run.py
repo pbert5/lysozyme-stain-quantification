@@ -1,4 +1,4 @@
-#!/usr/bin/env pythoIMAGE_LIMIT = 100         # Limit number of images for testing (set to None for all images)3
+#!/usr/bin/env python3
 """
 Main entry point for the lysozyme stain quantification pipeline.
 All configuration is now hard-coded below for easier usage (no CLI args).

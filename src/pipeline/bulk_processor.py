@@ -97,7 +97,8 @@ class BulkProcessor:
                     if result['summary'] is not None and len(result['summary']) > 0:
                         summary_df = pd.DataFrame(
                             result['summary'], 
-                            columns=['id', 'pos_x_um', 'pos_y_um', 'area_um2', 'red_sum', 'red_intensity']
+                            columns=['id', 'pos_x_um', 'pos_y_um', 'area_um2', 'red_sum', 'red_intensity', 
+                                   'fluorescence', 'background_tissue_intensity', 'average_crypt_intensity']
                         )
                         # Use clean name instead of raw stem
                         summary_df['image_name'] = clean_name
@@ -152,9 +153,9 @@ class BulkProcessor:
         red_name = red_path.stem
         clean_name = re.sub(r'_(?:RFP|DAPI)$', '', red_name, flags=re.IGNORECASE)
         
-        # Check if this is from a retake directory
+        # Check if this is from a retake directory or Jej LYZ directory
         parent_path_str = str(red_path.parent).lower()
-        is_retake = 'retake' in parent_path_str
+        is_retake = 'retake' in parent_path_str or 'jej lyz' in parent_path_str
         
         # Get subdirectory info for duplicate handling
         # Use relative path from the common image directory

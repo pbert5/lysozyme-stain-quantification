@@ -41,10 +41,8 @@ class ExtractorPipeline:
         if red_img.shape != blue_img.shape:
             raise ValueError(f"Image shape mismatch: red {red_img.shape} vs blue {blue_img.shape}")
         
-        # Store original images for debug
+        # Store original images for debug (minimal storage)
         if self.debug:
-            self.debug_info['red_original'] = red_img.copy()
-            self.debug_info['blue_original'] = blue_img.copy()
             print(f"[EXTRACTOR DEBUG] Input red: shape {red_img.shape}, range [{red_img.min():.2f}, {red_img.max():.2f}]")
             print(f"[EXTRACTOR DEBUG] Input blue: shape {blue_img.shape}, range [{blue_img.min():.2f}, {blue_img.max():.2f}]")
         
@@ -57,9 +55,6 @@ class ExtractorPipeline:
         blue = disp[..., 2].astype(np.float32)
         
         if self.debug:
-            self.debug_info['disp_rgb'] = disp.copy()
-            self.debug_info['red_from_disp'] = red.copy()
-            self.debug_info['blue_from_disp'] = blue.copy()
             print(f"[EXTRACTOR DEBUG] Red from display: range [{red.min():.2f}, {red.max():.2f}]")
             print(f"[EXTRACTOR DEBUG] Blue from display: range [{blue.min():.2f}, {blue.max():.2f}]")
         
@@ -173,10 +168,60 @@ class ExtractorPipeline:
             if len(unique_ws) <= 20:
                 print(f"[EXTRACTOR DEBUG] Final labels: {unique_ws}")
 
+        # Calculate background and crypt intensities before removing region 1
+        self._calculate_intensity_metrics(ws_labels, red_img, blue_img)
+
         # Remove background label (1) and relabel others sequentially starting from 1
         ws_labels[ws_labels == 1] = 0
         ws_labels[ws_labels > 1] = ws_labels[ws_labels > 1] - 1
         return ws_labels
+
+    def _calculate_intensity_metrics(self, ws_labels, red_img, blue_img):
+        """
+        Calculate background tissue intensity and average crypt intensity
+        before removing region 1 (background tissue).
+        
+        Args:
+            ws_labels: Watershed labels array
+            red_img: Red channel image
+            blue_img: Blue channel image
+        """
+        # Calculate background tissue intensity (region 1) - optimized
+        background_mask = (ws_labels == 1)
+        background_tissue_intensity = 0.0
+        if np.any(background_mask):
+            # Use vectorized operations to avoid creating temporary arrays
+            red_bg = red_img[background_mask]
+            blue_bg = blue_img[background_mask]
+            valid_mask = blue_bg > 1e-10  # Small threshold to avoid division by zero
+            if np.any(valid_mask):
+                background_tissue_intensity = np.mean(red_bg[valid_mask] / blue_bg[valid_mask])
+        
+        # Calculate average crypt intensity (all other regions excluding 0) - optimized
+        crypt_mask = (ws_labels > 1)
+        average_crypt_intensity = 0.0
+        if np.any(crypt_mask):
+            red_crypt = red_img[crypt_mask]
+            blue_crypt = blue_img[crypt_mask]
+            valid_mask = blue_crypt > 1e-10  # Small threshold to avoid division by zero
+            if np.any(valid_mask):
+                average_crypt_intensity = np.mean(red_crypt[valid_mask] / blue_crypt[valid_mask])
+        
+        # Store in debug info for access by the processor
+        self.debug_info['background_tissue_intensity'] = background_tissue_intensity
+        self.debug_info['average_crypt_intensity'] = average_crypt_intensity
+
+    def get_intensity_metrics(self):
+        """
+        Get the calculated intensity metrics.
+        
+        Returns:
+            Tuple of (background_tissue_intensity, average_crypt_intensity)
+        """
+        return (
+            self.debug_info.get('background_tissue_intensity', 0.0),
+            self.debug_info.get('average_crypt_intensity', 0.0)
+        )
 
     def get_debug_info(self):
         """

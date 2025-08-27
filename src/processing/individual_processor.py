@@ -75,6 +75,9 @@ class IndividualProcessor:
             extractor = ExtractorPipeline(debug=self.debug)
             initial_labels = extractor.extract(red_img, blue_img)
             
+            # Get intensity metrics before they are lost
+            background_tissue_intensity, average_crypt_intensity = extractor.get_intensity_metrics()
+            
             # Remove regions that touch the image edges
             initial_labels = self._remove_edge_touching_regions(initial_labels)
             
@@ -128,7 +131,7 @@ class IndividualProcessor:
             
             # Generate label summary
             label_summary = self._generate_label_summary(
-                selected_labels, red_img, pixel_dim
+                selected_labels, red_img, pixel_dim, background_tissue_intensity, average_crypt_intensity
             )
             
             if self.debug:
@@ -185,7 +188,7 @@ class IndividualProcessor:
         except Exception as e:
             print(f"Warning: Could not save labels array: {e}")
 
-    def _generate_label_summary(self, labels, red_img, pixel_dim):
+    def _generate_label_summary(self, labels, red_img, pixel_dim, background_tissue_intensity=0.0, average_crypt_intensity=0.0):
         """
         Generate summary statistics for labeled regions - VECTORIZED VERSION.
         
@@ -193,9 +196,12 @@ class IndividualProcessor:
             labels: Labeled image array
             red_img: Red channel image for intensity measurements
             pixel_dim: Pixel dimension in micrometers
+            background_tissue_intensity: Background tissue intensity (red/blue ratio)
+            average_crypt_intensity: Average crypt intensity (red/blue ratio)
         
         Returns:
-            Numpy array with columns: [id, pos_x, pos_y, area, red_sum, red_intensity]
+            Numpy array with columns: [id, pos_x, pos_y, area_um2, red_sum, red_intensity, 
+                                     fluorescence, background_tissue_intensity, average_crypt_intensity]
         """
         props = regionprops(labels, intensity_image=red_img)
         
@@ -208,7 +214,7 @@ class IndividualProcessor:
         if not props:
             if self.debug:
                 print(f"[SUMMARY DEBUG] No regions to summarize, returning empty array")
-            return np.empty((0, 6))
+            return np.empty((0, 9))  # Updated to 9 columns
         
         # Vectorized calculation of properties
         summary_data = []
@@ -228,13 +234,19 @@ class IndividualProcessor:
             red_sum = prop.mean_intensity * area_pixels  # Total intensity
             red_intensity = prop.mean_intensity  # Mean intensity
             
+            # Calculate fluorescence as red_sum_pixels / area_pixels * area_um2
+            # This is equivalent to: red_intensity * area_um2
+            fluorescence = red_intensity * area_um2
+            
             if self.debug and i < 5:  # Only show debug for first 5 regions
                 print(f"[SUMMARY DEBUG] Region {region_id}: area={area_pixels}px ({area_um2:.2f}μm²), "
-                      f"centroid=({pos_x:.1f},{pos_y:.1f}), red_sum={red_sum:.0f}, intensity={red_intensity:.2f}")
+                      f"centroid=({pos_x:.1f},{pos_y:.1f}), red_sum={red_sum:.0f}, intensity={red_intensity:.2f}, "
+                      f"fluorescence={fluorescence:.2f}")
             
             summary_data.append([
                 region_id, pos_x * pixel_dim, pos_y * pixel_dim, 
-                area_um2, red_sum, red_intensity
+                area_um2, red_sum, red_intensity, fluorescence,
+                background_tissue_intensity, average_crypt_intensity
             ])
         
         # Convert to numpy array
@@ -242,12 +254,14 @@ class IndividualProcessor:
             result = np.array(summary_data)
             if self.debug:
                 print(f"[SUMMARY DEBUG] Final summary shape: {result.shape}")
+                print(f"[SUMMARY DEBUG] Background tissue intensity: {background_tissue_intensity:.3f}")
+                print(f"[SUMMARY DEBUG] Average crypt intensity: {average_crypt_intensity:.3f}")
             return result
         else:
             if self.debug:
                 print(f"[SUMMARY DEBUG] No regions to summarize, returning empty array")
             # Return empty array with correct shape
-            return np.empty((0, 6))
+            return np.empty((0, 9))  # Updated to 9 columns
     
     def _generate_standard_visualization(self, rgb_img, labels, base_name):
         """
