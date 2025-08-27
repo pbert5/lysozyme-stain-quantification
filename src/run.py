@@ -18,7 +18,7 @@ RESULTS_DIR = Path(r"C:\Users\admin\Documents\Pierre lab\projects\Colustrum-ABX\
 RED_CHANNEL = "RFP"        # Identifier substring for red channel files
 BLUE_CHANNEL = "DAPI"      # Identifier substring for blue channel files
 DEBUG = False              # Set True for verbose errors / debug info
-IMAGE_LIMIT = 50         # Limit number of images for testing (set to None for all images)
+IMAGE_LIMIT = 100         # Limit number of images for testing (set to None for all images)
 
 # Pixel dimensions in micrometers (choose one of the following options):
 
@@ -96,6 +96,16 @@ def main():
         results = processor.process_pairs(image_pairs)
         print(f"Processing complete. Results saved to {RESULTS_DIR}")
         print(f"Processed {len(results)} image pairs successfully")
+        
+        # Ask if user wants to run visual inspector
+        print("\nWould you like to run the visual inspector to review results? (y/n): ", end="")
+        response = input().strip().lower()
+        if response in ['y', 'yes']:
+            print("Launching visual inspector...")
+            from visual_inspector import VisualInspector
+            inspector = VisualInspector(RESULTS_DIR)
+            inspector.run()
+        
     except Exception as e:
         print(f"Error during processing: {e}")
         if DEBUG:

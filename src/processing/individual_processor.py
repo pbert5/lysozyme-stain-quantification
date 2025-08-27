@@ -143,6 +143,9 @@ class IndividualProcessor:
             # Always generate standard visualization (regardless of debug mode)
             standard_visual = self._generate_standard_visualization(rgb_img, selected_labels, red_path.stem)
             
+            # Save selected labels for inspection tool
+            self._save_labels_array(selected_labels, red_path.stem)
+            
             # Generate additional debug visualizations if requested
             debug_visuals = {}
             if self.debug:
@@ -159,6 +162,29 @@ class IndividualProcessor:
                 traceback.print_exc()
             return None, None, {}, {}
     
+    def _save_labels_array(self, labels, image_stem):
+        """
+        Save the selected labels array for later inspection.
+        
+        Args:
+            labels: Selected labels array
+            image_stem: Image stem for filename
+        """
+        try:
+            # Create npy directory if it doesn't exist
+            npy_dir = Path("results") / "npy"
+            npy_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save labels array
+            labels_path = npy_dir / f"{image_stem}_selected_labels.npy"
+            np.save(labels_path, labels)
+            
+            if self.debug:
+                print(f"[DEBUG] Saved labels array to {labels_path}")
+                
+        except Exception as e:
+            print(f"Warning: Could not save labels array: {e}")
+
     def _generate_label_summary(self, labels, red_img, pixel_dim):
         """
         Generate summary statistics for labeled regions - VECTORIZED VERSION.
