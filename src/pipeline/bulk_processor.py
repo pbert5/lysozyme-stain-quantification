@@ -1,7 +1,7 @@
 """
 Bulk processor for handling multiple image pairs.
 """
-
+#TODO: this is sinfull, must implement parralel proc, am using less then 10% of my cpu at a time
 import numpy as np
 import pandas as pd
 from pathlib import Path

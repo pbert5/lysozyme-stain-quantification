@@ -1,5 +1,12 @@
-conda install -c conda-forge numpy scikit-image tifffile matplotlib scipy jupyter shapely
-
-
-
-pip install opencv-python roifile
+numpy
+scikit-image
+tifffile
+matplotlib
+scipy
+jupyter
+shapely
+opencv-python-headless
+roifile
+pandas
+scikit-learn
+pytest   # optional: only if you want tests runnable via pip-installed deps
