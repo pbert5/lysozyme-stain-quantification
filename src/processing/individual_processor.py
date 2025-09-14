@@ -57,7 +57,7 @@ class IndividualProcessor:
             
             # Try to remove rectangles using the proper function
             try:
-                rgb_img = remove_rectangles(rgb_img)
+                rgb_img = remove_rectangles(rgb_img) #TODO, the sep images have no scale bars, so this might be unnecessary #TODO, this wont work on rgb_img, unless build_rgb returns a g as 100%'s
             except Exception as e:
                 if self.debug:
                     print(f"[DEBUG] Rectangle removal failed: {e}")
