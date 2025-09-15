@@ -81,3 +81,16 @@ The two masks were combined into a priliminary lable map: background(0), crypts 
 Disconnected crypt components from the non expanded mask were then independently labeled using connected-component analysis. These specificaly come from the non-expanded map, as their purpose is not to mark the entierety of each crypt, but to represent a precice marking( phisicaly seperated) for each individual crypt to prevent merging. Forming a labled crypt map.
 
 To improve watershed marker quality, a reworked label map was created. Non-crypt tissue (class 2 now 1) was preserved as a single intact marker, while crypt components outside this region were derived from the labeld crypt map and assigned unique labels (2, 3, 4, …). This strategy prevented over-merging of adjacent crypts and provided precise initial markers for segmentation while including the more limiting expanded tissue layer.
+
+# Watershed Segmentation
+
+A distance transform of the combined label map was computed, producing an elevation image where non-crypt regions formed ridges and crypt regions formed valleys. The reworked labels were then used as watershed markers on this elevation image, yielding candidate crypt segments. This allowed for the crypt labels to be expanded to more accurately encompase the entirety of of each crypt while remaining seperate labels
+
+
+# Scoring and Candidate Selection
+
+Segmented regions were ranked according to a weighted scoring system prioritizing morphological and intensity features. Features and weights were: circularity (0.35), area consistency (0.25), linear alignment along the gut wall (0.15), average RFP intensity (0.15), and center-of-mass consistency (0.10). The top five scoring regions were selected as putative crypts. Additionally, average background tissue intensity and crypt-specific RFP intensity were recorded for downstream normalization.
+
+# Intensity Normalization Across Images
+
+To account for slide-to-slide variability in staining and imaging conditions, RFP signal was standardized relative to DAPI. Specifically, the ratio of RFP to DAPI intensities was computed separately for crypt and non-crypt tissue regions, and the ratio between these two values was used to apply a gain-like scaling factor. This ensured that crypt RFP intensities were comparable across images, independent of global signal variation.
