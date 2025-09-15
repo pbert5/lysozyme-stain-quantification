@@ -69,7 +69,7 @@ class ExtractorPipeline:
             print(f"[EXTRACTOR DEBUG] Erosion mask range: [{mask_r_erosion.min():.2f}, {mask_r_erosion.max():.2f}]")
         
         # diff_r: red stronger than min envelope (exact notebook logic)
-        diff_r = red > mask_r_erosion
+        diff_r = red > mask_r_erosion #TODO: this is where red is greater than blue, it looks like we dont need mask_r_erosion
         
         if self.debug:
             self.debug_info['diff_r_raw'] = diff_r.copy()
@@ -84,7 +84,7 @@ class ExtractorPipeline:
         
         # Secondary mask using absolute difference (exact notebook logic)
         abs_diff = np.abs(mask_r_dilation - red)
-        mask_gt_red = abs_diff > red
+        mask_gt_red = abs_diff > red #TODO: this is where blue is greater than 2*red, it looks like we dont need abs_diff, simplify
         
         if self.debug:
             self.debug_info['abs_diff'] = abs_diff.copy()
@@ -114,7 +114,7 @@ class ExtractorPipeline:
             print(f"[EXTRACTOR DEBUG] Combined labels: {counts}")
         
         # Expand labels (exact notebook distance=100)
-        expanded_labels = expand_labels(combined_labels, distance=100)
+        expanded_labels = expand_labels(combined_labels, distance=100) #TODO: find some way to only let nonCrypt tissue expand into crypt tissue, to prevent bleed into non-tissue background
         
         if self.debug:
             self.debug_info['expanded_labels'] = expanded_labels.copy()
