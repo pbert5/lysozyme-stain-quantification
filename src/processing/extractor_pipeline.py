@@ -176,7 +176,7 @@ class ExtractorPipeline:
         ws_labels[ws_labels > 1] = ws_labels[ws_labels > 1] - 1
         return ws_labels
 
-    def _calculate_intensity_metrics(self, ws_labels, red_img, blue_img):
+    def _calculate_intensity_metrics(self, ws_labels, red_img, blue_img): #TODO: this should realy be based on Mask_gt_red_eroded + a bit of dilation - expanded crypt labels , to capture the non cypt rfp peaks, as it is the most conservative estimate of non-crypt tissue
         """
         Calculate background tissue intensity and average crypt intensity
         before removing region 1 (background tissue).
