@@ -7,11 +7,7 @@ pipeline:
         red_img & blue_img -> %%it looks like i dont normalize them%% 
             # in general, Dapi has overal high signals for anywhere that has tissue
             ## and RFP has lower signals overall for tissue, with slightly higher signals for the crypts
-        %%prep grayscale masks: ->
-            mask_r_dilation = np.maximum(blue, red) # this is just a cap across the image, for the max values between the two
-            mask_r_erosion = np.minimum(blue, red) # this creates an image where all of the noncrypt tissue is dropped in intesity, while the cypts remain high
-            these are np/ basicaly images of where each pixel value comes from whichever wins there  
-            purged for redundancy %%
+
 
         diff_r = bool where red stronger than min envelope: ->
             diff_r = red > blue # aka mask of crypts are
@@ -28,7 +24,7 @@ pipeline:
         label handeling: ->
             Combined Labels = (0 bg, 1 diff_r, 2 mask_gt_red_eroded) aka ( 0 bg, 1 cypts, 2 non crypt tissue)
             then the diff_r & mask_gt_red_eroded get expanded by 100px to meet/ fill up bg between them->
-            use ndi_label to seperatly label disconnected regions of diff_r-> ( this effectivly leaes )
+            use ndi_label to seperatly label disconnected regions of diff_r-> ( the non expanded cypt mask)
 
         set up reworked labels ( which are used as the watershed markers) -> 
             1 =expanded_labels[2] =  mask_gt_red_eroded = non-crypt-tissue
@@ -69,3 +65,19 @@ ok, so theres the pipeline, but how does it work:
 
 normalization across images:
     since for a given slide the contrast between the crypt and non crypt staining/signal can varry, and since we want consitant and meaningfull crypt RFP intensities, we need to crypts of each image in context of their overal RFP and dapi affinity, this is done by finding the ratio of RFP to DAPI of the crypt and non crypt tissue seperatly and using the ratio between those two to standardize across images. this effectivly sets a standardized gain like factor.
+
+
+
+well written:
+Paired RFP (red channel) and DAPI (blue channel) fluorescence images were used as inputs for crypt segmentation. The DAPI signal generally marked all tissue regions, whereas the RFP signal was comparatively weaker overall but exhibited locally stronger intensity within crypt regions. To ensure consistent interpretation across samples, analyses were performed on the unnormalized individual channel images, as normalization by the imaging software appeared to artificially alter relative intensities. 
+
+# Preprocessing and Binary Mask Generation:
+Two complementary binary masks were generated to distinguish crypt from non-crypt tissue:
+1. crypt regions were identified by selecting areas where RFP signal exceded DAPI (red > blue). The resulting mask was cleaned by applying binary erosion with a 3×3 square kernel and removing objects smaller than 100 pixels.
+2. Non-crypt tissue was defined as areas where DAPI signla exceeded twize the RFP signal ( blue > 2 * red). This mask underwent morphological erosion to improve spatial continuity by removing speckle noise
+
+# Label construciton and expansion:
+The two masks were combined into a priliminary lable map: background(0), crypts (1), and non-crypt tissue (2). Then to smooth out the non-crypt tissue without overtakingcypts, both crypt and non-crypt labels were dilated by 100 pixels
+Disconnected crypt components from the non expanded mask were then independently labeled using connected-component analysis. These specificaly come from the non-expanded map, as their purpose is not to mark the entierety of each crypt, but to represent a precice marking( phisicaly seperated) for each individual crypt to prevent merging. Forming a labled crypt map.
+
+To improve watershed marker quality, a reworked label map was created. Non-crypt tissue (class 2 now 1) was preserved as a single intact marker, while crypt components outside this region were derived from the labeld crypt map and assigned unique labels (2, 3, 4, …). This strategy prevented over-merging of adjacent crypts and provided precise initial markers for segmentation while including the more limiting expanded tissue layer.
