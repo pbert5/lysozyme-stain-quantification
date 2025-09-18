@@ -103,7 +103,7 @@ This document lists all third-party libraries, packages, and tools used in the l
 - Purpose: Data manipulation and analysis library for handling summary statistics
 - Website: https://pandas.pydata.org/
 - License: BSD-3-Clause
-- Citation: McKinney, W. Data Structures for Statistical Computing in Python, Proceedings of the 9th Python in Science Conference, 51-56 (2010).
+- Citation: McKinney, W. Data Structures for Statistical Computing in Python, Proceedings of the 9th Python in Science Conference, 56-61 (2010).
 
 ### Image I/O and Visualization
 
@@ -122,7 +122,7 @@ This document lists all third-party libraries, packages, and tools used in the l
 **OpenCV (opencv-python-headless)**
 - Purpose: Computer vision library for image processing, contour detection, and thresholding
 - Website: https://opencv.org/
-- License: Apache License 2.0
+- License: Apache License 2.0, “Apache-2.0 for 4.5+; older releases were BSD-3-Clause.”
 - Citation: Bradski, G. The OpenCV Library. Dr. Dobb's Journal of Software Tools (2000).
 
 ### Specialized Scientific Libraries
