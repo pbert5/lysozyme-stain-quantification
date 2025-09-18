@@ -94,3 +94,9 @@ Segmented regions were ranked according to a weighted scoring system prioritizin
 # Intensity Normalization Across Images
 
 To account for slide-to-slide variability in staining and imaging conditions, RFP signal was standardized relative to DAPI. Specifically, the ratio of RFP to DAPI intensities was computed separately for crypt and non-crypt tissue regions, and the ratio between these two values was used to apply a gain-like scaling factor. This ensured that crypt RFP intensities were comparable across images, independent of global signal variation.
+
+
+
+
+math notes: 
+flourescense = red_sum_pixels/area_pixels*area_um2
