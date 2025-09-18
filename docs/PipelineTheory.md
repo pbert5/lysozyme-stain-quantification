@@ -63,8 +63,54 @@ ok, so theres the pipeline, but how does it work:
 
     note: cant take combo straigt from imager as it preforms some sort of preproc that significantly changes the images, likely they are normalized on combined scales instead of seperate scales
 
-normalization across images:
-    since for a given slide the contrast between the crypt and non crypt staining/signal can varry, and since we want consitant and meaningfull crypt RFP intensities, we need to crypts of each image in context of their overal RFP and dapi affinity, this is done by finding the ratio of RFP to DAPI of the crypt and non crypt tissue seperatly and using the ratio between those two to standardize across images. this effectivly sets a standardized gain like factor.
+## Cross-Image Normalization Solution
+
+Since the contrast between crypt and non-crypt staining can vary significantly between images due to differences in staining efficiency, imaging conditions, and tissue autofluorescence, we implement a sophisticated normalization approach to enable meaningful cross-image comparison.
+
+### Normalization Methodology
+
+**Background Tissue Intensity Calculation:**
+```
+background_tissue_intensity = mean(red_channel / blue_channel) for pixels where ws_labels == 1
+```
+- Uses watershed label 1 (background tissue) as reference
+- Represents baseline red-to-blue intensity ratio for each image
+- Accounts for imaging conditions and tissue autofluorescence
+
+**Average Crypt Intensity Calculation:**
+```
+average_crypt_intensity = mean(red_channel / blue_channel) for pixels where ws_labels > 1
+```
+- Uses all crypt regions (watershed labels > 1) 
+- Represents overall crypt staining intensity relative to DAPI
+- Captures the average lysozyme expression level across all crypts in the image
+
+**Contrast Ratio:**
+```
+contrast_ratio = average_crypt_intensity / background_tissue_intensity
+```
+- Quantifies per-image contrast between crypts and background tissue
+- Higher values indicate stronger crypt-specific staining relative to background
+
+**Normalized Fluorescence:**
+```
+fluorescence_normalized = fluorescence × background_tissue_intensity / average_crypt_intensity
+                        = fluorescence / contrast_ratio
+```
+
+### Technical Implementation
+
+The normalization is calculated during the watershed segmentation phase, before region 1 (background tissue) is removed from the label map. This ensures we capture the true background tissue signal for each image.
+
+### Biological Rationale
+
+This approach effectively sets a standardized gain factor that:
+1. **Compensates for staining variability** - Different batches of antibodies or staining protocols
+2. **Normalizes imaging conditions** - Variations in exposure time, lamp intensity, or camera sensitivity  
+3. **Accounts for tissue differences** - Natural variation in tissue autofluorescence
+4. **Preserves biological signal** - Maintains relative differences in lysozyme expression while enabling cross-image comparison
+
+The result is a normalized fluorescence metric that represents lysozyme expression strength relative to each image's baseline characteristics, enabling robust statistical analysis across experimental conditions.
 
 
 
