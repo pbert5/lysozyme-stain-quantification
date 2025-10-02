@@ -2,7 +2,10 @@ results/result.png
 RemoteViewableDemoOfConsolidatedCode.ipynb
 DevNotebooks/results/
 *.pyc
-results/*
+ignore/results/*
+ignore/lysozyme images/*
 *.npy
 *.csv
 .flake8
+
+.vscode/settings.json
