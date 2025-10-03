@@ -11,15 +11,29 @@ from skimage.segmentation import find_boundaries
 import re
 from collections import defaultdict, Counter
 
-from processing.individual_processor import IndividualProcessor
-from utils.image_utils import create_output_directories, save_debug_image
-from utils.file_utils import build_rgb, load_as_gray
+from ...lysozyme_stain_quantification.segment_crypts import segment_crypts_full
+from ..debug import generate_label_summary
+from ..utils.image_utils import (
+    calculate_pixel_dimensions,
+    create_output_directories,
+    save_debug_image,
+)
+from ..utils.file_utils import load_as_gray
 
 
 class BulkProcessor:
     """Processor for handling multiple image pairs in bulk."""
     
-    def __init__(self, output_dir, pixel_dims, debug=False, max_workers=None, scoring_weights=None, max_regions=5):
+    def __init__(
+        self,
+        output_dir,
+        pixel_dims,
+        debug=False,
+        max_workers=None,
+        scoring_weights=None,
+        max_regions=5,
+        blob_size_px=15,
+    ):
         """
         Initialize the bulk processor.
         
@@ -37,6 +51,7 @@ class BulkProcessor:
         self.max_workers = max_workers
         self.scoring_weights = scoring_weights
         self.max_regions = max_regions
+        self.blob_size_px = blob_size_px
         
         # Create output directories
         self.dirs = create_output_directories(self.output_dir, debug=debug)
@@ -332,59 +347,89 @@ class BulkProcessor:
             print(f"  See {report_path} for details")
     
     def _process_single_pair(self, red_path, blue_path, index):
-        """
-        Process a single image pair.
-        
-        Args:
-            red_path: Path to red channel image
-            blue_path: Path to blue channel image
-            index: Index of the pair in the batch
-        
-        Returns:
-            Dictionary containing processing results
-        """
-        processor = IndividualProcessor(self.pixel_dims, debug=self.debug, scoring_weights=self.scoring_weights, max_regions=self.max_regions)
-        
+        """Process a single image pair."""
+        red_img = load_as_gray(red_path)
+        blue_img = load_as_gray(blue_path)
+
+        seg_result = segment_crypts_full(
+            (red_img, blue_img),
+            blob_size_px=self.blob_size_px,
+            debug=self.debug,
+            scoring_weights=self.scoring_weights,
+            max_regions=self.max_regions,
+            image_name=red_path.stem,
+        )
+
+        pixel_dim = None
+        summary = None
+        if isinstance(self.pixel_dims, dict) and self.pixel_dims:
+            pixel_dim = calculate_pixel_dimensions(red_path.name, self.pixel_dims)
+        elif isinstance(self.pixel_dims, (int, float)):
+            pixel_dim = float(self.pixel_dims)
+
+        if pixel_dim is not None:
+            summary = generate_label_summary(
+                seg_result.labels,
+                seg_result.red_channel,
+                pixel_dim,
+                background_tissue_intensity=seg_result.background_tissue_intensity,
+                average_crypt_intensity=seg_result.average_crypt_intensity,
+                debug=self.debug,
+            )
+
+        try:
+            labels_dir = self.dirs.get('results', self.output_dir) / 'npy'
+            seg_result.save_labels(red_path.stem, labels_dir)
+        except Exception as exc:
+            if self.debug:
+                print(f"[BULK DEBUG] Could not save labels array for {red_path.stem}: {exc}")
+
+        result_payload = {
+            'red_path': red_path,
+            'blue_path': blue_path,
+            'selected_labels': seg_result.labels,
+            'summary': summary,
+            'standard_visual': seg_result.standard_visual,
+            'rgb_image': seg_result.rgb_image,
+            'red_channel': seg_result.red_channel,
+            'blue_channel': seg_result.blue_channel,
+            'metrics': {
+                'background_tissue_intensity': seg_result.background_tissue_intensity,
+                'average_crypt_intensity': seg_result.average_crypt_intensity,
+                'pixel_dim': pixel_dim,
+            },
+            'debug_info': None,
+        }
+
         if self.debug:
-            # Get full debug information
-            debug_result = processor.debug_run(red_path, blue_path)
-            
-            if debug_result['selected_labels'] is None:
-                return None
-            
-            # Save debug visualizations
+            debug_result = {
+                'selected_labels': seg_result.labels,
+                'label_summary': summary,
+                'standard_visual': seg_result.standard_visual,
+                'visuals': seg_result.debug_visuals,
+                'processing_info': {
+                    'red_channel': seg_result.red_channel,
+                    'blue_channel': seg_result.blue_channel,
+                    'rgb_combined': seg_result.rgb_image,
+                    'extractor_debug': seg_result.extractor_debug,
+                    'initial_labels': seg_result.initial_labels,
+                    'selected_labels': seg_result.labels,
+                    'selection_properties': seg_result.selection_debug.get('properties_df')
+                    if seg_result.selection_debug
+                    else None,
+                    'selected_label_ids': seg_result.selection_debug.get('selected_labels')
+                    if seg_result.selection_debug
+                    else None,
+                },
+            }
+
             self._save_debug_visuals(debug_result, red_path.stem, index)
-            
-            # Save standard visualization
-            standard_visual = debug_result.get('standard_visual', {})
-            if standard_visual:
-                self._save_standard_visualization(standard_visual, red_path.stem)
-            
-            return {
-                'red_path': red_path,
-                'blue_path': blue_path,
-                'selected_labels': debug_result['selected_labels'],
-                'summary': debug_result['label_summary'],
-                'debug_info': debug_result
-            }
+            self._save_standard_visualization(seg_result.standard_visual, red_path.stem)
+            result_payload['debug_info'] = debug_result
         else:
-            # Get just the essential results + standard visualization
-            selected_labels, summary, standard_visual, _ = processor.process_pair(red_path, blue_path)
-            
-            if selected_labels is None:
-                return None
-            
-            # Save standard visualization
-            if standard_visual:
-                self._save_standard_visualization(standard_visual, red_path.stem)
-            
-            return {
-                'red_path': red_path,
-                'blue_path': blue_path,
-                'selected_labels': selected_labels,
-                'summary': summary,
-                'debug_info': None
-            }
+            self._save_standard_visualization(seg_result.standard_visual, red_path.stem)
+
+        return result_payload
     
     def _save_standard_visualization(self, standard_visual, base_name):
         """
@@ -538,20 +583,18 @@ class BulkProcessor:
             result = self.results[i]
             
             try:
-                # Load original images
-                red_img = load_as_gray(result['red_path'])
-                blue_img = load_as_gray(result['blue_path'])
-                rgb_img = build_rgb(red_img, blue_img)
-                
-                # Add selected labels overlay
+                rgb_img = result.get('rgb_image')
+                if rgb_img is None:
+                    raise ValueError("Missing RGB image for quick check")
+
                 selected_boundaries = find_boundaries(result['selected_labels'], mode='inner')
                 overlay = rgb_img.copy()
-                overlay[selected_boundaries] = [255, 0, 0]  # Red boundaries
-                
+                overlay[selected_boundaries] = [255, 0, 0]
+
                 ax.imshow(overlay)
                 ax.set_title(result['red_path'].stem, fontsize=8)
                 ax.axis('off')
-                
+
             except Exception as e:
                 ax.text(0.5, 0.5, f"Error: {str(e)}", ha='center', va='center', transform=ax.transAxes)
                 ax.set_title(result['red_path'].stem, fontsize=8)
