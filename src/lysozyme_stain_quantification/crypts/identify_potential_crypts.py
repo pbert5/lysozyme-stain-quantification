@@ -2,7 +2,17 @@ import numpy as np
 import cv2
 
 from skimage import morphology
-def identify_potential_crypts(crypt_img, tissue_image, blob_size_px, debug):
+from skimage.segmentation import expand_labels, watershed, find_boundaries
+from scipy.ndimage import label as ndi_label, distance_transform_edt
+from skimage.feature import peak_local_max
+
+def minmax01(x, eps=1e-12):
+    x = x.astype(float, copy=False)
+    lo = np.min(x)
+    hi = np.max(x)
+    return (x - lo) / max(hi - lo, eps)
+
+def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=100, debug=False):
     """Identify potential crypt regions in the given image.
 
     Args:
@@ -15,8 +25,7 @@ def identify_potential_crypts(crypt_img, tissue_image, blob_size_px, debug):
     if debug:
         print(f"[DEBUG] Identifying potential crypts with blob size {blob_size_px}px")
 
-    mask_r_dilation = np.maximum(tissue_image, crypt_img)
-    mask_r_erosion = np.minimum(tissue_image, crypt_img)
+
     # identify initial crypt regions
     diff_r = crypt_img > tissue_image
     diff_r = morphology.binary_erosion(diff_r, footprint=np.ones((3, 3)))
