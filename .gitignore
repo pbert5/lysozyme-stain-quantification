@@ -10,3 +10,5 @@ ignore/lysozyme images/*
 
 .vscode/settings.json
 ignore/chats_demo/terms.json
+.coverage
+.gitignore

@@ -13,7 +13,7 @@ def minmax01(x, eps=1e-12):
     hi = np.max(x)
     return (x - lo) / max(hi - lo, eps)
 
-def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=100, debug=False):
+def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=30, debug=False):
     """Identify potential crypt regions in the given image.
 
     Args:
@@ -29,7 +29,7 @@ def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=100, debug=F
 
     # identify initial crypt regions
 
-    diff_r = morphology.remove_small_objects(
+    initial_crypts = morphology.remove_small_objects(
         morphology.binary_erosion(
             (crypt_img > tissue_image),
             footprint=np.ones((3, 3))
@@ -50,12 +50,12 @@ def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=100, debug=F
         ).astype(bool)
 
     # set up labels
-    combined_labels = np.zeros_like(diff_r, dtype=int)
+    combined_labels = np.zeros_like(initial_crypts, dtype=int)
     combined_labels[mask_gt_red_eroded] = 2
-    combined_labels[diff_r] = 1
+    combined_labels[initial_crypts] = 1
 
     # Expand labels (exact notebook distance=100)
-    expanded_labels = expand_labels(combined_labels, distance=100)
+    expanded_labels = expand_labels(combined_labels, distance=blob_size_px*3)
     # Markers from diff_r (exact notebook logic)
     tissue_mask = expanded_labels != 1
     #labeled_diff_r, _ = ndi_label(diff_r != 0)
@@ -63,13 +63,15 @@ def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=100, debug=F
     # Reworked markers array 
 
 
-    # Watershed mask (exact notebook logic)
-    mask_ws = tissue_mask
+
     elevation = (
         minmax01(distance_transform_edt(combined_labels == 2))
         - minmax01(distance_transform_edt(combined_labels == 1))
     )
-    coords = peak_local_max(distance_transform_edt(mask_ws), min_distance = 20, exclude_border=False)
+    # Watershed mask (exact notebook logic)
+    mask_ws = ~tissue_mask
+    dst = (distance_transform_edt(mask_ws)+(distance_transform_edt(combined_labels == 1)))
+    coords = peak_local_max(dst, min_distance=blob_size_px//5, exclude_border=False)
 
     mask = np.zeros(mask_ws.shape, dtype=bool)
     mask[tuple(coords.T)] = True

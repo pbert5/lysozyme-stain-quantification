@@ -11,7 +11,7 @@ from skimage.measure import regionprops, perimeter
 import matplotlib.pyplot as plt
 
 
-class ScoringSelector:
+class scoring_selector:
     """Selector for choosing the best regions based on scoring criteria instead of merging."""
     
     def __init__(self, label_img, raw_img=None, debug=False, max_regions=5, weights=None):
