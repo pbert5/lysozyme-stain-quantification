@@ -5,6 +5,7 @@ from skimage import morphology
 from skimage.segmentation import expand_labels, watershed, find_boundaries
 from scipy.ndimage import label as ndi_label, distance_transform_edt
 from skimage.feature import peak_local_max
+import scipy.ndimage as ndi
 
 def minmax01(x, eps=1e-12):
     x = x.astype(float, copy=False)
@@ -27,19 +28,26 @@ def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=100, debug=F
 
 
     # identify initial crypt regions
-    diff_r = crypt_img > tissue_image
-    diff_r = morphology.binary_erosion(diff_r, footprint=np.ones((3, 3)))
-    diff_r = morphology.remove_small_objects(diff_r, min_size=100)
+
+    diff_r = morphology.remove_small_objects(
+        morphology.binary_erosion(
+            (crypt_img > tissue_image),
+            footprint=np.ones((3, 3))
+        ),
+        min_size=100
+        )
 
     
     
     # Secondary mask 
-    mask_gt_red = tissue_image > 2*crypt_img
+
     # Erode the secondary mask (exact notebook parameters)
     erosion_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (6, 6))
-    mask_u8 = (mask_gt_red.astype(np.uint8) * 255)
-    mask_eroded_u8 = cv2.erode(mask_u8, erosion_kernel, iterations=2)
-    mask_gt_red_eroded = mask_eroded_u8.astype(bool)
+    mask_gt_red_eroded = cv2.erode(
+        ((tissue_image > 2*crypt_img).astype(np.uint8) * 255),
+        erosion_kernel,
+        iterations=2
+        ).astype(bool)
 
     # set up labels
     combined_labels = np.zeros_like(diff_r, dtype=int)
