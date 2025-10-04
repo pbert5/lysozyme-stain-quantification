@@ -12,3 +12,4 @@ ignore/lysozyme images/*
 ignore/chats_demo/terms.json
 .coverage
 .gitignore
+tests/test_lysoszyme_stain_quantification/test_segment_crypts_simple.py
