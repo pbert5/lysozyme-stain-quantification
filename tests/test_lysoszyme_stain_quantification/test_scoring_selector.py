@@ -102,53 +102,64 @@ def _select_binary(label_img: np.ndarray, raw_img: np.ndarray | None, *, max_reg
     return result > 0
 
 
-BASIC_LABELS, BASIC_RAW = _build_standard_scene(3)
-LIMIT_LABELS, LIMIT_RAW = _build_standard_scene(6)
-CIRC_LABELS, CIRC_RAW = _build_standard_scene(5, rectangles={5: (8, 28)})
-AREA_SMALL_LABELS, AREA_SMALL_RAW = _build_standard_scene(5, radius_overrides={5: 6})
-AREA_LARGE_LABELS, AREA_LARGE_RAW = _build_standard_scene(5, radius_overrides={5: 26})
-LINE_FIT_LABELS, LINE_FIT_RAW = _build_standard_scene(5, offsets={5: 80})
-RED_INT_LABELS, RED_INT_RAW = _build_standard_scene(5, intensities={5: 0.5})
-
-EXPECTED_BASIC = BASIC_LABELS > 0
-EXPECTED_LIMIT = _mask_without_labels(LIMIT_LABELS, (5, 6))
-EXPECTED_CIRCULARITY = _mask_without_labels(CIRC_LABELS, 5)
-EXPECTED_AREA_SMALL = _mask_without_labels(AREA_SMALL_LABELS, 5)
-EXPECTED_AREA_LARGE = _mask_without_labels(AREA_LARGE_LABELS, 4)
-EXPECTED_LINE_FIT = _mask_without_labels(LINE_FIT_LABELS, 5)
-EXPECTED_RED_INT = _mask_without_labels(RED_INT_LABELS, 5)
-
-
 def test_scoring_selector_basic_passthrough() -> None:
-    mask = _select_binary(BASIC_LABELS.copy(), BASIC_RAW.copy(), max_regions=5)
-    assert np.array_equal(mask, EXPECTED_BASIC)
+    label_img, raw_img = _build_standard_scene(3)
+    expected = label_img > 0
+
+    mask = _select_binary(label_img.copy(), raw_img.copy(), max_regions=5)
+
+    assert np.array_equal(mask, expected)
 
 
 def test_scoring_selector_limits_to_max_regions() -> None:
-    mask = _select_binary(LIMIT_LABELS.copy(), LIMIT_RAW.copy(), max_regions=4)
-    assert np.array_equal(mask, EXPECTED_LIMIT)
+    label_img, raw_img = _build_standard_scene(6)
+    expected = _mask_without_labels(label_img, (5, 6))
+
+    mask = _select_binary(label_img.copy(), raw_img.copy(), max_regions=4)
+
+    assert np.array_equal(mask, expected)
 
 
 def test_scoring_selector_penalizes_circularity() -> None:
-    mask = _select_binary(CIRC_LABELS.copy(), CIRC_RAW.copy(), max_regions=4)
-    assert np.array_equal(mask, EXPECTED_CIRCULARITY)
+    label_img, raw_img = _build_standard_scene(5, rectangles={5: (8, 28)})
+    expected = _mask_without_labels(label_img, 5)
+
+    mask = _select_binary(label_img.copy(), raw_img.copy(), max_regions=4)
+
+    assert np.array_equal(mask, expected)
 
 
 def test_scoring_selector_penalizes_small_area() -> None:
-    mask = _select_binary(AREA_SMALL_LABELS.copy(), AREA_SMALL_RAW.copy(), max_regions=4)
-    assert np.array_equal(mask, EXPECTED_AREA_SMALL)
+    label_img, raw_img = _build_standard_scene(5, radius_overrides={5: 6})
+    expected = _mask_without_labels(label_img, 5)
+
+    mask = _select_binary(label_img.copy(), raw_img.copy(), max_regions=4)
+
+    assert np.array_equal(mask, expected)
 
 
 def test_scoring_selector_penalizes_large_area() -> None:
-    mask = _select_binary(AREA_LARGE_LABELS.copy(), AREA_LARGE_RAW.copy(), max_regions=4)
-    assert np.array_equal(mask, EXPECTED_AREA_LARGE)
+    label_img, raw_img = _build_standard_scene(5, radius_overrides={5: 26})
+    expected = _mask_without_labels(label_img, 4)
+
+    mask = _select_binary(label_img.copy(), raw_img.copy(), max_regions=4)
+
+    assert np.array_equal(mask, expected)
 
 
 def test_scoring_selector_penalizes_line_fit_offset() -> None:
-    mask = _select_binary(LINE_FIT_LABELS.copy(), None, max_regions=4)
-    assert np.array_equal(mask, EXPECTED_LINE_FIT)
+    label_img, _ = _build_standard_scene(5, offsets={5: 80})
+    expected = _mask_without_labels(label_img, 5)
+
+    mask = _select_binary(label_img.copy(), None, max_regions=4)
+
+    assert np.array_equal(mask, expected)
 
 
 def test_scoring_selector_penalizes_low_red_intensity() -> None:
-    mask = _select_binary(RED_INT_LABELS.copy(), RED_INT_RAW.copy(), max_regions=4)
-    assert np.array_equal(mask, EXPECTED_RED_INT)
+    label_img, raw_img = _build_standard_scene(5, intensities={5: 0.5})
+    expected = _mask_without_labels(label_img, 5)
+
+    mask = _select_binary(label_img.copy(), raw_img.copy(), max_regions=4)
+
+    assert np.array_equal(mask, expected)
