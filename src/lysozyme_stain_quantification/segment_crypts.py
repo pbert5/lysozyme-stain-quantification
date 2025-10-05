@@ -2,15 +2,16 @@
 import numpy as np
 
 
-from .crypts import identify_potential_crypts
-from .crypts import remove_edge_touching_regions
-from .crypts.scoring_selector import scoring_selector
+from .crypts.identify_potential_crypts_mod import identify_potential_crypts
+from .crypts.remove_edge_touching_regions_mod import remove_edge_touching_regions_sk
+from .crypts.scoring_selector_mod import scoring_selector
 # new style:
 def segment_crypts(
         channels: tuple[np.ndarray, np.ndarray], # i.e. [crypt_stain_channel, tissue_counterstain_channel] i.e. [RFP, DAPI]
         blob_size_px: int = 15, # approximate size of crypts in pixels (length)
         debug: bool = False,
-        scoring_weights: dict[str, float] | None = None) -> np.ndarray:
+        scoring_weights: dict[str, float] | None = None,
+        masks: list[np.ndarray] | None = None) -> np.ndarray:
     """Segment crypts in the given image.
 
     Args:
@@ -29,7 +30,7 @@ def segment_crypts(
         raise ValueError(f"Shape mismatch: red {crypt_img.shape} vs blue {tissue_image.shape}")
     potential_crypts = identify_potential_crypts(crypt_img, tissue_image, blob_size_px, debug)
 
-    cleaned_crypts = remove_edge_touching_regions(potential_crypts)
+    cleaned_crypts = remove_edge_touching_regions_sk(potential_crypts)
 
     best_crypts, crypt_scores = scoring_selector(cleaned_crypts, crypt_img, debug=debug, max_regions=debug, weights=scoring_weights)
     
