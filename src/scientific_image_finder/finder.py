@@ -6,7 +6,10 @@ from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Deque, Dict, Iterable, List, Sequence, Tuple
+from typing import Deque, Dict, Iterable, List, Optional, Sequence, Tuple
+
+import numpy as np
+import tifffile
 
 
 _ALLOWED_SUFFIXES = (".tif", ".tiff")
@@ -20,6 +23,7 @@ class SourceSpec:
     index: int
     name: str
     search_key: str
+    channel_selector: Optional[str] = None
 
 
 @dataclass
@@ -56,33 +60,49 @@ def validate_directories(img_dir: Path, results_dir: Path | None = None) -> bool
 
 def find_subject_image_sets(
     img_dir: Path,
-    sources: Sequence[Tuple[str, str]],
+    sources: Sequence[Tuple[str, str] | Tuple[str, str, str]],
     *,
     allowed_suffixes: Sequence[str] | None = None,
-) -> Tuple[List[str], List[List[Path]], List[str]]:
+) -> Tuple[List[str], List[List[np.ndarray]], List[str]]: #out: (subject_names, images_by_source, source_names)
     """
     Discover aligned image sets for each subject across multiple sources.
 
     Args:
         img_dir: Root directory to search.
-        sources: Sequence of (source_name, search_key) pairs.
+        sources: Sequence of (source_name, search_key) pairs or
+            (source_name, search_key, channel_selector) where channel_selector is one of
+            "r", "g", "b" indicating which channel to extract.
         allowed_suffixes: Optional tuple of file suffixes to accept; defaults to TIFF variants.
 
     Returns:
         Tuple of (subject_names, images_by_source, source_names) where images_by_source[i]
-        corresponds to the list of paths for sources[i].
+        contains a numpy array for each subject with data loaded from the
+        corresponding source.
     """
     if not sources:
         raise ValueError("sources must not be empty")
 
     suffixes = tuple(sfx.lower() for sfx in (allowed_suffixes or _ALLOWED_SUFFIXES))
-    specs = [SourceSpec(idx, name, key) for idx, (name, key) in enumerate(sources)]
+    specs: List[SourceSpec] = []
+    for idx, spec in enumerate(sources):
+        if len(spec) == 2:
+            name, key = spec
+            channel = None
+        elif len(spec) == 3:
+            name, key, channel = spec
+            channel = channel.lower() if channel else None
+            if channel not in {"r", "g", "b", None}:
+                raise ValueError(f"Unsupported channel selector '{channel}' for source '{name}'")
+        else:
+            raise ValueError("sources entries must be (name, search_key) or (name, search_key, channel)")
+        specs.append(SourceSpec(idx, name, key, channel))
     grouped = _group_images_by_base(img_dir, specs, suffixes)
 
     subject_names: List[str] = []
-    images_by_source: List[List[Path]] = [[] for _ in specs]
+    images_by_source: List[List[np.ndarray]] = [[] for _ in specs]
     source_names = [spec.name for spec in specs]
     existing_labels: set[str] = set()
+    image_cache: Dict[Path, np.ndarray] = {}
 
     for base_name in sorted(grouped):
         base_matches = _build_matches_for_base(base_name, grouped[base_name], specs, existing_labels)
@@ -90,8 +110,11 @@ def find_subject_image_sets(
             subject_names.append(label)
             existing_labels.add(label)
             for record in records:
-                images_by_source[record.spec.index].append(record.path)
+                img = _load_image(record.path, image_cache)
+                prepared = _prepare_image(img, record.spec.channel_selector)
+                images_by_source[record.spec.index].append(prepared)
 
+    _ensure_consistent_shapes(images_by_source, source_names, subject_names)
     return subject_names, images_by_source, source_names
 
 
@@ -217,6 +240,99 @@ def _make_subject_label(
         label = candidate
 
     return label
+
+
+def _load_image(path: Path, cache: Dict[Path, np.ndarray]) -> np.ndarray:
+    if path not in cache:
+        cache[path] = tifffile.imread(path)
+    return cache[path]
+
+
+def _prepare_image(image: np.ndarray, channel_selector: Optional[str]) -> np.ndarray:
+    arr = np.asarray(image)
+
+    channel_axis = _identify_channel_axis(arr)
+    if channel_selector:
+        if channel_axis is None:
+            if arr.ndim == 2:
+                pass
+            else:
+                raise ValueError("Channel selector provided but channel axis could not be identified")
+        else:
+            arr = np.moveaxis(arr, channel_axis, -1)
+            idx_map = {"r": 0, "g": 1, "b": 2}
+            idx = idx_map[channel_selector]
+            if idx >= arr.shape[-1]:
+                raise ValueError(
+                    f"Requested channel '{channel_selector}' but image only has {arr.shape[-1]} channels"
+                )
+            arr = arr[..., idx]
+    else:
+        if channel_axis is not None:
+            arr = np.moveaxis(arr, channel_axis, -1)
+            arr = _drop_empty_channels(arr)
+    arr = _squeeze_simple(arr)
+    return arr
+
+
+def _identify_channel_axis(arr: np.ndarray) -> int | None:
+    if arr.ndim < 3:
+        return None
+    if arr.shape[-1] <= 4 and (arr.ndim == 3 or arr.shape[-1] != arr.shape[-2]):
+        if arr.ndim == 3 and arr.shape[-1] == arr.shape[-2]:
+            pass
+        else:
+            return -1
+    if arr.shape[0] <= 4 and arr.shape[0] != arr.shape[1]:
+        return 0
+    return None
+
+
+def _drop_empty_channels(arr: np.ndarray) -> np.ndarray:
+    if arr.ndim != 3:
+        return arr
+
+    channels = [arr[..., idx] for idx in range(arr.shape[-1])]
+    keep = [ch for ch in channels if not np.all(ch == 0)]
+
+    if not keep:
+        keep = [channels[0]]
+
+    if len(keep) == 1:
+        return keep[0]
+
+    stacked = np.stack(keep, axis=-1)
+    if stacked.shape[-1] == 1:
+        return stacked[..., 0]
+    return stacked
+
+
+def _squeeze_simple(arr: np.ndarray) -> np.ndarray:
+    if arr.ndim <= 2:
+        return arr
+    squeezed = np.squeeze(arr)
+    if squeezed.ndim == 0:
+        return arr
+    return squeezed
+
+
+def _ensure_consistent_shapes(
+    images_by_source: List[List[np.ndarray]],
+    source_names: List[str],
+    subject_names: List[str],
+) -> None:
+    for src_idx, images in enumerate(images_by_source):
+        if not images:
+            continue
+        reference_shape = images[0].shape
+        for subj_idx, img in enumerate(images):
+            if img.shape != reference_shape:
+                subject = subject_names[subj_idx] if subj_idx < len(subject_names) else subj_idx
+                raise ValueError(
+                    "Inconsistent image shape for source "
+                    f"'{source_names[src_idx]}': expected {reference_shape}, got {img.shape} "
+                    f"(subject '{subject}')"
+                )
 
 
 def _pick_best_subdir_label(records: Sequence[SourceImage]) -> str:
