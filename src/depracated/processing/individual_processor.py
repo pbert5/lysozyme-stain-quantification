@@ -8,7 +8,7 @@ from skimage.measure import regionprops
 from skimage.segmentation import find_boundaries
 import matplotlib.pyplot as plt
 
-from ...lysozyme_stain_quantification.extractor_pipeline import ExtractorPipeline
+from ..extractor_pipeline import ExtractorPipeline
 from src.lysozyme_stain_quantification.processing.scoring_selector import ScoringSelector
 from src.lysozyme_stain_quantification.utils.file_utils import load_as_gray, build_rgb, remove_rectangles
 from src.lysozyme_stain_quantification.utils.image_utils import calculate_pixel_dimensions
