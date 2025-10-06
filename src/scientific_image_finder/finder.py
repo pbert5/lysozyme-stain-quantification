@@ -63,6 +63,7 @@ def find_subject_image_sets(
     sources: Sequence[Tuple[str, str] | Tuple[str, str, str]],
     *,
     allowed_suffixes: Sequence[str] | None = None,
+    max_subjects: Optional[int] = None,
 ) -> Tuple[List[str], List[List[np.ndarray]], List[str]]: #out: (subject_names, images_by_source, source_names)
     """
     Discover aligned image sets for each subject across multiple sources.
@@ -73,6 +74,7 @@ def find_subject_image_sets(
             (source_name, search_key, channel_selector) where channel_selector is one of
             "r", "g", "b" indicating which channel to extract.
         allowed_suffixes: Optional tuple of file suffixes to accept; defaults to TIFF variants.
+        max_subjects: Optional upper bound on the number of subject image sets to return.
 
     Returns:
         Tuple of (subject_names, images_by_source, source_names) where images_by_source[i]
@@ -98,13 +100,23 @@ def find_subject_image_sets(
         specs.append(SourceSpec(idx, name, key, channel))
     grouped = _group_images_by_base(img_dir, specs, suffixes)
 
+    if max_subjects is not None:
+        if max_subjects < 0:
+            raise ValueError("max_subjects must be non-negative")
+
     subject_names: List[str] = []
     images_by_source: List[List[np.ndarray]] = [[] for _ in specs]
     source_names = [spec.name for spec in specs]
     existing_labels: set[str] = set()
     image_cache: Dict[Path, np.ndarray] = {}
+    subjects_found = 0
+
+    if max_subjects == 0:
+        return subject_names, images_by_source, source_names
 
     for base_name in sorted(grouped):
+        if max_subjects is not None and subjects_found >= max_subjects:
+            break
         base_matches = _build_matches_for_base(base_name, grouped[base_name], specs, existing_labels)
         for label, records in base_matches:
             subject_names.append(label)
@@ -113,6 +125,11 @@ def find_subject_image_sets(
                 img = _load_image(record.path, image_cache)
                 prepared = _prepare_image(img, record.spec.channel_selector)
                 images_by_source[record.spec.index].append(prepared)
+            subjects_found += 1
+            if max_subjects is not None and subjects_found >= max_subjects:
+                break
+        if max_subjects is not None and subjects_found >= max_subjects:
+            break
 
     _ensure_consistent_shapes(images_by_source, source_names, subject_names)
     return subject_names, images_by_source, source_names
