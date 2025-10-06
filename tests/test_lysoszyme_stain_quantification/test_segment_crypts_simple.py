@@ -11,9 +11,9 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
     plt = None
 
 import src.lysozyme_stain_quantification.segment_crypts as segment_module
-from src.lysozyme_stain_quantification.crypts import identify_potential_crypts as identify_module
-from src.lysozyme_stain_quantification.crypts import remove_edge_touching_regions as remove_module
-from src.lysozyme_stain_quantification.crypts.scoring_selector import scoring_selector as SelectorClass
+from src.lysozyme_stain_quantification.crypts import identify_potential_crypts_mod as identify_module
+from src.lysozyme_stain_quantification.crypts import remove_edge_touching_regions_mod as remove_module
+from src.lysozyme_stain_quantification.crypts.scoring_selector_mod import scoring_selector
 from tests.test_lysoszyme_stain_quantification.tools.demo_crypt_image_generator import generate_test_crypts
 
 DEBUG_ROOT = os.environ.get("LYSOZYME_SEGMENT_DEBUG_DIR")
@@ -27,13 +27,26 @@ RED_CHANNEL, BLUE_CHANNEL, _ = generate_test_crypts(num_crypts=NUM_CRYPTS, image
 
 def _patch_segment_dependencies() -> None:
     segment_module.identify_potential_crypts = identify_module.identify_potential_crypts
-    segment_module.remove_edge_touching_regions = remove_module.remove_edge_touching_regions_sk
+    segment_module.remove_edge_touching_regions_mod = remove_module.remove_edge_touching_regions_sk
 
-    def _run_selector(labels: np.ndarray, raw_img: np.ndarray, *, debug: bool = False, max_regions=0, weights=None):
+    def _run_selector(
+        labels: np.ndarray,
+        raw_img: np.ndarray,
+        *,
+        debug: bool = False,
+        max_regions=0,
+        weights=None,
+        return_details: bool = False,
+    ):
         max_regions_int = max_regions if isinstance(max_regions, int) and max_regions > 0 else NUM_CRYPTS
-        selector = SelectorClass(labels, raw_img, debug=debug, max_regions=max_regions_int, weights=weights)
-        filtered = selector.select()
-        return filtered, selector.get_debug_info()
+        return scoring_selector(
+            labels,
+            raw_img,
+            debug=debug,
+            max_regions=max_regions_int,
+            weights=weights,
+            return_details=return_details,
+        )
 
     segment_module.scoring_selector = _run_selector
 

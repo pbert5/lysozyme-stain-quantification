@@ -2,8 +2,8 @@
 import pytest
 import numpy as np
 from .tools.demo_crypt_image_generator import generate_test_crypts
-from src.lysozyme_stain_quantification.crypts.remove_edge_touching_regions import remove_edge_touching_regions_sk as remove_edge_touching_regions
-from src.lysozyme_stain_quantification.crypts.identify_potential_crypts import identify_potential_crypts
+from src.lysozyme_stain_quantification.crypts.remove_edge_touching_regions_mod import remove_edge_touching_regions_sk as remove_edge_touching_regions
+from src.lysozyme_stain_quantification.crypts.identify_potential_crypts_mod import identify_potential_crypts
 
 num_crypts=5
 

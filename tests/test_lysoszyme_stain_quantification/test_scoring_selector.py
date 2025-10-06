@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("pandas", reason="scoring_selector depends on pandas")
 
-from src.lysozyme_stain_quantification.crypts.scoring_selector import scoring_selector
+from src.lysozyme_stain_quantification.crypts.scoring_selector_mod import scoring_selector
 
 
 WEIGHTS_ALL_ONES = {
@@ -92,13 +92,12 @@ def _mask_without_labels(label_img: np.ndarray, labels: int | tuple[int, ...] | 
 
 
 def _select_binary(label_img: np.ndarray, raw_img: np.ndarray | None, *, max_regions: int) -> np.ndarray:
-    selector = scoring_selector(
+    result = scoring_selector(
         label_img,
         raw_img=raw_img,
         max_regions=max_regions,
         weights=WEIGHTS_ALL_ONES,
     )
-    result = selector.select()
     return result > 0
 
 

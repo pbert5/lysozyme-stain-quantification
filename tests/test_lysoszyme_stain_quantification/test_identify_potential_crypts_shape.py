@@ -10,7 +10,7 @@ num_crypts=5
 
 
 
-from src.lysozyme_stain_quantification.crypts.identify_potential_crypts import identify_potential_crypts
+from src.lysozyme_stain_quantification.crypts.identify_potential_crypts_mod import identify_potential_crypts
 
 def test_identify_potential_crypts_shape():
     red, blue, _ = generate_test_crypts(num_crypts=num_crypts, image_size=(200, 200))
