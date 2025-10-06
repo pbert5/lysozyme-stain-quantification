@@ -32,6 +32,13 @@ def segment_crypts(
 
     cleaned_crypts = remove_edge_touching_regions_sk(potential_crypts)
 
-    best_crypts, crypt_scores = scoring_selector(cleaned_crypts, crypt_img, debug=debug, max_regions=debug, weights=scoring_weights)
+    best_crypts, crypt_scores = scoring_selector(
+        cleaned_crypts,
+        crypt_img,
+        debug=debug,
+        max_regions=debug,
+        weights=scoring_weights,
+        return_details=True,
+    )
     
     return best_crypts
