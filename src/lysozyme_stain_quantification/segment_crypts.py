@@ -11,7 +11,8 @@ def segment_crypts(
         blob_size_px: int = 15, # approximate size of crypts in pixels (length)
         debug: bool = False,
         scoring_weights: dict[str, float] | None = None,
-        masks: list[np.ndarray] | None = None) -> np.ndarray:
+        masks: list[np.ndarray] | None = None,
+        max_regions: int = 5) -> np.ndarray:
     """Segment crypts in the given image.
 
     Args:
@@ -36,7 +37,7 @@ def segment_crypts(
         cleaned_crypts,
         crypt_img,
         debug=debug,
-        max_regions=debug,
+        max_regions=max_regions,
         weights=scoring_weights,
         return_details=True,
     )
