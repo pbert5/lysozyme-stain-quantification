@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lysozyme_stain_quantification"
+version = "0.1.0"
+description = "Utilities for structuring image-analysis stacks with xarray."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Phillip Silbert", email = "phsilbert@gmail.com" }]
+license = { text = "GPL-3.0" }
+keywords = ["imaging", "biology", "quantification", "microscopy"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+dependencies = [
+    "numpy>=1.23",
+    "pandas>=1.5",
+    "matplotlib>=3.6",
+    "scipy>=1.9",
+    "scikit-image>=0.19",
+    "scikit-learn>=1.2",
+    "tifffile>=2022.8.12",
+    "opencv-python-headless>=4.7",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "xarray>=2023.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/phillip-silbert/lysozyme"
+Repository = "https://github.com/phillip-silbert/lysozyme"
+Documentation = "https://github.com/phillip-silbert/lysozyme/tree/main/docs"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["lysozyme_stain_quantification*", "scientific_image_finder*"]
