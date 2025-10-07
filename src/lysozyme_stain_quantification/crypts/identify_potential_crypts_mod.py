@@ -93,19 +93,29 @@ def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=30, debug=Fa
             f"[EXTRACTOR DEBUG] Erosion mask range: [{mask_r_erosion.min():.2f}, {mask_r_erosion.max():.2f}]"
         )
 
+    effective_blob = float(blob_size_px) if blob_size_px else 1.0
+    erosion_dim = max(3, int(round(effective_blob / 10.0)))
+    if erosion_dim % 2 == 0:
+        erosion_dim += 1
+    erosion_footprint = np.ones((erosion_dim, erosion_dim), dtype=bool)
+
     diff_r = red > mask_r_erosion
 
     if debug:
         debug_info['diff_r_raw'] = diff_r.copy()
         print(f"[EXTRACTOR DEBUG] diff_r raw: {np.sum(diff_r)} pixels")
 
-    diff_r = morphology.binary_erosion(diff_r, footprint=np.ones((3, 3)))
-    diff_r = morphology.remove_small_objects(diff_r, min_size=100)
+    min_region_area = max(20, int(round((effective_blob ** 2) / 16.0)))
+    diff_r = morphology.binary_erosion(diff_r, footprint=erosion_footprint)
+    diff_r = morphology.remove_small_objects(diff_r, min_size=min_region_area)
 
     if debug:
         debug_info['diff_r'] = diff_r.copy()
         print(
             f"[EXTRACTOR DEBUG] diff_r final: {np.sum(diff_r)} pixels after erosion and cleanup"
+        )
+        print(
+            f"[EXTRACTOR DEBUG] erosion_dim={erosion_dim}, min_region_area={min_region_area}"
         )
 
     abs_diff = np.abs(mask_r_dilation - red)
@@ -117,14 +127,21 @@ def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=30, debug=Fa
         print(f"[EXTRACTOR DEBUG] abs_diff range: [{abs_diff.min():.2f}, {abs_diff.max():.2f}]")
         print(f"[EXTRACTOR DEBUG] mask_gt_red: {np.sum(mask_gt_red)} pixels")
 
-    erosion_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (6, 6))
+    erosion_kernel_size = max(3, int(round(effective_blob * 0.15)))
+    if erosion_kernel_size % 2 == 1:
+        erosion_kernel_size += 1
+    cv_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erosion_kernel_size, erosion_kernel_size))
     mask_u8 = mask_gt_red.astype(np.uint8) * 255
-    mask_eroded_u8 = cv2.erode(mask_u8, erosion_kernel, iterations=2)
+    erosion_iterations = max(1, int(round(effective_blob / 20.0)))
+    mask_eroded_u8 = cv2.erode(mask_u8, cv_kernel, iterations=erosion_iterations)
     mask_gt_red_eroded = mask_eroded_u8.astype(bool)
 
     if debug:
         debug_info['mask_gt_red_eroded'] = mask_gt_red_eroded.copy()
         print(f"[EXTRACTOR DEBUG] mask_gt_red_eroded: {np.sum(mask_gt_red_eroded)} pixels")
+        print(
+            f"[EXTRACTOR DEBUG] erosion_kernel_size={erosion_kernel_size}, iterations={erosion_iterations}"
+        )
 
     combined_labels = np.zeros_like(diff_r, dtype=int)
     combined_labels[mask_gt_red_eroded] = 2
@@ -136,7 +153,8 @@ def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=30, debug=Fa
         counts = [(label, np.sum(combined_labels == label)) for label in unique_combined]
         print(f"[EXTRACTOR DEBUG] Combined labels: {counts}")
 
-    expanded_labels = expand_labels(combined_labels, distance=100)
+    expand_distance = max(1, int(round(effective_blob * 2.5)))
+    expanded_labels = expand_labels(combined_labels, distance=expand_distance)
 
     if debug:
         debug_info['expanded_labels'] = expanded_labels.copy()
@@ -144,6 +162,7 @@ def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=30, debug=Fa
         print(f"[EXTRACTOR DEBUG] Expanded labels: {len(unique_expanded)} unique values")
         if len(unique_expanded) <= 20:
             print(f"[EXTRACTOR DEBUG] Expanded values: {unique_expanded}")
+        print(f"[EXTRACTOR DEBUG] expand_distance={expand_distance}")
 
     labeled_diff_r, _ = ndi_label(diff_r != 0)
 

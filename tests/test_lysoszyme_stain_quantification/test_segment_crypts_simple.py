@@ -21,8 +21,15 @@ DEBUG_PATH = Path(DEBUG_ROOT) if DEBUG_ROOT else None
 
 NUM_CRYPTS = 5
 IMAGE_SIZE = (200, 200)
+BLOB_SIZE = 40
+TEST_INTENSITIES = {"crypt_blue_sub": 0.25}
 
-RED_CHANNEL, BLUE_CHANNEL, _ = generate_test_crypts(num_crypts=NUM_CRYPTS, image_size=IMAGE_SIZE)
+RED_CHANNEL, BLUE_CHANNEL, _ = generate_test_crypts(
+    num_crypts=NUM_CRYPTS,
+    image_size=IMAGE_SIZE,
+    blob_size_px=BLOB_SIZE,
+    intensities=TEST_INTENSITIES,
+)
 
 
 def _patch_segment_dependencies() -> None:
@@ -90,11 +97,13 @@ def test_segment_crypts_runs_at_all() -> None:
     _patch_segment_dependencies()
 
     initial_labels = identify_module.identify_potential_crypts(
-        RED_CHANNEL, BLUE_CHANNEL, blob_size_px=15, debug=False
+        RED_CHANNEL, BLUE_CHANNEL, blob_size_px=BLOB_SIZE, debug=False
     )
     expected_mask = remove_module.remove_edge_touching_regions_sk(initial_labels) > 0
 
-    segmented = segment_module.segment_crypts((RED_CHANNEL.copy(), BLUE_CHANNEL.copy()))
+    segmented = segment_module.segment_crypts(
+        (RED_CHANNEL.copy(), BLUE_CHANNEL.copy()), blob_size_px=BLOB_SIZE
+    )
     assert isinstance(segmented, np.ndarray)
     assert segmented.shape == IMAGE_SIZE
 
