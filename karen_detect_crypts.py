@@ -31,20 +31,20 @@ def setup_results_dir(script_dir: Path) -> Path:
     return results_dir
 
 
-def plot_all_crypts(out, *, lab_name="crypts", ncols=5, figsize_per=(3, 3)):
+def plot_all_crypts(out, *, lab_name="crypts", ncols=5, figsize_per=(3, 3), subjects=None):
     """
     Plot label data for every subject in a Matplotlib grid.
 
     Supports:
       - xarray: expects out.label with dims including "lab","subject","y","x".
       - npz_dict (dict): expects key "label:{lab_name}" -> array shaped (subject, y, x).
+    Optionally accepts an explicit `subjects` list for dict inputs.
     """
     if isinstance(out, dict):
         key = f"label:{lab_name}"
         if key not in out:
             raise KeyError(f"{key} not found in out dict. Available keys: {list(out.keys())}")
         arr = out[key]
-        subjects = globals().get("subject_names", None)
         if subjects is None or len(subjects) != arr.shape[0]:
             subjects = list(range(arr.shape[0]))
         da_like = arr
@@ -57,7 +57,7 @@ def plot_all_crypts(out, *, lab_name="crypts", ncols=5, figsize_per=(3, 3)):
             da = out
         da = da.sel(lab=lab_name)
         subjects = list(da.coords["subject"].values)
-        da_like = da
+        da_like = da.compute() if hasattr(da.data, "compute") else da
     else:
         raise TypeError("out must be an xarray object or an npz_dict (dict)")
 
@@ -98,9 +98,8 @@ def main() -> None:
     subject_names, images_by_source, source_names = find_subject_image_sets(
         img_dir=img_dir,
         sources=[("rfp", lysozyme_channel, "r"), ("dapi", dapi_channel, "b")],
-        max_subjects=10,
+        max_subjects=1000,
     )
-    globals()["subject_names"] = subject_names
 
     if DEBUG:
         print(f"Sources: {source_names}")
@@ -115,9 +114,9 @@ def main() -> None:
     )
 
     print(stk)
-    out = stk.output(format="npz_dict")
+    ds = stk.output(format="dataset")
 
-    fig = plot_all_crypts(out, lab_name="crypts", ncols=6, figsize_per=(3, 3))
+    fig = plot_all_crypts(ds, lab_name="crypts", ncols=6, figsize_per=(3, 3))
 
     output_path = results_dir / "karen_detect_crypts.png"
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
