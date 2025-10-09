@@ -19,6 +19,9 @@ import xarray as xr
 from image_ops_framework.analysis_stack_xr import AnalysisStackXR
 from src.scientific_image_finder.finder import find_subject_image_sets
 from src.lysozyme_stain_quantification.segment_crypts import segment_crypts
+from src.lysozyme_stain_quantification.utils.subject_scale_lookup import (
+    subject_scale_from_name,
+)
 
 
 DEBUG = False
@@ -101,6 +104,9 @@ def main() -> None:
         max_subjects=1000,
     )
 
+    scale_keys = ["40x", "20x"]
+    scale_values = [0.04, 0.02]
+
     if DEBUG:
         print(f"Sources: {source_names}")
         print(f"Found {len(subject_names)} subjects with images in both channels.")
@@ -111,6 +117,14 @@ def main() -> None:
         AnalysisStackXR()
         .add_sources(subject=subject_names, sources=images_by_source, sourcenames=source_names)
         .run(segment_crypts, channels=["rfp", "dapi"], output_name="crypts", use_dask=True, blob_size_px=40)
+        .run(
+            subject_scale_from_name,
+            channels=["subject_name"],
+            output_name="microns_per_px",
+            keys=scale_keys,
+            values=scale_values,
+            default=scale_values[0],
+        )
     )
 
     print(stk)
