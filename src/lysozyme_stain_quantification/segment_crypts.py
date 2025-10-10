@@ -1,35 +1,77 @@
 
-import numpy as np
+from __future__ import annotations
 
+from typing import Sequence
+
+import numpy as np
 
 from .crypts.identify_potential_crypts_mod import identify_potential_crypts
 from .crypts.remove_edge_touching_regions_mod import remove_edge_touching_regions_sk
 from .crypts.scoring_selector_mod import scoring_selector
-# new style:
+
+
+def _to_float(value: np.ndarray | float | int) -> float:
+    arr = np.asarray(value)
+    if arr.shape == ():
+        return float(arr.item())
+    if arr.ndim == 0:
+        return float(arr)
+    raise ValueError(f"Expected scalar microns-per-pixel value, got shape {arr.shape}")
+
+
 def segment_crypts(
-        channels: tuple[np.ndarray, np.ndarray], # i.e. [crypt_stain_channel, tissue_counterstain_channel] i.e. [RFP, DAPI]
-        blob_size_px: int = 15, # approximate size of crypts in pixels (length)
-        debug: bool = False,
-        scoring_weights: dict[str, float] | None = None,
-        masks: list[np.ndarray] | None = None,
-        max_regions: int = 5) -> np.ndarray:
+    channels: Sequence[np.ndarray],
+    blob_size_px: int | None = 15,
+    *,
+    blob_size_um: float | None = None,
+    debug: bool = False,
+    scoring_weights: dict[str, float] | None = None,
+    masks: Sequence[np.ndarray] | None = None,
+    max_regions: int = 5,
+    microns_per_px: float | None = None,
+) -> np.ndarray:
     """Segment crypts in the given image.
 
     Args:
-        channels: Tuple of two 2D numpy arrays representing the red and blue channels of the image.
-        blob_size_px: Approximate size of crypts in pixels (length).
+        channels: Sequence containing the RFP channel, DAPI channel, and optionally a scalar microns-per-pixel value.
+        blob_size_um: Approximate crypt size expressed in microns. Converted to pixels using the microns-per-pixel value.
+        blob_size_px: Legacy approximate size of crypts in pixels. Used when ``blob_size_um`` is ``None``.
+        microns_per_px: Explicit scalar fallback if the third channel is not provided.
     """
+    if len(channels) < 2:
+        raise ValueError("segment_crypts requires at least two channels (RFP and DAPI).")
+
     scoring_weights = scoring_weights if scoring_weights is not None else {
-        'circularity': 0.35,    # Most important - want circular regions
-        'area': 0.25,           # Second - want consistent sizes
-        'line_fit': 0.15,       # Moderate - want aligned regions
-        'red_intensity': 0.15,  # Moderate - want bright regions
-        'com_consistency': 0.10 # Least - center consistency
+        "circularity": 0.35,  # Most important - want circular regions
+        "area": 0.25,  # Second - want consistent sizes
+        "line_fit": 0.15,  # Moderate - want aligned regions
+        "red_intensity": 0.15,  # Moderate - want bright regions
+        "com_consistency": 0.10,  # Least - center consistency
     }
-    crypt_img, tissue_image = channels
+
+    crypt_img = np.asarray(channels[0])
+    tissue_image = np.asarray(channels[1])
     if crypt_img.shape != tissue_image.shape:
         raise ValueError(f"Shape mismatch: red {crypt_img.shape} vs blue {tissue_image.shape}")
-    potential_crypts = identify_potential_crypts(crypt_img, tissue_image, blob_size_px, debug)
+
+    if len(channels) >= 3:
+        microns_per_px = _to_float(channels[2])
+    elif microns_per_px is not None:
+        microns_per_px = float(microns_per_px)
+
+    effective_blob_size_px: int
+    if blob_size_um is not None:
+        if microns_per_px is None:
+            raise ValueError("Microns-per-pixel value is required when blob_size_um is provided.")
+        if microns_per_px <= 0:
+            raise ValueError("Microns-per-pixel value must be positive.")
+        effective_blob_size_px = max(1, int(round(blob_size_um / microns_per_px)))
+    else:
+        if blob_size_px is None:
+            raise ValueError("blob_size_px cannot be None when blob_size_um is not given.")
+        effective_blob_size_px = int(blob_size_px)
+
+    potential_crypts = identify_potential_crypts(crypt_img, tissue_image, effective_blob_size_px, debug)
 
     cleaned_crypts = remove_edge_touching_regions_sk(potential_crypts)
 
