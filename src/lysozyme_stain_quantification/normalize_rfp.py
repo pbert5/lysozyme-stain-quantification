@@ -42,7 +42,7 @@ def compute_normalized_rfp(
 
     crypt_mask = crypt_labels != 0
     if not np.any(crypt_mask):
-        raise ValueError("Crypt label image contains no crypt regions.")
+        return np.zeros_like(red_channel, dtype=np.float64)
 
     tissue_without_crypts = tissue_mask & ~crypt_mask
     if not np.any(tissue_without_crypts):

@@ -23,10 +23,11 @@ from src.lysozyme_stain_quantification.utils.subject_scale_lookup import (
     subject_scale_from_name,
 )
 from src.lysozyme_stain_quantification.normalize_rfp import compute_normalized_rfp
+from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary import summarize_crypt_fluorescence, SUMMARY_FIELD_ORDER
 
 
 DEBUG = False
-MAX_SUBJECTS = 10
+MAX_SUBJECTS = 1000
 
 
 def setup_results_dir(script_dir: Path) -> Path:
@@ -130,13 +131,18 @@ def main() -> None:
         segment_crypts,
         channels=["rfp", "dapi", "microns_per_px"], #TODO: its prob super slow bc microns_per_px is not chuncked, need to improve handeling  of run to ensuer everyting passed is chunked
         output_name="crypts",
-        use_dask=True,
+        # use_dask=True,
         blob_size_um=blob_size_um,
     ).run(
         compute_normalized_rfp,
         channels=["rfp", "dapi", "crypts"],
         output_name="normalized_rfp",
         
+    ).run(
+        summarize_crypt_fluorescence,
+        channels=["normalized_rfp", "crypts", "microns_per_px"],
+        output_name="crypt_fluorescence_summary",
+        intensity_upper_bound=1,
     )
 
     print(stk)
@@ -148,8 +154,13 @@ def main() -> None:
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
     if DEBUG:
         print(f"Saved visualization to {output_path}")
- 
 
+
+    # Save crypt fluorescence summary as CSV
+    df = stk.to_dataframe(channels=["subject_name","crypt_fluorescence_summary","microns_per_px"], columns=["subject_name", list(SUMMARY_FIELD_ORDER), "microns_per_px"])
+    df.to_csv(results_dir / "karen_detect_crypts.csv", index=False)
+    if DEBUG:
+        print(f"Saved crypt fluorescence summary to {results_dir / 'karen_detect_crypts.csv'}")
 
 if __name__ == "__main__":
     main()
