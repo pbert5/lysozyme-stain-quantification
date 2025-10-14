@@ -15,7 +15,8 @@ from visual_inspector import VisualInspector
 def main():
     """Main entry point."""
     # Default results directory
-    default_results = Path(r"C:\Users\admin\Documents\Pierre lab\projects\Colustrum-ABX\lysozyme stain quantification\results\All")
+    default_results = Path(r"/home/phillip/documents/lysozyme/results/karen")
+    default_metadata = default_results / "karen_detect_crypts.csv"
     
     print("=== Lysozyme Stain Visual Inspector ===")
     print()
@@ -33,18 +34,21 @@ def main():
         print("Make sure you have run the main processing pipeline first.")
         sys.exit(1)
     
-    # Check for required files
-    summaries_dir = results_dir / 'summaries'
-    if not (summaries_dir / 'consolidated_summary.csv').exists():
-        print(f"Error: No consolidated_summary.csv found in {summaries_dir}")
-        print("Make sure you have run the main processing pipeline first.")
-        sys.exit(1)
+    if len(sys.argv) > 2:
+        metadata_csv = Path(sys.argv[2])
+    else:
+        metadata_csv = default_metadata if default_metadata.exists() else None
     
     print(f"Loading results from: {results_dir}")
+    if metadata_csv and metadata_csv.exists():
+        print(f"Using metadata CSV: {metadata_csv}")
+    elif metadata_csv:
+        print(f"Warning: Metadata CSV not found at {metadata_csv}. Continuing without metadata file.")
+        metadata_csv = None
     print()
     
     try:
-        inspector = VisualInspector(results_dir)
+        inspector = VisualInspector(results_dir, metadata_csv=metadata_csv)
         inspector.run()
     except KeyboardInterrupt:
         print("\nInspection interrupted by user.")
