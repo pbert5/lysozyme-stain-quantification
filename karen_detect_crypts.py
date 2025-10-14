@@ -17,6 +17,7 @@ import numpy as np
 import xarray as xr
 
 from image_ops_framework.analysis_stack_xr import AnalysisStackXR
+from image_ops_framework.helpers import render_label_overlay
 from src.scientific_image_finder.finder import find_subject_image_sets
 from src.lysozyme_stain_quantification.segment_crypts import segment_crypts
 from src.lysozyme_stain_quantification.utils.subject_scale_lookup import (
@@ -27,7 +28,7 @@ from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary impor
 
 
 DEBUG = False
-MAX_SUBJECTS = 1000
+MAX_SUBJECTS = 10
 
 
 def setup_results_dir(script_dir: Path) -> Path:
@@ -96,6 +97,8 @@ def plot_all_crypts(out, *, lab_name="crypts", ncols=5, figsize_per=(3, 3), subj
 
 def main() -> None:
     results_dir = setup_results_dir(SCRIPT_DIR)
+    render_dir = results_dir / "renderings"
+    render_dir.mkdir(parents=True, exist_ok=True)
 
     img_dir = Path("/home/phillip/documents/lysozyme/lysozyme images")
     lysozyme_channel = "rfp"
@@ -143,10 +146,27 @@ def main() -> None:
         channels=["normalized_rfp", "crypts", "microns_per_px"],
         output_name="crypt_fluorescence_summary",
         intensity_upper_bound=1,
+    ).run(
+        render_label_overlay,
+        channels=["rfp", "dapi", "crypts"],
+        output_name="crypt_overlay",
+        outline_width=2,
+        fill_alpha=0.35,
+        outline_alpha=0.9,
+        normalize_scalar=True,
     )
 
     print(stk)
     ds = stk.output(format="dataset")
+
+    overlay_exports = stk.save_images(
+        channels=["crypt_overlay"],
+        directory=render_dir,
+        normalize={"crypt_overlay": False},
+        image_format="png",
+    )
+    if DEBUG:
+        print(f"Saved {len(overlay_exports.get('crypt_overlay', []))} overlay images to {render_dir}")
 
     fig = plot_all_crypts(ds, lab_name="crypts", ncols=6, figsize_per=(3, 3))
 
