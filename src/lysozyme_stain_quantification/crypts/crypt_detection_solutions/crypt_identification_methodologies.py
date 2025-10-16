@@ -193,7 +193,7 @@ def preprocess_for_caps(image: np.ndarray, salt_and_pepper_noise_size: Optional[
     radius = max(1, int(round(salt_and_pepper_noise_size)))
     footprint = disk(radius)
     cleaned = image - white_tophat(image, footprint)
-    return np.clip(cleaned, 0.0, 1.0)
+    return cleaned
 
 
 # ---------------------------- morphology helpers ---------------------------- #
