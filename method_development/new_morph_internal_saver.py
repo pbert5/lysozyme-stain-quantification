@@ -133,20 +133,52 @@ def remove_rectangles(
 # ---------------------------- morphology helpers ---------------------------- #
 
 
-def caps(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Contrast-adaptive cap decomposition."""
+def _caps_preprocess(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Shared preprocessing for cap-style morphology computations."""
     image = to_float01(image)
     image = equalize_adapthist(image, clip_limit=0.01)
 
     hats = dilation(image, disk(big_r)) - dilation(image, disk(small_r))
     hats = minmax(hats)
+    return image, hats
 
-    clean = image - np.minimum(image, hats)
+
+def caps(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Contrast-adaptive cap decomposition returning (hats, clean, troughs)."""
+    image_eq, hats = _caps_preprocess(image, small_r, big_r)
+
+    clean = image_eq - np.minimum(image_eq, hats)
     clean = minmax(clean)
 
-    troughs = np.maximum(image, hats) - image
+    troughs = np.maximum(image_eq, hats) - image_eq
     troughs = minmax(troughs)
     return hats, clean, troughs
+
+
+def caps_clean(image: np.ndarray, small_r: int, big_r: int) -> np.ndarray:
+    """Return only the 'clean' component of the cap decomposition."""
+    image_eq, hats = _caps_preprocess(image, small_r, big_r)
+    clean = image_eq - np.minimum(image_eq, hats)
+    return minmax(clean)
+
+
+def caps_trough(image: np.ndarray, small_r: int, big_r: int) -> np.ndarray:
+    """Return only the 'troughs' component of the cap decomposition."""
+    image_eq, hats = _caps_preprocess(image, small_r, big_r)
+    troughs = np.maximum(image_eq, hats) - image_eq
+    return minmax(troughs)
+
+
+def caps_clean_troughs(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Return both clean and trough components while avoiding extra work."""
+    image_eq, hats = _caps_preprocess(image, small_r, big_r)
+
+    clean = image_eq - np.minimum(image_eq, hats)
+    clean = minmax(clean)
+
+    troughs = np.maximum(image_eq, hats) - image_eq
+    troughs = minmax(troughs)
+    return clean, troughs
 
 
 def show_caps(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -174,8 +206,8 @@ def identify_crypt_seeds(
 ) -> NDArray:
     """Legacy seed generator kept for reference."""
     del blob_size_px  # legacy placeholder
-    tissue_hats, tissue_clean, tissue_troughs = caps(equalize_adapthist(tissue_image), 1, 40)
-    crypt_hats, crypt_clean, _ = caps(crypt_img, 2, 40)
+    tissue_clean, tissue_troughs = caps_clean_troughs(tissue_image, 1, 40)
+    crypt_clean = caps_clean(crypt_img, 2, 40)
 
     thinned_crypts = np.maximum(crypt_clean - tissue_clean, 0)
     split_crypts = np.maximum(crypt_clean - tissue_troughs, 0)
@@ -194,7 +226,7 @@ def limited_expansion(
 ) -> NDArray:
     """Limit vertical expansion of crypts by suppressing tissue spillover."""
     del blob_size_px  # not used but kept for interface parity
-    _, _, outer_troughs = caps(minmax(tissue_image), 10, 50)
+    outer_troughs = caps_trough(minmax(tissue_image), 10, 50)
     outer_troughs = minmax(outer_troughs)
 
     adjusted = np.maximum(crypt_img - outer_troughs, 0)
@@ -214,8 +246,8 @@ def identify_crypt_seeds_new(
     crypt_img = to_float01(crypt_img)
     tissue_image = to_float01(tissue_image)
 
-    _, tissue_clean, tissue_troughs = caps(tissue_image, 1, 40)
-    _, crypt_clean, crypt_troughs = caps(crypt_img, 2, 40)
+    tissue_clean, tissue_troughs = caps_clean_troughs(tissue_image, 1, 40)
+    crypt_clean, crypt_troughs = caps_clean_troughs(crypt_img, 2, 40)
 
     thinned_crypts = np.maximum(crypt_clean - tissue_clean, 0)
     split_crypts = np.maximum(crypt_clean - tissue_troughs, 0)
