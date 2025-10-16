@@ -96,9 +96,9 @@ def remove_rectangles(
     if stacks is not None:
         if stacks.ndim != 3 or stacks.shape[1:] != (height, width):
             raise ValueError("`stacks` must be shaped (N, H, W) and match image size.")
-        stacks = stacks.astype(np.int16)
-        flat = (stacks.max(axis=0) - stacks.min(axis=0)) <= same_tol
-        bright = stacks.mean(axis=0) >= white_thresh
+        stacks_int16 = stacks.astype(np.int16)
+        flat = (stacks_int16.max(axis=0) - stacks_int16.min(axis=0)) <= same_tol
+        bright = stacks_int16.mean(axis=0) >= white_thresh
         flat_white_mask = (flat & bright).astype(np.uint8) * 255
     else:
         if image.ndim == 3 and image.shape[2] >= 3:
@@ -129,7 +129,8 @@ def remove_rectangles(
         return image.copy()
 
     mask = cv2.dilate(mask, np.ones(dilation_kernel, np.uint8), iterations=1)
-    return cv2.inpaint(image, mask, inpaint_radius, cv2.INPAINT_TELEA)
+    result: NDArray[np.uint8] = cv2.inpaint(image, mask, inpaint_radius, cv2.INPAINT_TELEA)  # type: ignore
+    return result
 
 
 # ---------------------------- scale metadata ---------------------------- #
@@ -281,7 +282,8 @@ def identify_crypt_seeds(
     distance = tissue_troughs - good_crypts
     maxi = local_maxima(good_crypts)
     crypt_seeds = watershed(distance, markers=maxi, mask=tissue_troughs < good_crypts)
-    return sk_label(crypt_seeds > 0)
+    labeled: np.ndarray = sk_label(crypt_seeds > 0)  # type: ignore
+    return labeled
 
 
 def limited_expansion(
@@ -330,7 +332,8 @@ def identify_crypt_seeds_new(
     distance = tissue_troughs - good_crypts
     maxi = local_maxima(good_crypts)
     seeds = watershed(distance, markers=maxi, mask=tissue_troughs < good_crypts)
-    return sk_label(seeds > 0)
+    labeled: np.ndarray = sk_label(seeds > 0)  # type: ignore
+    return labeled
 
 
 def identify_potential_crypts_old_like(
@@ -357,13 +360,14 @@ def identify_potential_crypts_old_like(
         min_region_area = max(20, int(round((effective_blob**2) / 16.0)))
         crypt_seeds_bool = binary_erosion(crypt_seeds_bool, footprint=erosion_footprint)
         crypt_seeds_bool = remove_small_objects(crypt_seeds_bool, min_size=min_region_area)
-        labeled_diff_r, _ = ndi_label(crypt_seeds_bool)
+        labeled_diff_r: np.ndarray
+        labeled_diff_r, _ = ndi_label(crypt_seeds_bool)  # type: ignore
     else:
         external_crypt_seeds = external_crypt_seeds.astype(np.int32)
         crypt_seed_mask = external_crypt_seeds > 0
         min_region_area = max(20, int(round((effective_blob**2) / 16.0)))
         crypt_seed_mask = remove_small_objects(crypt_seed_mask, min_size=min_region_area)
-        labeled_diff_r = sk_label(crypt_seed_mask)
+        labeled_diff_r = sk_label(crypt_seed_mask)  # type: ignore
 
     abs_diff = np.maximum(tissue_image - crypt_img, 0)
     mask_gt_red = abs_diff > crypt_img
@@ -393,8 +397,8 @@ def identify_potential_crypts_old_like(
 
     mask_ws = expanded_labels > 0
 
-    elevation = minmax(distance_transform_edt(combined_labels == 2)) - minmax(
-        distance_transform_edt(combined_labels == 1)
+    elevation = minmax(distance_transform_edt(combined_labels == 2)) - minmax(  # type: ignore
+        distance_transform_edt(combined_labels == 1)  # type: ignore
     )
 
     ws_labels = watershed(elevation, markers=reworked, mask=mask_ws).copy()
