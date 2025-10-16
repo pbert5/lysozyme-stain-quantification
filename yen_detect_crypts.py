@@ -35,13 +35,13 @@ from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary impor
 
 
 DEBUG = True
-MAX_SUBJECTS = 10
-SAVE_IMAGES = False  # whether to save overlay images
+MAX_SUBJECTS = 1000
+SAVE_IMAGES = True  # whether to save overlay images
 
 
 def setup_results_dir(script_dir: Path) -> Path:
     """Create the results directory for this script."""
-    results_dir = script_dir / "results" / "karen"
+    results_dir = script_dir / "results" / "yen"
     results_dir.mkdir(parents=True, exist_ok=True)
     return results_dir
 
@@ -108,13 +108,13 @@ def main() -> None:
     render_dir = results_dir / "renderings"
     render_dir.mkdir(parents=True, exist_ok=True)
 
-    img_dir = Path("/home/phillip/documents/lysozyme/lysozyme images")
-    lysozyme_channel = "rfp"
-    dapi_channel = "dapi"
+    img_dir = Path("/home/phillip/documents/yen-lab-discussion/rfp/Lyz Fabp1")
+    lysozyme_channel = "c2"
+    dapi_channel = "c3"
 
     subject_names, images_by_source, source_names = find_subject_image_sets(
         img_dir=img_dir,
-        sources=[("rfp", lysozyme_channel, "r"), ("dapi", dapi_channel, "b")],
+        sources=[("rfp", lysozyme_channel, "g"), ("dapi", dapi_channel, "r")],
         max_subjects=MAX_SUBJECTS,
     )
 
