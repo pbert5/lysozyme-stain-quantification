@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -8,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tifffile as tiff
 from numpy.typing import NDArray
-from scipy.ndimage import distance_transform_edt, label as ndi_label
+from scipy.ndimage import distance_transform_edt, gaussian_filter, label as ndi_label
 from skimage.color import label2rgb
 from skimage.exposure import equalize_adapthist
 from skimage.measure import label as sk_label
@@ -20,6 +21,7 @@ from skimage.morphology import (
     local_maxima,
     opening,
     remove_small_objects,
+    white_tophat,
 )
 from skimage.segmentation import expand_labels, watershed
 from skimage.util import invert
@@ -128,6 +130,69 @@ def remove_rectangles(
 
     mask = cv2.dilate(mask, np.ones(dilation_kernel, np.uint8), iterations=1)
     return cv2.inpaint(image, mask, inpaint_radius, cv2.INPAINT_TELEA)
+
+
+# ---------------------------- scale metadata ---------------------------- #
+
+
+@dataclass(frozen=True)
+class MorphologyParams:
+    """Per-subject morphology tuning recorded in pixels."""
+
+    crypt_radius_px: int
+    intervilli_distance_px: int
+    salt_and_pepper_noise_size: Optional[int] = None
+    peak_smoothing_sigma: Optional[float] = None
+    microns_per_pixel: Optional[float] = None  # Reserved for future physical-scale use.
+
+
+DEFAULT_MORPHOLOGY_PARAMS = MorphologyParams(
+    crypt_radius_px=30,
+    intervilli_distance_px=40,
+    salt_and_pepper_noise_size=3,
+    peak_smoothing_sigma=None,
+    microns_per_pixel=None,
+)
+
+_SAMPLE_PARAM_OVERRIDES: Dict[str, Dict[str, Any]] = {
+    "Jej-2": dict(crypt_radius_px=30),
+    "Jej-3": dict(crypt_radius_px=30),
+    "G3FR": dict(crypt_radius_px=40),
+    "G3FR_sep": dict(crypt_radius_px=40),
+}
+
+
+def get_morphology_params(subject: str, **overrides: Any) -> MorphologyParams:
+    """
+    Return morphology parameters for the provided subject.
+
+    Values are stored in pixels for now. When micron metadata is available we can
+    convert it here before returning the configuration.
+    """
+    params = DEFAULT_MORPHOLOGY_PARAMS
+    subject_overrides = _SAMPLE_PARAM_OVERRIDES.get(subject)
+    if subject_overrides:
+        params = replace(params, **subject_overrides)
+    if overrides:
+        params = replace(params, **overrides)
+    return params
+
+
+def preprocess_for_caps(image: np.ndarray, salt_and_pepper_noise_size: Optional[int]) -> np.ndarray:
+    """
+    Normalize the image and optionally remove salt-and-pepper noise.
+
+    Historically we applied a white top-hat cleanup before cap decomposition; this
+    keeps that option configurable per subject.
+    """
+    image = to_float01(image)
+    if salt_and_pepper_noise_size is None or salt_and_pepper_noise_size <= 0:
+        return image
+
+    radius = max(1, int(round(salt_and_pepper_noise_size)))
+    footprint = disk(radius)
+    cleaned = image - white_tophat(image, footprint)
+    return np.clip(cleaned, 0.0, 1.0)
 
 
 # ---------------------------- morphology helpers ---------------------------- #
@@ -241,18 +306,27 @@ def limited_expansion(
 def identify_crypt_seeds_new(
     crypt_img: np.ndarray,
     tissue_image: np.ndarray,
+    *,
+    params: Optional[MorphologyParams] = None,
 ) -> np.ndarray:
     """Newer seed logic that prefers solid crypts."""
-    crypt_img = to_float01(crypt_img)
-    tissue_image = to_float01(tissue_image)
+    params = params or DEFAULT_MORPHOLOGY_PARAMS
 
-    tissue_clean, tissue_troughs = caps_clean_troughs(tissue_image, 1, 40)
-    crypt_clean, crypt_troughs = caps_clean_troughs(crypt_img, 2, 40)
+    crypt_img = preprocess_for_caps(crypt_img, params.salt_and_pepper_noise_size)
+    tissue_image = preprocess_for_caps(tissue_image, params.salt_and_pepper_noise_size)
+
+    max_expansion = max(1, int(round(params.crypt_radius_px)))
+    tissue_clean, tissue_troughs = caps_clean_troughs(tissue_image, 1, max_expansion)
+    crypt_clean, crypt_troughs = caps_clean_troughs(crypt_img, 2, max_expansion)
 
     thinned_crypts = np.maximum(crypt_clean - tissue_clean, 0)
     split_crypts = np.maximum(crypt_clean - tissue_troughs, 0)
 
     good_crypts = minmax(opening(split_crypts * thinned_crypts, footprint=disk(5)) ** 0.5)
+    if params.peak_smoothing_sigma and params.peak_smoothing_sigma > 0:
+        good_crypts = gaussian_filter(good_crypts, params.peak_smoothing_sigma)
+        good_crypts = minmax(good_crypts)
+
     distance = tissue_troughs - good_crypts
     maxi = local_maxima(good_crypts)
     seeds = watershed(distance, markers=maxi, mask=tissue_troughs < good_crypts)
@@ -262,8 +336,9 @@ def identify_crypt_seeds_new(
 def identify_potential_crypts_old_like(
     crypt_img: np.ndarray,
     tissue_image: np.ndarray,
-    blob_size_px: Optional[int] = 30,
+    blob_size_px: Optional[int] = None,
     external_crypt_seeds: Optional[np.ndarray] = None,
+    params: Optional[MorphologyParams] = None,
 ) -> np.ndarray:
     """Original watershed skeleton with optional external seeds."""
     crypt_img = to_float01(crypt_img)
@@ -272,7 +347,8 @@ def identify_potential_crypts_old_like(
     if crypt_img.shape != tissue_image.shape:
         raise ValueError(f"Image shape mismatch: red {crypt_img.shape} vs blue {tissue_image.shape}")
 
-    effective_blob = float(blob_size_px) if blob_size_px else 1.0
+    params = params or DEFAULT_MORPHOLOGY_PARAMS
+    effective_blob = float(blob_size_px) if blob_size_px else float(params.crypt_radius_px)
     erosion_dim = _odd(max(3, int(round(effective_blob / 10.0))))
     erosion_footprint = np.ones((erosion_dim, erosion_dim), dtype=bool)
 
@@ -304,7 +380,10 @@ def identify_potential_crypts_old_like(
     combined_labels[tissue_eroded] = 2
     combined_labels[labeled_diff_r > 0] = 1
 
-    expand_distance = max(1, int(round(effective_blob * 2.5)))
+    if params.intervilli_distance_px:
+        expand_distance = max(1, int(round(params.intervilli_distance_px)))
+    else:
+        expand_distance = max(1, int(round(effective_blob * 2.5)))
     expanded_labels = expand_labels(combined_labels, distance=expand_distance)
 
     reworked = np.zeros_like(expanded_labels, dtype=np.int32)
@@ -341,12 +420,13 @@ def _seed_health_metrics(seed_labels: np.ndarray) -> Dict[str, Any]:
 def identify_potential_crypts_hybrid(
     crypt_img: np.ndarray,
     tissue_image: np.ndarray,
-    blob_size_px: Optional[int] = 30,
+    blob_size_px: Optional[int] = None,
     use_new_seeds: bool = True,
     auto_fallback: bool = True,
     min_seed_count: int = 10,
     min_coverage: float = 0.002,
     debug: bool = False,
+    params: Optional[MorphologyParams] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
     Hybrid pipeline:
@@ -357,9 +437,13 @@ def identify_potential_crypts_hybrid(
     crypt_img = to_float01(crypt_img)
     tissue_image = to_float01(tissue_image)
 
+    params = params or DEFAULT_MORPHOLOGY_PARAMS
+    if blob_size_px is None:
+        blob_size_px = params.crypt_radius_px
+
     dbg: Dict[str, Any] = {}
 
-    new_seeds = identify_crypt_seeds_new(crypt_img, tissue_image) if use_new_seeds else None
+    new_seeds = identify_crypt_seeds_new(crypt_img, tissue_image, params=params) if use_new_seeds else None
     new_metrics = _seed_health_metrics(
         new_seeds if new_seeds is not None else np.zeros_like(crypt_img, dtype=np.int32)
     )
@@ -377,6 +461,7 @@ def identify_potential_crypts_hybrid(
             tissue_image,
             blob_size_px=blob_size_px,
             external_crypt_seeds=new_seeds,
+            params=params,
         )
         dbg["mode"] = "old_body_with_new_seeds"
     else:
@@ -385,6 +470,7 @@ def identify_potential_crypts_hybrid(
             tissue_image,
             blob_size_px=blob_size_px,
             external_crypt_seeds=None,
+            params=params,
         )
         dbg["mode"] = "old_body_with_old_seeds"
 
@@ -456,22 +542,23 @@ def main() -> None:
     for i, (subject, crypt, tissue) in enumerate(list_of_images_to_try):
         crypt = minmax(crypt)
         tissue = minmax(tissue)
+        params = get_morphology_params(subject)
 
         ax[i, 0].imshow(np.stack([crypt, np.zeros_like(crypt), tissue], axis=-1))
         ax[i, 0].axis("off")
         ax[i, 0].set_title(f"{subject} - Crypt")
 
-        old_labels = identify_potential_crypts_old_like(crypt, tissue)
+        old_labels = identify_potential_crypts_old_like(crypt, tissue, params=params)
         ax[i, 1].imshow(label2rgb(old_labels))
         ax[i, 1].axis("off")
         ax[i, 1].set_title(f"{subject} - Old identify potential crypts")
 
-        hybrid_labels, _ = identify_potential_crypts_hybrid(crypt, tissue)
+        hybrid_labels, _ = identify_potential_crypts_hybrid(crypt, tissue, params=params)
         ax[i, 2].imshow(label2rgb(hybrid_labels), cmap="nipy_spectral")
         ax[i, 2].axis("off")
         ax[i, 2].set_title(f"{subject} - Hybrid identify potential crypts")
 
-        new_seeds = identify_crypt_seeds_new(crypt, tissue)
+        new_seeds = identify_crypt_seeds_new(crypt, tissue, params=params)
         ax[i, 3].imshow(label2rgb(new_seeds), cmap="nipy_spectral")
         ax[i, 3].axis("off")
         ax[i, 3].set_title(f"{subject} - New")
