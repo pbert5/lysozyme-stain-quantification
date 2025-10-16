@@ -202,7 +202,7 @@ def preprocess_for_caps(image: np.ndarray, salt_and_pepper_noise_size: Optional[
 def _caps_preprocess(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.ndarray, np.ndarray]:
     """Shared preprocessing for cap-style morphology computations."""
     image = to_float01(image)
-    image = equalize_adapthist(image, clip_limit=0.01)
+    #image = equalize_adapthist(image, clip_limit=0.01)
 
     hats = dilation(image, disk(big_r)) - dilation(image, disk(small_r))
     hats = minmax(hats)
@@ -315,7 +315,7 @@ def identify_crypt_seeds_new(
     params = params or DEFAULT_MORPHOLOGY_PARAMS
 
     crypt_img = preprocess_for_caps(crypt_img, params.salt_and_pepper_noise_size)
-    tissue_image = preprocess_for_caps(tissue_image, params.salt_and_pepper_noise_size)
+    tissue_image = preprocess_for_caps(equalize_adapthist(tissue_image), params.salt_and_pepper_noise_size)
 
     max_expansion = max(1, int(round(params.crypt_radius_px)))
     tissue_clean, tissue_troughs = caps_clean_troughs(tissue_image, 1, max_expansion)
