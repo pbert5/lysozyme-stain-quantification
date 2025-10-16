@@ -26,6 +26,9 @@ from skimage.morphology import (
 from skimage.segmentation import expand_labels, watershed
 from skimage.util import invert
 
+from src.lysozyme_stain_quantification.utils.remove_artifacts import remove_rectangles
+
+from ..scoring_selector_mod import scoring_selector
 
 
 # ---------------------------- utilities ---------------------------- #
@@ -346,6 +349,60 @@ def _seed_health_metrics(seed_labels: np.ndarray) -> Dict[str, Any]:
     return dict(n_labels=n_labels, coverage=coverage, mean_area=mean_area)
 
 
+def _score_label_set(
+    labels: Optional[np.ndarray],
+    raw_img: np.ndarray,
+    *,
+    debug: bool = False,
+) -> Tuple[float, Dict[str, Any]]:
+    """
+    Evaluate a set of labels using the scoring selector.
+
+    Returns a tuple of (evaluation_score, summary_dict) where higher scores are better.
+    """
+    summary: Dict[str, Any] = {}
+    if labels is None or labels.size == 0:
+        summary.update(region_count=0, mean_quality_score=None, evaluation_score=None, reason="empty")
+        return float("-inf"), summary
+
+    labels = np.asarray(labels)
+    region_count = int(labels.max())
+    summary["region_count"] = region_count
+
+    if region_count == 0:
+        summary.update(mean_quality_score=None, evaluation_score=None, reason="no_regions")
+        return float("-inf"), summary
+
+    try:
+        _, scoring_debug = scoring_selector(
+            labels,
+            raw_img,
+            debug=debug,
+            max_regions=False,
+            return_details=True,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        summary.update(mean_quality_score=None, evaluation_score=None, reason=f"scoring_failed:{exc!r}")
+        return float("-inf"), summary
+
+    properties_df = scoring_debug.get("properties_df")
+    if properties_df is None or len(properties_df) == 0:
+        summary.update(mean_quality_score=None, evaluation_score=None, reason="no_properties")
+        return float("-inf"), summary
+
+    mean_quality = float(properties_df["quality_score"].mean())
+    evaluation_score = -mean_quality  # Lower quality_score is better; invert so higher is better.
+    summary.update(
+        mean_quality_score=mean_quality,
+        evaluation_score=evaluation_score,
+    )
+
+    if debug:
+        summary["quality_scores_sample"] = properties_df["quality_score"].tolist()[:10]
+
+    return evaluation_score, summary
+
+
 def identify_potential_crypts_hybrid(
     crypt_img: np.ndarray,
     tissue_image: np.ndarray,
@@ -358,10 +415,10 @@ def identify_potential_crypts_hybrid(
     params: Optional[MorphologyParams] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
-    Hybrid pipeline:
-      1) Try the new seed generator.
-      2) Optionally fall back to original seed logic if new seeds are weak.
-      3) Run the original watershed body with the chosen seeds.
+    Hybrid pipeline that evaluates both seed strategies and keeps the better result.
+      1) Generate new seeds (optionally) and always run the legacy seed body.
+      2) Score both label sets using the quality selector.
+      3) Select the higher scoring segmentation unless auto-fallback is disabled.
     """
     crypt_img = to_float01(crypt_img)
     tissue_image = to_float01(tissue_image)
@@ -378,34 +435,64 @@ def identify_potential_crypts_hybrid(
     )
     dbg["new_seed_metrics"] = new_metrics
 
-    use_new = use_new_seeds
-    if auto_fallback and use_new_seeds:
-        use_new = (new_metrics["n_labels"] >= min_seed_count) and (new_metrics["coverage"] >= min_coverage)
+    metrics_meet_threshold = (new_metrics["n_labels"] >= min_seed_count) and (new_metrics["coverage"] >= min_coverage)
+    dbg["seed_metrics_meet_threshold"] = bool(metrics_meet_threshold)
 
-    dbg["using_new_seeds"] = bool(use_new)
+    candidate_labels: Dict[str, np.ndarray] = {}
+    candidate_summaries: Dict[str, Dict[str, Any]] = {}
 
-    if use_new:
-        labels = identify_potential_crypts_old_like(
+    if use_new_seeds and new_seeds is not None:
+        candidate_labels["new_seeded"] = identify_potential_crypts_old_like(
             crypt_img,
             tissue_image,
             blob_size_px=blob_size_px,
             external_crypt_seeds=new_seeds,
             params=params,
         )
-        dbg["mode"] = "old_body_with_new_seeds"
+
+    candidate_labels["legacy_seeded"] = identify_potential_crypts_old_like(
+        crypt_img,
+        tissue_image,
+        blob_size_px=blob_size_px,
+        external_crypt_seeds=None,
+        params=params,
+    )
+
+    selected_key = "legacy_seeded"
+    best_score = float("-inf")
+
+    if auto_fallback:
+        for key, label_img in candidate_labels.items():
+            if key == "new_seeded" and not metrics_meet_threshold:
+                summary = dict(
+                    region_count=int(label_img.max()),
+                    mean_quality_score=None,
+                    evaluation_score=float("-inf"),
+                    reason="seed_metrics_below_threshold",
+                )
+                candidate_summaries[key] = summary
+                continue
+            score, summary = _score_label_set(label_img, crypt_img, debug=debug)
+            candidate_summaries[key] = summary
+            if score > best_score:
+                best_score = score
+                selected_key = key
     else:
-        labels = identify_potential_crypts_old_like(
-            crypt_img,
-            tissue_image,
-            blob_size_px=blob_size_px,
-            external_crypt_seeds=None,
-            params=params,
-        )
-        dbg["mode"] = "old_body_with_old_seeds"
+        if "new_seeded" in candidate_labels and use_new_seeds and metrics_meet_threshold:
+            selected_key = "new_seeded"
+        candidate_summaries = {selected_key: dict(evaluation_score=None, reason="auto_fallback_disabled")}
+        best_score = float("nan")
+
+    labels = candidate_labels[selected_key]
+
+    dbg["selected_candidate"] = selected_key
+    dbg["candidate_summaries"] = candidate_summaries
+    dbg["using_new_seeds"] = selected_key == "new_seeded"
 
     if debug:
         dbg["labels_max"] = int(labels.max())
         dbg["labels_coverage"] = float(np.count_nonzero(labels)) / labels.size
+        dbg["best_score"] = best_score
 
     return labels, dbg
 
@@ -505,6 +592,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    
-    from lysozyme_stain_quantification.utils.remove_artifacts import remove_rectangles
     main()
