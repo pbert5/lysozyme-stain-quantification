@@ -35,14 +35,14 @@ from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary impor
 from src.lysozyme_stain_quantification.utils.setup_tools import setup_results_dir, plot_all_crypts
 
 DEBUG = True
-MAX_SUBJECTS = 10
+MAX_SUBJECTS = 1000
 SAVE_IMAGES = False  # whether to save overlay images
 
 
 
 
 def main() -> None:
-    results_dir = setup_results_dir(SCRIPT_DIR)
+    results_dir = setup_results_dir(SCRIPT_DIR, exp_name="karen")
     render_dir = results_dir / "renderings"
     render_dir.mkdir(parents=True, exist_ok=True)
 
@@ -173,7 +173,7 @@ def main() -> None:
     # Save per-crypt detail table as CSV
     if DEBUG:
         print("[BEGIN] Saving per-crypt detail summary to csv...")
-    per_crypt_da = ds["crypt_fluorescence_per_crypt"]
+    per_crypt_da: xr.DataArray = ds["crypt_fluorescence_per_crypt"]  # type: ignore
     per_crypt_records = []
     numeric_fields = list(per_crypt_da.coords["field"].values)
     record_counts = per_crypt_da.coords["record_count"].values if "record_count" in per_crypt_da.coords else np.zeros(per_crypt_da.sizes["subject"], dtype=int)

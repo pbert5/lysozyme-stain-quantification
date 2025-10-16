@@ -4,9 +4,9 @@ import numpy as np
 
 import math
 from pathlib import Path
-def setup_results_dir(script_dir: Path) -> Path:
+def setup_results_dir(script_dir: Path, exp_name: str) -> Path:
     """Create the results directory for this script."""
-    results_dir = script_dir / "results" / "karen"
+    results_dir = script_dir / "results" / exp_name
     results_dir.mkdir(parents=True, exist_ok=True)
     return results_dir
 
