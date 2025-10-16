@@ -5,7 +5,7 @@ from typing import Sequence
 
 import numpy as np
 
-from .crypts.identify_potential_crypts_mod import identify_potential_crypts
+from .crypts.identify_potential_crypts_ import identify_potential_crypts
 from .crypts.remove_edge_touching_regions_mod import remove_edge_touching_regions_sk
 from .crypts.scoring_selector_mod import scoring_selector
 

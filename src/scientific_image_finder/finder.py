@@ -172,7 +172,7 @@ def _iter_candidate_files(img_dir: Path, suffixes: Sequence[str]) -> Iterable[Pa
 
 
 def _extract_base_name(file_name: str, search_key: str) -> str | None:
-    token = f"_{search_key.lower()}."
+    token = f"{search_key.lower()}." #NOTE: removed the preceding underscore to match more files
     lower_name = file_name.lower()
     idx = lower_name.find(token)
     if idx == -1:

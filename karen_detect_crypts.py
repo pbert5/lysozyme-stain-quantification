@@ -35,8 +35,8 @@ from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary impor
 from src.lysozyme_stain_quantification.utils.setup_tools import setup_results_dir, plot_all_crypts
 
 DEBUG = True
-MAX_SUBJECTS = 1000
-SAVE_IMAGES = False  # whether to save overlay images
+MAX_SUBJECTS = 10
+SAVE_IMAGES = True  # whether to save overlay images
 
 
 
@@ -119,7 +119,7 @@ def main() -> None:
         channels=["normalized_rfp", "crypts", "microns_per_px"],
         output_name="crypt_fluorescence_per_crypt",
         use_apply_ufunc=True,
-        vectorize=False, #TODO: what is this doing? 
+        vectorize=True, #TODO: what is this doing? 
     )
     if DEBUG:
         print(f"[END] Summarized per-crypt fluorescence details")

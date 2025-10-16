@@ -27,6 +27,7 @@ from skimage.segmentation import expand_labels, watershed
 from skimage.util import invert
 
 
+
 # ---------------------------- utilities ---------------------------- #
 
 
@@ -55,82 +56,6 @@ def minmax(x: np.ndarray) -> np.ndarray:
 
 def _odd(n: int) -> int:
     return n if n % 2 == 1 else n + 1
-
-
-def remove_rectangles(
-    image: NDArray[np.uint8],
-    *,
-    stacks: Optional[NDArray[np.uint8]] = None,
-    white_thresh: int = 240,
-    same_tol: int = 5,
-    area_min: int = 10,
-    aspect_low: float = 0.2,
-    aspect_high: float = 5.0,
-    dilation_kernel: Tuple[int, int] = (15, 15),
-    inpaint_radius: int = 15,
-) -> NDArray[np.uint8]:
-    """
-    Remove rectangular artifacts + flat-white text/graphics that are the same across stacks.
-    - If `stacks` is provided (N, H, W), 'same across stacks' uses that.
-    - Otherwise, uses across-channel flatness on the provided RGB image.
-    """
-    if image.ndim == 3:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        height, width = gray.shape
-    else:
-        gray = image
-        height, width = gray.shape
-
-    _, binary_mask = cv2.threshold(gray, white_thresh, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    rect_mask = np.zeros((height, width), dtype=np.uint8)
-    for contour in contours:
-        x, y, w, h = cv2.boundingRect(contour)
-        if w == 0 or h == 0:
-            continue
-        aspect_ratio = w / h
-        if aspect_ratio < aspect_low or aspect_ratio > aspect_high:
-            cv2.rectangle(rect_mask, (x, y), (x + w, y + h), 255, -1)
-
-    if stacks is not None:
-        if stacks.ndim != 3 or stacks.shape[1:] != (height, width):
-            raise ValueError("`stacks` must be shaped (N, H, W) and match image size.")
-        stacks_int16 = stacks.astype(np.int16)
-        flat = (stacks_int16.max(axis=0) - stacks_int16.min(axis=0)) <= same_tol
-        bright = stacks_int16.mean(axis=0) >= white_thresh
-        flat_white_mask = (flat & bright).astype(np.uint8) * 255
-    else:
-        if image.ndim == 3 and image.shape[2] >= 3:
-            channels = image[:, :, :3].astype(np.int16)
-            flat = (channels.max(axis=2) - channels.min(axis=2)) <= same_tol
-            bright = channels.mean(axis=2) >= white_thresh
-            flat_white_mask = (flat & bright).astype(np.uint8) * 255
-        else:
-            flat_white_mask = np.zeros((height, width), dtype=np.uint8)
-
-    if flat_white_mask.any():
-        flat_white_mask = cv2.dilate(flat_white_mask, np.ones((3, 3), np.uint8), iterations=1)
-        num, labels, stats, _ = cv2.connectedComponentsWithStats(
-            (flat_white_mask > 0).astype(np.uint8), connectivity=8
-        )
-        kept = np.zeros((height, width), dtype=np.uint8)
-        for i in range(1, num):
-            area = stats[i, cv2.CC_STAT_AREA]
-            if area >= area_min:
-                kept[labels == i] = 255
-        flat_white_mask = kept
-
-    mask = rect_mask.copy()
-    if flat_white_mask.any():
-        mask = cv2.bitwise_or(mask, flat_white_mask)
-
-    if not mask.any():
-        return image.copy()
-
-    mask = cv2.dilate(mask, np.ones(dilation_kernel, np.uint8), iterations=1)
-    result: NDArray[np.uint8] = cv2.inpaint(image, mask, inpaint_radius, cv2.INPAINT_TELEA)  # type: ignore
-    return result
 
 
 # ---------------------------- scale metadata ---------------------------- #
@@ -532,6 +457,7 @@ def _load_reference_image() -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 def main() -> None:
+
     list_of_images_to_try = build_image_sets()
     crypt_img = minmax(list_of_images_to_try[0][1])
     tissue_image = minmax(list_of_images_to_try[0][2])
@@ -579,4 +505,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    
+    from lysozyme_stain_quantification.utils.remove_artifacts import remove_rectangles
     main()
