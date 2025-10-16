@@ -4,16 +4,19 @@ import cv2
 from skimage import morphology
 from skimage.segmentation import expand_labels, watershed
 from scipy.ndimage import label as ndi_label, distance_transform_edt
+from typing import Tuple
+from numpy.typing import DTypeLike, ArrayLike
 
 
-def minmax01(x, eps=1e-12):
+
+def minmax01(x, eps: float = 1e-12) -> np.ndarray:
     x = x.astype(float, copy=False)
     lo = np.min(x)
     hi = np.max(x)
     return (x - lo) / max(hi - lo, eps)
 
 
-def _build_rgb(red_gray, blue_gray):
+def _build_rgb(red_gray: np.ndarray, blue_gray: np.ndarray) -> np.ndarray:
     def to_u8(arr):
         arr = np.asarray(arr)
         if arr.dtype != np.uint8:
@@ -32,7 +35,7 @@ def _build_rgb(red_gray, blue_gray):
     return np.stack([r8, zeros, b8], axis=-1)
 
 
-def _calculate_intensity_metrics(ws_labels, red_img, blue_img):
+def _calculate_intensity_metrics(ws_labels: np.ndarray, red_img: np.ndarray, blue_img: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     background_mask = ws_labels == 1
     background_tissue_intensity = 0.0
     if np.any(background_mask):
@@ -54,7 +57,7 @@ def _calculate_intensity_metrics(ws_labels, red_img, blue_img):
     return background_tissue_intensity, average_crypt_intensity
 
 
-def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=30, debug=False):
+def identify_potential_crypts(crypt_img, tissue_image, blob_size_px: int = 30, debug: bool = False) -> np.ndarray:
     """Identify potential crypt regions using the original watershed pipeline."""
 
     if crypt_img.shape != tissue_image.shape:
@@ -63,7 +66,7 @@ def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=30, debug=Fa
     red_img = crypt_img.astype(np.float32, copy=False)
     blue_img = tissue_image.astype(np.float32, copy=False)
 
-    debug_info = {} if debug else None
+    debug_info = {} 
     if debug:
         print(
             f"[EXTRACTOR DEBUG] Input red: shape {red_img.shape}, range [{red_img.min():.2f}, {red_img.max():.2f}]"
@@ -99,7 +102,7 @@ def identify_potential_crypts(crypt_img, tissue_image, blob_size_px=30, debug=Fa
         erosion_dim += 1
     erosion_footprint = np.ones((erosion_dim, erosion_dim), dtype=bool)
 
-    diff_r = red > mask_r_erosion
+    diff_r: np.ndarray = red > mask_r_erosion
 
     if debug:
         debug_info['diff_r_raw'] = diff_r.copy()
