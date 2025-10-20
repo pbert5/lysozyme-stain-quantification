@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 import numpy as np
+import xarray as xr
 from skimage.filters import threshold_otsu
 
 
@@ -78,4 +79,7 @@ def compute_normalized_rfp(
     normalized_image = np.where(valid_denominator, normalized_image, 0.0)
 
     output = normalized_image.astype(np.float64, copy=False)
-    return output.reshape(red_shape)
+    reshaped = output.reshape(red_shape)
+    if reshaped.ndim != 2:
+        reshaped = np.squeeze(reshaped)
+    return xr.DataArray(reshaped, dims=("y", "x"))

@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Sequence, Any
 
 import numpy as np
+import xarray as xr
 
 from .crypts.identify_potential_crypts_ import identify_potential_crypts
 from .crypts.remove_edge_touching_regions_mod import remove_edge_touching_regions_sk
@@ -90,4 +91,7 @@ def segment_crypts(
         return_details=True,
     )
     
-    return best_crypts.reshape(crypt_shape)
+    shaped = best_crypts.reshape(crypt_shape)
+    if shaped.ndim != 2:
+        shaped = np.squeeze(shaped)
+    return xr.DataArray(shaped, dims=("y", "x"))

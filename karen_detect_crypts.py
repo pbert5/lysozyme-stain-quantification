@@ -47,7 +47,7 @@ def main() -> None:
     render_dir.mkdir(parents=True, exist_ok=True)
 
     img_dir = Path("/home/phillip/documents/lysozyme/lysozyme images")
-    subject_names, combined_sources, combined_source_names = find_subject_image_sets(
+    subject_names, combined_sources, _ = find_subject_image_sets(
         img_dir=img_dir,
         sources=[("combined", "")],
         max_subjects=MAX_SUBJECTS,
@@ -151,30 +151,28 @@ def main() -> None:
     if DEBUG:
         print(f"[END] Computed normalized rfp")
         print(f"[BEGIN] Summarizing crypt fluorescence")
-    stk = stk.run(
+    stk = stk.run_dataset(
         summarize_crypt_fluorescence,
         channels=["normalized_rfp", "crypts", "microns_per_px"],
         output_name="crypt_fluorescence_summary",
         intensity_upper_bound=1,
         report_chunks=DEBUG,
-        dataset=True,
     )
     if DEBUG:
         print(f"[END] Summarized crypt fluorescence")
         print(f"[BEGIN] Summarizing per-crypt fluorescence details")
-    stk = stk.run(
+    stk = stk.run_dataset(
         summarize_crypt_fluorescence_per_crypt,
         channels=["normalized_rfp", "crypts", "microns_per_px", "subject_name"],
         output_name="crypt_fluorescence_per_crypt",
         report_chunks=DEBUG,
-        dataset=True,
     )
     if DEBUG:
         print(f"[END] Summarized per-crypt fluorescence details")
     if SAVE_IMAGES:
         if DEBUG:
             print(f"[BEGIN] Rendering overlay images")
-        stk = stk.run(
+        stk = stk.run_subjectwise(
             render_label_overlay,
             channels=["rfp", "dapi", "crypts"],
             output_name="crypt_overlay",
@@ -182,7 +180,6 @@ def main() -> None:
             output_coords={
                 "channel": np.asarray(["r", "g", "b"], dtype=object),
             },
-            subject_loop=True,
             report_chunks=DEBUG,
         )
         if DEBUG:
