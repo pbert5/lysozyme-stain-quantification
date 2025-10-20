@@ -47,14 +47,56 @@ def main() -> None:
     render_dir.mkdir(parents=True, exist_ok=True)
 
     img_dir = Path("/home/phillip/documents/lysozyme/lysozyme images")
-    lysozyme_channel = "rfp"
-    dapi_channel = "dapi"
-
-    subject_names, images_by_source, source_names = find_subject_image_sets(
+    subject_names, combined_sources, combined_source_names = find_subject_image_sets(
         img_dir=img_dir,
-        sources=[("rfp", lysozyme_channel, "r"), ("dapi", dapi_channel, "b")],
+        sources=[("combined", "")],
         max_subjects=MAX_SUBJECTS,
     )
+
+    combined_images = combined_sources[0] if combined_sources else []
+
+    def _has_multi_channel(arr: np.ndarray) -> bool:
+        array = np.asarray(arr)
+        return array.ndim >= 3 and (array.shape[-1] >= 3 or array.shape[0] >= 3)
+
+    use_combined = bool(combined_images) and all(_has_multi_channel(img) for img in combined_images)
+
+    if use_combined:
+        if DEBUG:
+            print("Detected combined-channel images; extracting red and blue channels.")
+
+        def _split_combined_image(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            array = np.asarray(arr)
+            array = np.squeeze(array)
+            if array.ndim == 3 and array.shape[-1] >= 3:
+                channels_last = array
+            elif array.ndim == 3 and array.shape[0] >= 3:
+                channels_last = np.moveaxis(array, 0, -1)
+            else:
+                raise ValueError(f"Combined image must provide a 3-channel RGB payload; got shape {array.shape}")
+            if channels_last.shape[-1] < 3:
+                raise ValueError(f"Combined image requires at least 3 channels; got {channels_last.shape[-1]}")
+            red = channels_last[..., 0]
+            blue = channels_last[..., 2]
+            return red, blue
+
+        rfp_images: list[np.ndarray] = []
+        dapi_images: list[np.ndarray] = []
+        for img in combined_images:
+            red, blue = _split_combined_image(img)
+            rfp_images.append(red)
+            dapi_images.append(blue)
+
+        images_by_source = [rfp_images, dapi_images]
+        source_names = ["rfp", "dapi"]
+    else:
+        if DEBUG:
+            print("Combined-channel images not found; falling back to per-channel search.")
+        subject_names, images_by_source, source_names = find_subject_image_sets(
+            img_dir=img_dir,
+            sources=[("rfp", "rfp", "r"), ("dapi", "dapi", "b")],
+            max_subjects=MAX_SUBJECTS,
+        )
 
     scale_keys = ["40x"]
     scale_values = [0.2253]

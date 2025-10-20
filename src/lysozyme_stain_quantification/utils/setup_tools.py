@@ -30,12 +30,18 @@ def plot_all_crypts(out, *, lab_name="crypts", ncols=5, figsize_per=(3, 3), subj
         da_like = arr
     elif isinstance(out, xr.Dataset) or isinstance(out, xr.DataArray):
         if isinstance(out, xr.Dataset):
-            if "label" not in out:
-                raise KeyError("xarray Dataset has no 'label' variable")
-            da = out["label"]
+            if "label" in out:
+                da = out["label"]
+                if "lab" in da.dims:
+                    da = da.sel(lab=lab_name)
+            elif lab_name in out:
+                da = out[lab_name]
+            else:
+                raise KeyError("xarray Dataset has no variable matching requested label")
         else:
             da = out
-        da = da.sel(lab=lab_name)
+            if "lab" in da.dims:
+                da = da.sel(lab=lab_name)
         subjects = list(da.coords["subject"].values)
         da_like = da.compute() if hasattr(da.data, "compute") else da
     else:

@@ -11,7 +11,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
     plt = None
 
 import src.lysozyme_stain_quantification.segment_crypts as segment_module
-from src.lysozyme_stain_quantification.crypts import identify_potential_crypts_mod as identify_module
+from src.lysozyme_stain_quantification.crypts import identify_potential_crypts_ as identify_module
 from src.lysozyme_stain_quantification.crypts import remove_edge_touching_regions_mod as remove_module
 from src.lysozyme_stain_quantification.crypts.scoring_selector_mod import scoring_selector
 from tests.test_lysoszyme_stain_quantification.tools.demo_crypt_image_generator import generate_test_crypts

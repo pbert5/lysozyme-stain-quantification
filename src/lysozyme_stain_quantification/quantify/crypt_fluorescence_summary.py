@@ -68,63 +68,25 @@ def _safe_std(values: np.ndarray, *, count: int) -> float:
     return float(np.std(values, ddof=0))
 
 
-def summarize_crypt_fluorescence(
-    channels: Sequence[Any],
-    *,
-    masks: Sequence[Any] | None = None,
-    intensity_upper_bound: float | None = None,
+def _as_image(value: Any, *, dtype: type | None = None) -> np.ndarray:
+    array = np.asarray(value, dtype=dtype)
+    if array.ndim > 2 and array.shape[0] == 1:
+        array = np.squeeze(array, axis=0)
+    return array
+
+
+def _summarize_single_subject(
+    normalized_rfp: np.ndarray,
+    crypt_labels: np.ndarray,
+    microns_per_px: float,
+    intensity_upper_bound: float | None,
 ) -> np.ndarray:
-    """
-    Summarize crypt-level fluorescence and geometric properties.
-
-    Parameters
-    ----------
-    channels
-        Sequence containing [normalized_rfp, crypt_labels, microns_per_px].
-        ``normalized_rfp`` should contain the fluorescence intensity values,
-        ``crypt_labels`` is the integer label image (0 indicates background),
-        and ``microns_per_px`` is a scalar conveying the pixel scale.
-    masks
-        Present for signature compatibility with the AnalysisStack contract;
-        unused.
-    intensity_upper_bound
-        Optional maximum intensity value representing the 100% fluorescence
-        reference. When omitted the maximum non-negative pixel intensity from
-        ``normalized_rfp`` is used. This value is used when computing the
-        ``effective_full_intensity`` metrics (interpretable as the number of
-        square microns that would be fully saturated at the reference level).
-
-    Returns
-    -------
-    numpy.ndarray
-        A one-dimensional array with values ordered according to
-        ``SUMMARY_FIELD_ORDER``. Consumers can call ``.tolist()`` to obtain
-        a plain Python list suitable for spreadsheet export.
-
-    Raises
-    ------
-    ValueError
-        If the provided channels are missing, mismatched in shape, or lack
-        crypt annotations.
-    """
-    del masks  # unused but required by the stack contract
-
-    if len(channels) < 3:
-        raise ValueError(
-            "summarize_crypt_fluorescence expects channels=[normalized_rfp, crypt_labels, microns_per_px]."
-        )
-
-    normalized_rfp = np.asarray(channels[0], dtype=np.float64)
-    crypt_labels = np.asarray(channels[1])
-    microns_per_px = _as_scalar_float(channels[2])
-
     if normalized_rfp.shape != crypt_labels.shape:
         raise ValueError("normalized_rfp and crypt_labels must share the same shape.")
     if microns_per_px <= 0.0:
         raise ValueError("microns_per_px must be a positive scalar.")
 
     if not np.any(crypt_labels):
-        # No crypts means we can return zero counts and NaNs for per-crypt statistics.
         return np.array(
             [
                 0.0,
@@ -153,7 +115,7 @@ def summarize_crypt_fluorescence(
         raise ValueError("crypt_labels does not contain positive label values.")
 
     flattened_labels = label_image.ravel()
-    flattened_intensity = normalized_rfp.ravel()
+    flattened_intensity = np.asarray(normalized_rfp, dtype=np.float64).ravel()
 
     pixel_counts = np.bincount(flattened_labels, minlength=max_label + 1)[1:]
     if not np.any(pixel_counts):
@@ -220,19 +182,20 @@ def summarize_crypt_fluorescence(
     )[1:]
     positive_intensity_sums = positive_intensity_sums[valid_mask]
 
-    if intensity_upper_bound is None:
-        intensity_upper_bound = float(np.max(positive_intensity))
-        if intensity_upper_bound == 0.0:
-            intensity_upper_bound = 1.0
-    if intensity_upper_bound <= 0.0:
+    effective_bound = intensity_upper_bound
+    if effective_bound is None:
+        effective_bound = float(np.max(positive_intensity))
+        if effective_bound == 0.0:
+            effective_bound = 1.0
+    if effective_bound <= 0.0:
         raise ValueError("intensity_upper_bound must be positive.")
 
-    effective_full_um2 = (positive_intensity_sums / intensity_upper_bound) * pixel_area_um2
+    effective_full_um2 = (positive_intensity_sums / effective_bound) * pixel_area_um2
     effective_full_sum = float(np.sum(effective_full_um2))
     effective_full_mean = float(np.mean(effective_full_um2))
     effective_full_std = _safe_std(effective_full_um2, count=crypt_count)
 
-    summary = np.array(
+    return np.array(
         [
             float(crypt_count),
             area_sum,
@@ -254,7 +217,105 @@ def summarize_crypt_fluorescence(
         dtype=np.float64,
     )
 
-    return summary
+
+def summarize_crypt_fluorescence(
+    channels: Sequence[Any],
+    *,
+    masks: Sequence[Any] | None = None,
+    intensity_upper_bound: float | None = None,
+) -> np.ndarray:
+    """
+    Summarize crypt-level fluorescence and geometric properties.
+
+    Parameters
+    ----------
+    channels
+        Sequence containing [normalized_rfp, crypt_labels, microns_per_px].
+        ``normalized_rfp`` should contain the fluorescence intensity values,
+        ``crypt_labels`` is the integer label image (0 indicates background),
+        and ``microns_per_px`` is a scalar conveying the pixel scale.
+    masks
+        Present for signature compatibility with the AnalysisStack contract;
+        unused.
+    intensity_upper_bound
+        Optional maximum intensity value representing the 100% fluorescence
+        reference. When omitted the maximum non-negative pixel intensity from
+        ``normalized_rfp`` is used. This value is used when computing the
+        ``effective_full_intensity`` metrics (interpretable as the number of
+        square microns that would be fully saturated at the reference level).
+
+    Returns
+    -------
+    numpy.ndarray
+        A one-dimensional array with values ordered according to
+        ``SUMMARY_FIELD_ORDER``. Consumers can call ``.tolist()`` to obtain
+        a plain Python list suitable for spreadsheet export.
+
+    Raises
+    ------
+    ValueError
+        If the provided channels are missing, mismatched in shape, or lack
+        crypt annotations.
+    """
+    del masks  # unused but required by the stack contract
+
+    if len(channels) < 3:
+        raise ValueError(
+            "summarize_crypt_fluorescence expects channels=[normalized_rfp, crypt_labels, microns_per_px]."
+        )
+
+    normalized_input = channels[0]
+    crypt_input = channels[1]
+    microns_input = channels[2]
+
+    if isinstance(normalized_input, xr.DataArray) and "subject" in normalized_input.dims:
+        if not isinstance(crypt_input, xr.DataArray) or "subject" not in crypt_input.dims:
+            raise ValueError("crypt_labels must be an xarray DataArray with a 'subject' dimension.")
+        if not isinstance(microns_input, xr.DataArray) or "subject" not in microns_input.dims:
+            raise ValueError("microns_per_px must be an xarray DataArray with a 'subject' dimension.")
+
+        subjects = list(_ensure_subject_order(normalized_input))
+        metrics_list: list[np.ndarray] = []
+        for subject_coord in subjects:
+            rfp = _as_image(normalized_input.sel(subject=subject_coord).values, dtype=np.float64)
+            labels = _as_image(crypt_input.sel(subject=subject_coord).values)
+            microns_value = _as_scalar_float(microns_input.sel(subject=subject_coord).values)
+            metrics = _summarize_single_subject(
+                normalized_rfp=rfp,
+                crypt_labels=labels,
+                microns_per_px=microns_value,
+                intensity_upper_bound=intensity_upper_bound,
+            )
+            metrics_list.append(metrics)
+
+        metric_count = len(SUMMARY_FIELD_ORDER)
+        data = (
+            np.stack(metrics_list, axis=0)
+            if metrics_list
+            else np.empty((len(subjects), metric_count), dtype=np.float64)
+        )
+        return xr.DataArray(
+            data,
+            dims=("subject", "metric"),
+            coords={
+                "subject": subjects,
+                "metric": np.asarray(SUMMARY_FIELD_ORDER, dtype=object),
+            },
+            name="crypt_fluorescence_summary",
+        )
+
+    normalized_rfp = _as_image(normalized_input, dtype=np.float64)
+    crypt_labels = _as_image(crypt_input)
+    microns_per_px = _as_scalar_float(microns_input)
+
+    return _summarize_single_subject(
+        normalized_rfp=normalized_rfp,
+        crypt_labels=crypt_labels,
+        microns_per_px=microns_per_px,
+        intensity_upper_bound=intensity_upper_bound,
+    )
+
+
 
 
 def _ensure_subject_order(subject_array: xr.DataArray) -> Iterable:
@@ -358,19 +419,12 @@ def _compute_per_crypt_records(
     microns_per_px = float(microns_per_px)
     pixel_area_um2 = (microns_per_px * microns_per_px) * pixel_counts.astype(np.float64)
 
-    intensity_scale = microns_per_px  # scale intensity values by linear dimension
-    um_intensity_sums = intensity_sums * intensity_scale
-    um_intensity_means = mean_intensity * intensity_scale
-    um_intensity_stds = intensity_std * intensity_scale
-    um_intensity_min = min_intensity * intensity_scale
-    um_intensity_max = max_intensity * intensity_scale
-
     records: list[dict[str, Any]] = []
     for idx, label_id in enumerate(label_ids):
         record = {
             "subject_name": subject_name,
             "crypt_label": int(label_id),
-            "crypt_index": int(idx + 1),
+            "crypt_index": idx,
             "pixel_area": int(pixel_counts[idx]),
             "pixel_value_sum": float(intensity_sums[idx]),
             "pixel_value_mean": float(mean_intensity[idx]),
@@ -378,18 +432,16 @@ def _compute_per_crypt_records(
             "pixel_value_min": float(min_intensity[idx]),
             "pixel_value_max": float(max_intensity[idx]),
             "um_area": float(pixel_area_um2[idx]),
-            "um_value_sum": float(um_intensity_sums[idx]),
-            "um_value_mean": float(um_intensity_means[idx]),
-            "um_value_std": float(um_intensity_stds[idx]),
-            "um_value_min": float(um_intensity_min[idx]),
-            "um_value_max": float(um_intensity_max[idx]),
+            "um_value_sum": float(intensity_sums[idx] * microns_per_px * microns_per_px),
+            "um_value_mean": float(mean_intensity[idx]),
+            "um_value_std": float(intensity_std[idx]),
+            "um_value_min": float(min_intensity[idx]),
+            "um_value_max": float(max_intensity[idx]),
             "microns_per_px": microns_per_px,
         }
         records.append(record)
 
     return records
-
-
 def summarize_crypt_fluorescence_per_crypt(
     *,
     channels: Sequence[Any],
@@ -495,8 +547,8 @@ def summarize_crypt_fluorescence_per_crypt(
         )
 
     # When use_apply_ufunc=True the function receives single-subject numpy arrays.
-    rfp = np.asarray(normalized_rfp_input)
-    labels = np.asarray(crypt_labels_input)
+    rfp = _as_image(normalized_rfp_input)
+    labels = _as_image(crypt_labels_input)
     microns_arr = np.asarray(microns_per_px_input).reshape(-1)
     if microns_arr.size == 0:
         raise ValueError("microns_per_px channel yielded no values for a subject.")

@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Sequence, Any
 
 import numpy as np
 
@@ -12,11 +12,17 @@ from .crypts.scoring_selector_mod import scoring_selector
 
 def _to_float(value: np.ndarray | float | int) -> float:
     arr = np.asarray(value)
-    if arr.shape == ():
-        return float(arr.item())
-    if arr.ndim == 0:
-        return float(arr)
+    if arr.size == 1:
+        return float(arr.reshape(()))
     raise ValueError(f"Expected scalar microns-per-pixel value, got shape {arr.shape}")
+
+
+def _as_image(value: Any) -> tuple[np.ndarray, tuple[int, ...]]:
+    arr = np.asarray(value)
+    original_shape = arr.shape
+    if arr.ndim > 2 and arr.shape[0] == 1:
+        arr = np.squeeze(arr, axis=0)
+    return arr, original_shape
 
 
 def segment_crypts(
@@ -49,8 +55,8 @@ def segment_crypts(
         "com_consistency": 0.10,  # Least - center consistency
     }
 
-    crypt_img = np.asarray(channels[0])
-    tissue_image = np.asarray(channels[1])
+    crypt_img, crypt_shape = _as_image(channels[0])
+    tissue_image, tissue_shape = _as_image(channels[1])
     if crypt_img.shape != tissue_image.shape:
         raise ValueError(f"Shape mismatch: red {crypt_img.shape} vs blue {tissue_image.shape}")
 
@@ -84,4 +90,4 @@ def segment_crypts(
         return_details=True,
     )
     
-    return best_crypts
+    return best_crypts.reshape(crypt_shape)

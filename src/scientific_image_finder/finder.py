@@ -172,12 +172,29 @@ def _iter_candidate_files(img_dir: Path, suffixes: Sequence[str]) -> Iterable[Pa
 
 
 def _extract_base_name(file_name: str, search_key: str) -> str | None:
-    token = f"{search_key.lower()}." #NOTE: removed the preceding underscore to match more files
+    key = (search_key or "").lower().strip()
     lower_name = file_name.lower()
+
+    if not key:
+        stem = Path(file_name).stem
+        stem_lower = stem.lower()
+        if stem_lower.endswith(("_rfp", "_dapi")):
+            return None
+        return stem.rstrip(" _-")
+
+    separators = ("_", "-", " ", "")
+    for sep in separators:
+        token = f"{sep}{key}."
+        idx = lower_name.find(token)
+        if idx != -1:
+            return file_name[:idx].rstrip(" _-")
+
+    token = f"{key}."
     idx = lower_name.find(token)
-    if idx == -1:
-        return None
-    return file_name[:idx]
+    if idx != -1:
+        return file_name[:idx].rstrip(" _-")
+
+    return None
 
 
 def _build_matches_for_base(

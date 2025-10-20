@@ -6,6 +6,14 @@ import numpy as np
 from skimage.filters import threshold_otsu
 
 
+def _as_image(value: Any, *, dtype: type | None = None) -> tuple[np.ndarray, tuple[int, ...]]:
+    arr = np.asarray(value, dtype=dtype)
+    original_shape = arr.shape
+    if arr.ndim > 2 and arr.shape[0] == 1:
+        arr = np.squeeze(arr, axis=0)
+    return arr, original_shape
+
+
 def compute_normalized_rfp(
     channels: Sequence[np.ndarray],
     *,
@@ -28,9 +36,9 @@ def compute_normalized_rfp(
     if len(channels) < 3:
         raise ValueError("compute_normalized_rfp requires RFP, DAPI, and crypt label images.")
 
-    red_channel = np.asarray(channels[0], dtype=np.float64)
-    blue_channel = np.asarray(channels[1], dtype=np.float64)
-    crypt_labels = np.asarray(channels[2])
+    red_channel, red_shape = _as_image(channels[0], dtype=np.float64)
+    blue_channel, blue_shape = _as_image(channels[1], dtype=np.float64)
+    crypt_labels, crypt_shape = _as_image(channels[2])
 
     if red_channel.shape != blue_channel.shape or red_channel.shape != crypt_labels.shape:
         raise ValueError("RFP, DAPI, and crypt label images must share the same shape.")
@@ -69,4 +77,5 @@ def compute_normalized_rfp(
     normalized_image = (ratio - background_tissue_intensity) / average_crypt_intensity
     normalized_image = np.where(valid_denominator, normalized_image, 0.0)
 
-    return normalized_image.astype(np.float64, copy=False)
+    output = normalized_image.astype(np.float64, copy=False)
+    return output.reshape(red_shape)

@@ -12,7 +12,7 @@ TEST_INTENSITIES = {"crypt_blue_sub": 0.25}
 
 
 
-from src.lysozyme_stain_quantification.crypts.identify_potential_crypts_mod import identify_potential_crypts
+from src.lysozyme_stain_quantification.crypts.identify_potential_crypts_ import identify_potential_crypts
 
 def test_identify_potential_crypts_shape():
     red, blue, _ = generate_test_crypts(

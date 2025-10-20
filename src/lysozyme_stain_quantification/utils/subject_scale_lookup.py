@@ -7,6 +7,8 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 import numpy as np
+import dask.array as da
+import xarray as xr
 
 
 def _as_string(value: Any) -> str:
@@ -30,7 +32,7 @@ def _as_string(value: Any) -> str:
 def subject_scale_from_name(
     *,
     channels: Sequence[Any],
-    masks: Sequence[Any],
+    masks: Sequence[Any] | None = None,
     keys: Sequence[str],
     values: Sequence[float],
     default: float | None = None,
@@ -75,15 +77,27 @@ def subject_scale_from_name(
     subject_name = _as_string(subject_raw)
     subject_lower = subject_name.lower()
 
+    def _wrap(scale_value: float) -> float | np.ndarray | xr.DataArray:
+        if isinstance(subject_raw, xr.DataArray):
+            data = np.full(subject_raw.shape, scale_value, dtype=np.float64)
+            return xr.DataArray(data, coords=subject_raw.coords, dims=subject_raw.dims, name="microns_per_px")
+        if isinstance(subject_raw, da.Array):
+            return da.full(subject_raw.shape, scale_value, dtype=np.float64, chunks=subject_raw.chunks)
+        if isinstance(subject_raw, np.ndarray):
+            return np.full(subject_raw.shape, scale_value, dtype=np.float64)
+        return scale_value
+
     for idx, key in enumerate(keys):
         if key.lower() in subject_lower:
             try:
                 value = values[idx]
             except IndexError:
                 raise ValueError(f"Missing value for key '{key}'.") from None
-            return float(value)
+            scale_value = float(value)
+            return _wrap(scale_value)
 
     if default is not None:
-        return float(default)
+        scale_value = float(default)
+        return _wrap(scale_value)
 
     raise KeyError(f"No key matched subject '{subject_name}'.")

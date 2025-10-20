@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import cv2
 import matplotlib.pyplot as plt
-import numpy as np
+import numpy as np #TODO: swap with dask
 import tifffile as tiff
 from numpy.typing import NDArray
 from scipy.ndimage import distance_transform_edt, gaussian_filter, label as ndi_label
