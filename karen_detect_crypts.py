@@ -70,7 +70,9 @@ def main() -> None:
     if DEBUG:
         print(f"Using blob size (crypt size) of {blob_size_um} microns.")
         print("Starting analysis stack...")
-    stk = AnalysisStackXR().add_sources(subject=subject_names, sources=images_by_source, sourcenames=source_names)
+    stk = AnalysisStackXR(subject_list=subject_names)
+    stk = stk.add_sources(sources=images_by_source, sourcenames=source_names)
+
     if DEBUG:
         # let knwo added sources
         print(f"Added sources")
@@ -83,7 +85,6 @@ def main() -> None:
         values=scale_values,
         default=default_scale_value,
         report_chunks=DEBUG,
-        allow_rechunk=False,
     )
     if DEBUG:
         print(f"[END] Computed microns_per_px for subjects")
@@ -95,7 +96,6 @@ def main() -> None:
         # use_dask=True,
         blob_size_um=blob_size_um,
         report_chunks=DEBUG,
-        allow_rechunk=False,
     )
     if DEBUG:
         print(f"[END] segmentation")
@@ -105,7 +105,6 @@ def main() -> None:
         channels=["rfp", "dapi", "crypts"],
         output_name="normalized_rfp",
         report_chunks=DEBUG,
-        allow_rechunk=False,
     )
     if DEBUG:
         print(f"[END] Computed normalized rfp")
@@ -116,36 +115,33 @@ def main() -> None:
         output_name="crypt_fluorescence_summary",
         intensity_upper_bound=1,
         report_chunks=DEBUG,
-        allow_rechunk=False,
-        probe_output=True,
+        dataset=True,
     )
     if DEBUG:
         print(f"[END] Summarized crypt fluorescence")
         print(f"[BEGIN] Summarizing per-crypt fluorescence details")
     stk = stk.run(
         summarize_crypt_fluorescence_per_crypt,
-        channels=["normalized_rfp", "crypts", "microns_per_px"],
+        channels=["normalized_rfp", "crypts", "microns_per_px", "subject_name"],
         output_name="crypt_fluorescence_per_crypt",
-        use_apply_ufunc=True,
         report_chunks=DEBUG,
-        allow_rechunk=False,
-        probe_output=True,
+        dataset=True,
     )
     if DEBUG:
         print(f"[END] Summarized per-crypt fluorescence details")
     if SAVE_IMAGES:
         if DEBUG:
             print(f"[BEGIN] Rendering overlay images")
-        stk.run(
+        stk = stk.run(
             render_label_overlay,
             channels=["rfp", "dapi", "crypts"],
             output_name="crypt_overlay",
-            outline_width=2,
-            fill_alpha=0.35,
-            outline_alpha=0.9,
-            normalize_scalar=True,
+            output_core_dims=("channel", "y", "x"),
+            output_coords={
+                "channel": np.asarray(["r", "g", "b"], dtype=object),
+            },
+            subject_loop=True,
             report_chunks=DEBUG,
-            allow_rechunk=False,
         )
         if DEBUG:
             print(f"[END] Rendered overlay images")
@@ -177,7 +173,10 @@ def main() -> None:
     # Save crypt fluorescence summary as CSV
     if DEBUG:
         print("[BEGIN] Saving crypt fluorescence summary...")
-    df = stk.to_dataframe(channels=["subject_name","crypt_fluorescence_summary","microns_per_px"], columns=["subject_name", list(SUMMARY_FIELD_ORDER), "microns_per_px"])
+    df = stk.to_dataframe(
+        channels=["subject_name", "crypt_fluorescence_summary", "microns_per_px"],
+        columns=["subject_name", SUMMARY_FIELD_ORDER, "microns_per_px"],
+    )
     df.to_csv(results_dir / "karen_detect_crypts.csv", index=False)
     if DEBUG:
         print(f"[END] Saved crypt fluorescence summary to {results_dir / 'karen_detect_crypts.csv'}")
