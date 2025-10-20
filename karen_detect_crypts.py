@@ -22,9 +22,6 @@ from image_ops_framework.analysis_stack_xr import AnalysisStackXR
 from image_ops_framework.helpers import render_label_overlay
 from src.scientific_image_finder.finder import find_subject_image_sets
 from src.lysozyme_stain_quantification.segment_crypts import segment_crypts
-from src.lysozyme_stain_quantification.utils.subject_scale_lookup import (
-    subject_scale_from_name,
-)
 from src.lysozyme_stain_quantification.normalize_rfp import compute_normalized_rfp
 from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary import (
     SUMMARY_FIELD_ORDER,
@@ -35,7 +32,7 @@ from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary impor
 from src.lysozyme_stain_quantification.utils.setup_tools import setup_results_dir, plot_all_crypts
 
 DEBUG = True
-MAX_SUBJECTS = 5
+MAX_SUBJECTS = 10
 SAVE_IMAGES = True  # whether to save overlay images
 
 
@@ -108,7 +105,7 @@ def main() -> None:
         for subject, red_img, blue_img in zip(subject_names, images_by_source[0], images_by_source[1]):
             print(f"Subject: {subject}, Red shape: {red_img.shape}, Blue shape: {blue_img.shape}")
 
-    blob_size_um = 18.0  # approximate crypt size in microns
+    blob_size_um = 50.0  # approximate crypt size in microns
     if DEBUG:
         print(f"Using blob size (crypt size) of {blob_size_um} microns.")
         print("Starting analysis stack...")
@@ -116,26 +113,36 @@ def main() -> None:
     stk = stk.add_sources(sources=images_by_source, sourcenames=source_names)
 
     if DEBUG:
-        # let knwo added sources
         print(f"Added sources")
-
-    stk = stk.run(
-        subject_scale_from_name,
-        channels=["subject_name"],
-        output_name="microns_per_px",
-        keys=scale_keys,
-        values=scale_values,
-        default=default_scale_value,
-        report_chunks=DEBUG,
+        print(f"[BEGIN] Computing microns_per_px for subjects")
+    
+    # Compute scale values outside the stack
+    subject_scales = []
+    for subject_name in subject_names:
+        subject_lower = subject_name.lower()
+        scale_value = default_scale_value
+        for key, value in zip(scale_keys, scale_values):
+            if key.lower() in subject_lower:
+                scale_value = value
+                break
+        subject_scales.append(scale_value)
+    
+    # Add scales as metadata
+    stk = stk.add_meta(
+        meta=[subject_scales],
+        metanames=["microns_per_px"],
+        replace=False,
     )
+    
     if DEBUG:
         print(f"[END] Computed microns_per_px for subjects")
         print(f"[BEGIN] segmentation")
     stk = stk.run(
         segment_crypts,
-        channels=["rfp", "dapi", "microns_per_px"], #TODO: its prob super slow bc microns_per_px is not chuncked, need to improve handeling  of run to ensuer everyting passed is chunked
+        channels=["rfp", "dapi", "microns_per_px"],
         output_name="crypts",
-        # use_dask=True,
+        input_core_dims=[["y", "x"], ["y", "x"], []],
+        output_core_dims=["y", "x"],
         blob_size_um=blob_size_um,
         report_chunks=DEBUG,
     )
@@ -146,6 +153,8 @@ def main() -> None:
         compute_normalized_rfp,
         channels=["rfp", "dapi", "crypts"],
         output_name="normalized_rfp",
+        input_core_dims=[["y", "x"], ["y", "x"], ["y", "x"]],
+        output_core_dims=["y", "x"],
         report_chunks=DEBUG,
     )
     if DEBUG:
