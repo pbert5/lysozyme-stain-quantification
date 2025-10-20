@@ -82,4 +82,4 @@ def compute_normalized_rfp(
     reshaped = output.reshape(red_shape)
     if reshaped.ndim != 2:
         reshaped = np.squeeze(reshaped)
-    return xr.DataArray(reshaped, dims=("y", "x"))
+    return reshaped

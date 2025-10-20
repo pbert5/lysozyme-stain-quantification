@@ -94,4 +94,4 @@ def segment_crypts(
     shaped = best_crypts.reshape(crypt_shape)
     if shaped.ndim != 2:
         shaped = np.squeeze(shaped)
-    return xr.DataArray(shaped, dims=("y", "x"))
+    return shaped

@@ -308,11 +308,17 @@ def summarize_crypt_fluorescence(
     crypt_labels = _as_image(crypt_input)
     microns_per_px = _as_scalar_float(microns_input)
 
-    return _summarize_single_subject(
+    metrics = _summarize_single_subject(
         normalized_rfp=normalized_rfp,
         crypt_labels=crypt_labels,
         microns_per_px=microns_per_px,
         intensity_upper_bound=intensity_upper_bound,
+    )
+    return xr.DataArray(
+        metrics,
+        dims=("metric",),
+        coords={"metric": np.asarray(SUMMARY_FIELD_ORDER, dtype=object)},
+        name="crypt_fluorescence_summary",
     )
 
 

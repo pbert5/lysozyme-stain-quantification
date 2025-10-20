@@ -111,18 +111,11 @@ def remove_rectangular_artifacts(
         raise ValueError("remove_rectangular_artifacts expects at least one image channel.")
 
     image = np.asarray(channels[0])
-    
-    # Remember original shape to restore after processing
-    original_shape = image.shape
-    
-    # Squeeze out any leading singleton dimensions (e.g., from dask/xarray groupby)
-    image_squeezed = np.squeeze(image)
-    
-    if image_squeezed.ndim < 2:
-        raise ValueError(f"Artifact removal requires at least 2D image data, got shape {image.shape} (squeezed: {image_squeezed.shape})")
+    if image.ndim < 2:
+        raise ValueError("Artifact removal requires at least 2D image data.")
 
-    original_dtype = image_squeezed.dtype
-    image_uint8 = image_squeezed.astype(np.uint8, copy=False)
+    original_dtype = image.dtype
+    image_uint8 = image.astype(np.uint8, copy=False)
     stacks_uint8 = stacks.astype(np.uint8, copy=False) if stacks is not None else None
 
     cleaned = remove_rectangles(
@@ -137,15 +130,9 @@ def remove_rectangular_artifacts(
         inpaint_radius=inpaint_radius,
     )
 
-    if original_dtype != np.uint8:
-        cleaned = cleaned.astype(original_dtype, copy=False)
-    
-    # Restore original shape by reshaping if necessary
-    if original_shape != cleaned.shape:
-        # Add back any singleton dimensions that were squeezed
-        cleaned = cleaned.reshape(original_shape)
-    
-    return cleaned
+    if original_dtype == np.uint8:
+        return cleaned
+    return cleaned.astype(original_dtype, copy=False)
 
 
 __all__ = [
