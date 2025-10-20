@@ -35,7 +35,7 @@ from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary impor
 from src.lysozyme_stain_quantification.utils.setup_tools import setup_results_dir, plot_all_crypts
 
 DEBUG = True
-MAX_SUBJECTS = 10
+MAX_SUBJECTS = 5
 SAVE_IMAGES = True  # whether to save overlay images
 
 
@@ -82,6 +82,8 @@ def main() -> None:
         keys=scale_keys,
         values=scale_values,
         default=default_scale_value,
+        report_chunks=DEBUG,
+        allow_rechunk=False,
     )
     if DEBUG:
         print(f"[END] Computed microns_per_px for subjects")
@@ -92,6 +94,8 @@ def main() -> None:
         output_name="crypts",
         # use_dask=True,
         blob_size_um=blob_size_um,
+        report_chunks=DEBUG,
+        allow_rechunk=False,
     )
     if DEBUG:
         print(f"[END] segmentation")
@@ -100,7 +104,8 @@ def main() -> None:
         compute_normalized_rfp,
         channels=["rfp", "dapi", "crypts"],
         output_name="normalized_rfp",
-        
+        report_chunks=DEBUG,
+        allow_rechunk=False,
     )
     if DEBUG:
         print(f"[END] Computed normalized rfp")
@@ -110,6 +115,9 @@ def main() -> None:
         channels=["normalized_rfp", "crypts", "microns_per_px"],
         output_name="crypt_fluorescence_summary",
         intensity_upper_bound=1,
+        report_chunks=DEBUG,
+        allow_rechunk=False,
+        probe_output=True,
     )
     if DEBUG:
         print(f"[END] Summarized crypt fluorescence")
@@ -119,7 +127,9 @@ def main() -> None:
         channels=["normalized_rfp", "crypts", "microns_per_px"],
         output_name="crypt_fluorescence_per_crypt",
         use_apply_ufunc=True,
-        vectorize=True, #TODO: what is this doing? 
+        report_chunks=DEBUG,
+        allow_rechunk=False,
+        probe_output=True,
     )
     if DEBUG:
         print(f"[END] Summarized per-crypt fluorescence details")
@@ -134,6 +144,8 @@ def main() -> None:
             fill_alpha=0.35,
             outline_alpha=0.9,
             normalize_scalar=True,
+            report_chunks=DEBUG,
+            allow_rechunk=False,
         )
         if DEBUG:
             print(f"[END] Rendered overlay images")
