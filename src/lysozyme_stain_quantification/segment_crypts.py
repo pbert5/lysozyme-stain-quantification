@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Sequence, Any
 
 import numpy as np
+import dask.array as da
+from dask import delayed
 import xarray as xr
 
 from .crypts.identify_potential_crypts_ import identify_potential_crypts
@@ -18,16 +20,24 @@ def _to_float(value: np.ndarray | float | int) -> float:
     raise ValueError(f"Expected scalar microns-per-pixel value, got shape {arr.shape}")
 
 
-def _as_image(value: Any) -> tuple[np.ndarray, tuple[int, ...]]:
-    arr = np.asarray(value)
+def _as_image(value: Any) -> tuple[np.ndarray | da.Array, tuple[int, ...]]:
+    """Convert value to an image array, handling both numpy and dask arrays."""
+    if isinstance(value, da.Array):
+        arr = value
+    else:
+        arr = np.asarray(value)
+    
     original_shape = arr.shape
     if arr.ndim > 2 and arr.shape[0] == 1:
-        arr = np.squeeze(arr, axis=0)
+        if isinstance(arr, da.Array):
+            arr = da.squeeze(arr, axis=0)
+        else:
+            arr = np.squeeze(arr, axis=0)
     return arr, original_shape
 
 
 def segment_crypts(
-    channels: Sequence[np.ndarray],
+    channels: Sequence[np.ndarray | da.Array],
     blob_size_px: int | None = 15,
     *,
     blob_size_um: float | None = None,
@@ -36,8 +46,8 @@ def segment_crypts(
     masks: Sequence[np.ndarray] | None = None,
     max_regions: int = 5,
     microns_per_px: float | None = None,
-) -> np.ndarray:
-    """Segment crypts in the given image.
+) -> da.Array:
+    """Segment crypts in the given image - returns dask array for lazy evaluation.
 
     Args:
         channels: Sequence containing the RFP channel, DAPI channel, and optionally a scalar microns-per-pixel value.
@@ -78,20 +88,41 @@ def segment_crypts(
             raise ValueError("blob_size_px cannot be None when blob_size_um is not given.")
         effective_blob_size_px = int(blob_size_px)
 
-    potential_crypts = identify_potential_crypts(crypt_img, tissue_image, effective_blob_size_px, debug)
-
-    cleaned_crypts = remove_edge_touching_regions_sk(potential_crypts)
-
-    best_crypts, crypt_scores = scoring_selector(
-        cleaned_crypts,
-        crypt_img,
-        debug=debug,
-        max_regions=max_regions,
-        weights=scoring_weights,
-        return_details=True,
+    # Wrap the entire pipeline in a delayed function
+    @delayed(pure=True)
+    def _segment_pipeline(crypt, tissue, blob_size, weights, max_reg, dbg):
+        """Execute the full segmentation pipeline on numpy arrays."""
+        # Ensure inputs are numpy arrays (compute if dask)
+        crypt = crypt.compute() if isinstance(crypt, da.Array) else np.asarray(crypt)
+        tissue = tissue.compute() if isinstance(tissue, da.Array) else np.asarray(tissue)
+        
+        # Call the three main functions sequentially
+        potential_crypts = identify_potential_crypts(crypt, tissue, blob_size, dbg)
+        cleaned_crypts = remove_edge_touching_regions_sk(potential_crypts)
+        best_crypts, crypt_scores = scoring_selector(
+            cleaned_crypts,
+            crypt,
+            debug=dbg,
+            max_regions=max_reg,
+            weights=weights,
+            return_details=True,
+        )
+        
+        # Return the final segmentation result
+        return best_crypts
+    
+    # Create the delayed computation
+    result_delayed = _segment_pipeline(
+        crypt_img, tissue_image, effective_blob_size_px,
+        scoring_weights, max_regions, debug
     )
     
-    shaped = best_crypts.reshape(crypt_shape)
-    if shaped.ndim != 2:
-        shaped = np.squeeze(shaped)
-    return shaped
+    # Get the actual 2D shape (strip extra dimensions from crypt_shape if present)
+    shape_2d = crypt_shape
+    if len(shape_2d) > 2:
+        shape_2d = crypt_shape[-2:]  # Get last 2 dimensions
+    
+    # Convert to dask array
+    result = da.from_delayed(result_delayed, shape=shape_2d, dtype=np.int32)
+
+    return result
