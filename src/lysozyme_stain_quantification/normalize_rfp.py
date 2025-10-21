@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Sequence
+import warnings
 
 import numpy as np
 import dask.array as da
@@ -81,21 +82,41 @@ def compute_normalized_rfp(
         np.divide(red, blue, out=ratio, where=valid_denominator)
 
         tissue_ratio_mask = tissue_without_crypts & valid_denominator
-        if not np.any(tissue_ratio_mask):
-            raise ValueError("No tissue pixels with valid DAPI signal for intensity calculation.")
-
-        background_tissue_intensity = float(np.mean(ratio[tissue_ratio_mask]))
-
         crypt_ratio_mask = crypt_mask & valid_denominator
-        if not np.any(crypt_ratio_mask):
-            raise ValueError("No crypt pixels with valid DAPI signal for intensity calculation.")
 
-        average_crypt_intensity = float(np.mean(ratio[crypt_ratio_mask]))
-        if average_crypt_intensity == 0.0:
-            raise ValueError("Average crypt intensity is zero; cannot normalize.")
+        if np.any(tissue_ratio_mask) and np.any(crypt_ratio_mask):
+            background_tissue_intensity = float(np.mean(ratio[tissue_ratio_mask]))
+            average_crypt_intensity = float(np.mean(ratio[crypt_ratio_mask]))
+            if average_crypt_intensity > 0.0 and np.isfinite(average_crypt_intensity):
+                normalized_image = (ratio - background_tissue_intensity) / average_crypt_intensity
+                normalized_image = np.where(valid_denominator, normalized_image, 0.0)
+                return normalized_image.astype(np.float64, copy=False)
 
-        normalized_image = (ratio - background_tissue_intensity) / average_crypt_intensity
-        normalized_image = np.where(valid_denominator, normalized_image, 0.0)
+        warnings.warn(
+            "Falling back to red-channel-only normalization because DAPI provided no usable signal "
+            "within crypt or tissue regions.",
+            RuntimeWarning,
+        )
+
+        fallback_tissue_mask = tissue_without_crypts
+        if not np.any(fallback_tissue_mask):
+            return np.zeros_like(red, dtype=np.float64)
+
+        tissue_red_values = np.asarray(red[fallback_tissue_mask], dtype=np.float64)
+        background_red_intensity = float(np.mean(tissue_red_values))
+
+        crypt_red_mask = crypt_mask
+        crypt_red_values = np.asarray(red[crypt_red_mask], dtype=np.float64)
+        if crypt_red_values.size == 0:
+            return np.zeros_like(red, dtype=np.float64)
+
+        average_crypt_red_intensity = float(np.mean(crypt_red_values))
+        if average_crypt_red_intensity == 0.0:
+            return np.zeros_like(red, dtype=np.float64)
+
+        normalized_image = (red - background_red_intensity) / average_crypt_red_intensity
+        normalized_image = np.where(tissue_mask | crypt_mask, normalized_image, 0.0)
+        normalized_image = np.where(np.isfinite(normalized_image), normalized_image, 0.0)
 
         return normalized_image.astype(np.float64, copy=False)
     

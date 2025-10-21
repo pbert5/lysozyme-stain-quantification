@@ -260,7 +260,7 @@ def main(
                     
                     if n_workers is None:
                         # Default: balanced strategy (half cores as workers, 2 threads each)
-                        n_workers = max(1, n_cpus // 2)
+                        n_workers = max(1, n_cpus // 2 - 2)
                     
                     if threads_per_worker is None:
                         # Calculate threads to use all CPUs
@@ -487,35 +487,45 @@ def main(
         
         # Step 3: Quantify fluorescence (per-image summary)
         @delayed
-        def _summarize_image(norm_rfp, labels, scale_val):
-            """Summarize fluorescence for entire image."""
-            # Compute inputs if they're dask arrays
-            norm_rfp = norm_rfp.compute() if isinstance(norm_rfp, da.Array) else np.asarray(norm_rfp)
-            labels = labels.compute() if isinstance(labels, da.Array) else np.asarray(labels)
-            
-            # Function expects [normalized_rfp, crypt_labels, microns_per_px]
-            result = summarize_crypt_fluorescence(
-                channels=[norm_rfp, labels, scale_val],
-                intensity_upper_bound=1.0,
-            )
-            return result
+        def _summarize_image(norm_rfp, labels, scale_val, subj_name):
+            """Summarize fluorescence for entire image with error handling."""
+            try:
+                # Compute inputs if they're dask arrays
+                norm_rfp = norm_rfp.compute() if isinstance(norm_rfp, da.Array) else np.asarray(norm_rfp)
+                labels = labels.compute() if isinstance(labels, da.Array) else np.asarray(labels)
+                
+                # Function expects [normalized_rfp, crypt_labels, microns_per_px]
+                result = summarize_crypt_fluorescence(
+                    channels=[norm_rfp, labels, scale_val],
+                    intensity_upper_bound=1.0,
+                )
+                return result
+            except Exception as e:
+                print(f"  WARNING: Failed to compute image summary for '{subj_name}': {str(e)[:80]}")
+                # Return array of NaNs matching expected output shape
+                return np.full(len(SUMMARY_FIELD_ORDER), np.nan)
         
         # Step 4: Quantify per-crypt fluorescence
         @delayed
-        def _summarize_per_crypt(norm_rfp, labels, scale_val):
-            """Summarize fluorescence per individual crypt."""
-            # Compute inputs if they're dask arrays
-            norm_rfp = norm_rfp.compute() if isinstance(norm_rfp, da.Array) else np.asarray(norm_rfp)
-            labels = labels.compute() if isinstance(labels, da.Array) else np.asarray(labels)
-            
-            # Function expects [normalized_rfp, crypt_labels, microns_per_px]
-            result = summarize_crypt_fluorescence_per_crypt(
-                channels=[norm_rfp, labels, scale_val]
-            )
-            return result
+        def _summarize_per_crypt(norm_rfp, labels, scale_val, subj_name):
+            """Summarize fluorescence per individual crypt with error handling."""
+            try:
+                # Compute inputs if they're dask arrays
+                norm_rfp = norm_rfp.compute() if isinstance(norm_rfp, da.Array) else np.asarray(norm_rfp)
+                labels = labels.compute() if isinstance(labels, da.Array) else np.asarray(labels)
+                
+                # Function expects [normalized_rfp, crypt_labels, microns_per_px]
+                result = summarize_crypt_fluorescence_per_crypt(
+                    channels=[norm_rfp, labels, scale_val]
+                )
+                return result
+            except Exception as e:
+                print(f"  WARNING: Failed to compute per-crypt summary for '{subj_name}': {str(e)[:80]}")
+                # Return empty array (no crypts)
+                return np.array([])
         
-        image_summary = _summarize_image(normalized_rfp, crypt_labels, scale)
-        per_crypt_summary = _summarize_per_crypt(normalized_rfp, crypt_labels, scale)
+        image_summary = _summarize_image(normalized_rfp, crypt_labels, scale, subject_name)
+        per_crypt_summary = _summarize_per_crypt(normalized_rfp, crypt_labels, scale, subject_name)
         
         # Store the delayed computations
         subject_computations[subject_name] = {
