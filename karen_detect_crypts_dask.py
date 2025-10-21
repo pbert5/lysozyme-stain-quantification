@@ -19,23 +19,26 @@ import matplotlib.pyplot as plt
 
 # Add src to path
 SCRIPT_DIR = Path(__file__).parent
-sys.path.insert(0, str(SCRIPT_DIR / "src"))
+sys.path.insert(0, str(SCRIPT_DIR))
 
-from scientific_image_finder.finder import find_subject_image_sets
-from lysozyme_stain_quantification.segment_crypts import segment_crypts
-from lysozyme_stain_quantification.normalize_rfp import compute_normalized_rfp
-from lysozyme_stain_quantification.quantify.crypt_fluorescence_summary import (
+from src.scientific_image_finder.finder import find_subject_image_sets
+from src.lysozyme_stain_quantification.segment_crypts import segment_crypts
+from src.lysozyme_stain_quantification.normalize_rfp import compute_normalized_rfp
+from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary import (
     summarize_crypt_fluorescence,
     summarize_crypt_fluorescence_per_crypt,
     SUMMARY_FIELD_ORDER,
     PER_CRYPT_FIELD_ORDER,
 )
-from lysozyme_stain_quantification.utils.setup_tools import setup_results_dir, plot_all_crypts
+from src.lysozyme_stain_quantification.utils.setup_tools import setup_results_dir, plot_all_crypts
+
+# Import image-ops-framework for proper overlay rendering
+sys.path.insert(0, str(Path.home() / "documents" / "image-ops-framework" / "src"))
+from image_ops_framework.helpers.overlays import render_label_overlay
 
 # Try to import cluster support
 try:
-    sys.path.insert(0, str(SCRIPT_DIR / "src" / "dask"))
-    from cluster import start_local_cluster
+    from src.dask.cluster import start_local_cluster
     CLUSTER_AVAILABLE = True
 except ImportError:
     CLUSTER_AVAILABLE = False
@@ -119,47 +122,53 @@ def save_overlay_images(
     output_dir: Path,
 ) -> None:
     """
-    Render and save crypt overlay images.
+    Render and save crypt overlay images using proper render_label_overlay.
     
-    Creates simple 3-panel visualizations showing RFP, DAPI, and detected crypts.
+    Uses the image-ops-framework overlay renderer for proper RGB blending
+    of RFP and DAPI channels with label overlays.
     """
     overlay_dir = output_dir / "renderings"
     overlay_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"\n[OVERLAYS] Rendering overlay images...")
     
-    for subject_name, rfp, dapi, labels in zip(subject_names, rfp_images, dapi_images, crypt_labels):
-        # Create a figure showing the original images with crypt labels
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    @delayed
+    def _render_and_save_one(subject_name: str, rfp: np.ndarray, dapi: np.ndarray, labels: np.ndarray) -> Path:
+        """Render and save a single overlay (delayed for parallelization)."""
+        # Use the proper render_label_overlay from image-ops-framework
+        # It expects channels=[rfp, dapi, labels]
+        overlay_xr = render_label_overlay(
+            channels=[rfp, dapi, labels],
+            fill_alpha=0.35,
+            outline_alpha=1.0,
+            outline_width=2,
+            normalize_scalar=True,
+        )
         
-        # Original RFP
-        axes[0].imshow(rfp, cmap='Reds')
-        axes[0].set_title('RFP Channel')
-        axes[0].axis('off')
-        
-        # Original DAPI
-        axes[1].imshow(dapi, cmap='Blues')
-        axes[1].set_title('DAPI Channel')
-        axes[1].axis('off')
-        
-        # Crypt labels
-        if labels.max() > 0:
-            axes[2].imshow(labels, cmap='tab20', interpolation='nearest')
-        else:
-            axes[2].imshow(np.zeros_like(labels), cmap='gray')
-        axes[2].set_title(f'Crypts (n={labels.max()})')
-        axes[2].axis('off')
-        
-        plt.suptitle(subject_name, fontsize=10)
-        plt.tight_layout()
+        # overlay_xr is (channel, y, x) with channel=['r', 'g', 'b']
+        # Convert to (y, x, channel) for matplotlib
+        overlay_rgb = np.moveaxis(overlay_xr.values, 0, -1)
         
         # Save with a sanitized filename
         safe_name = subject_name.replace("/", "_").replace(" ", "_").replace("[", "").replace("]", "")
         output_path = overlay_dir / f"{safe_name}_overlay.png"
-        fig.savefig(output_path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
+        
+        # Save as PNG (values are already in [0, 1] range)
+        import matplotlib.pyplot as plt
+        plt.imsave(output_path, overlay_rgb)
+        
+        return output_path
     
-    print(f"  Saved {len(subject_names)} overlay images to {overlay_dir}")
+    # Build delayed tasks for all overlays (parallelizable!)
+    delayed_saves = [
+        _render_and_save_one(name, rfp, dapi, labels)
+        for name, rfp, dapi, labels in zip(subject_names, rfp_images, dapi_images, crypt_labels)
+    ]
+    
+    # Compute all overlays in parallel
+    output_paths = dask.compute(*delayed_saves)
+    
+    print(f"  Saved {len(output_paths)} overlay images to {overlay_dir}")
 
 
 def main(
@@ -187,25 +196,30 @@ def main(
             use_cluster = False
         else:
             try:
-                from dask.distributed import Client
-                # Try to connect to existing cluster
+                from dask.distributed import Client, LocalCluster
+                
+                # Try to connect to existing cluster first
                 try:
-                    client = Client.current()
-                    print(f"\n✓ Connected to existing Dask cluster: {client.scheduler.address}")
+                    client = Client(timeout='2s')  # Try to connect to default scheduler
+                    print(f"\n✓ Connected to existing Dask cluster!")
+                    print(f"  Scheduler: {client.scheduler.address}")
                     print(f"  Dashboard: {client.dashboard_link}")
-                except ValueError:
+                    print(f"  Workers: {len(client.scheduler_info()['workers'])}")
+                except (OSError, TimeoutError):
                     # No existing cluster, start our own
-                    print(f"\nStarting local Dask cluster...")
-                    cluster_context = start_local_cluster(
+                    print(f"\nNo existing cluster found. Starting local Dask cluster...")
+                    cluster = LocalCluster(
                         n_workers=n_workers or 4,
                         threads_per_worker=2,
                         memory_limit='4GB',
                         dashboard_address=":8787",
                     )
-                    cluster, client = cluster_context.__enter__()
+                    client = cluster.get_client()
+                    cluster_context = cluster  # Store for cleanup
                     print(f"  Scheduler: {cluster.scheduler_address}")
                     print(f"  Dashboard: {cluster.dashboard_link}")
                     print(f"  Workers: {n_workers or 4}")
+                    print(f"\n  ⚠️  OPEN DASHBOARD: {cluster.dashboard_link}")
             except Exception as e:
                 print(f"\nWARNING: Failed to start cluster: {e}")
                 print("  Falling back to threaded scheduler.")
@@ -484,9 +498,12 @@ def main(
     
     # Clean up cluster if we started one
     if cluster_context:
-        cluster_context.__exit__(None, None, None)
+        print("\n✓ Shutting down local cluster...")
+        cluster_context.close()
+        if client:
+            client.close()
         if debug:
-            print("\n✓ Cluster shut down cleanly")
+            print("  Cluster shut down cleanly")
 
 
 if __name__ == "__main__":
@@ -496,12 +513,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use-cluster",
         action="store_true",
+        default=True,
         help="Use Dask distributed cluster (local or existing)",
     )
     parser.add_argument(
         "--n-workers",
         type=int,
-        default=4,
+        default=20,
         help="Number of workers for local cluster (default: 4)",
     )
     parser.add_argument(
