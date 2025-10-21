@@ -13,6 +13,7 @@ from scipy.ndimage import distance_transform_edt, gaussian_filter, label as ndi_
 from skimage.color import label2rgb
 from skimage.exposure import equalize_adapthist
 from skimage.measure import label as sk_label
+
 from skimage.morphology import (
     binary_erosion,
     binary_opening,
@@ -27,33 +28,35 @@ from skimage.segmentation import expand_labels, watershed
 from skimage.util import invert
 
 from src.lysozyme_stain_quantification.utils.remove_artifacts import remove_rectangles
+import dask.array as da
 
+from dask.delayed import delayed
 from ..scoring_selector_mod import scoring_selector
 
 
 # ---------------------------- utilities ---------------------------- #
 
 
-def to_float01(img: np.ndarray) -> np.ndarray:
+def to_float01(img: da.Array) -> da.Array:
     """Return an array scaled to [0, 1] float without modifying NaNs/Inf."""
     if img.dtype in (np.float32, np.float64):
-        return np.clip(img, 0.0, 1.0)
+        return da.clip(img, 0.0, 1.0)
     if np.issubdtype(img.dtype, np.integer):
         info = np.iinfo(img.dtype)
-        return np.clip(img.astype(np.float32) / float(info.max), 0.0, 1.0)
+        return da.clip(img.astype(np.float32) / float(info.max), 0.0, 1.0)
     arr = img.astype(np.float32)
-    lo, hi = np.nanpercentile(arr, [0.5, 99.5])
+    lo, hi = da.nanpercentile(arr, [0.5, 99.5])
     if hi > lo:
         arr = (arr - lo) / (hi - lo)
-    return np.clip(arr, 0.0, 1.0)
+    return da.clip(arr, 0.0, 1.0)
 
 
-def minmax(x: np.ndarray) -> np.ndarray:
+def minmax(x: da.Array) -> da.Array:
     """Normalize an array to [0, 1] (safe if constant)."""
     x = x.astype(np.float32, copy=False)
-    lo, hi = np.nanmin(x), np.nanmax(x)
-    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-        return np.zeros_like(x, dtype=np.float32)
+    lo, hi = da.nanmin(x), da.nanmax(x)
+    if not da.isfinite(lo) or not da.isfinite(hi) or hi <= lo:
+        return da.zeros_like(x, dtype=np.float32)
     return (x - lo) / (hi - lo)
 
 
@@ -107,75 +110,76 @@ def get_morphology_params(subject: str, **overrides: Any) -> MorphologyParams:
     return params
 
 
-def preprocess_for_caps(image: np.ndarray, salt_and_pepper_noise_size: Optional[int]) -> np.ndarray:
+def preprocess_for_caps(img: da.Array, salt_and_pepper_noise_size: Optional[int]) -> da.Array:
     """
     Normalize the image and optionally remove salt-and-pepper noise.
 
     Historically we applied a white top-hat cleanup before cap decomposition; this
     keeps that option configurable per subject.
     """
-    image = to_float01(image)
+    image: da.Array = to_float01(img)
     if salt_and_pepper_noise_size is None or salt_and_pepper_noise_size <= 0:
         return image
 
-    radius = max(1, int(round(salt_and_pepper_noise_size)))
+    radius = da.max(1, int(round(salt_and_pepper_noise_size)))
     footprint = disk(radius)
-    cleaned = image - white_tophat(image, footprint)
+    white_hat = delayed(white_tophat)(image, footprint)
+    cleaned: da.Array = image - da.from_delayed(white_hat, shape=image.shape, dtype=image.dtype)
     return cleaned
 
 
 # ---------------------------- morphology helpers ---------------------------- #
 
 
-def _caps_preprocess(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.ndarray, np.ndarray]:
+def _caps_preprocess(image: da.Array, small_r: int, big_r: int) -> Tuple[da.Array, da.Array]:
     """Shared preprocessing for cap-style morphology computations."""
     image = to_float01(image)
     #image = equalize_adapthist(image, clip_limit=0.01)
 
-    hats = dilation(image, disk(big_r)) - dilation(image, disk(small_r))
-    hats = minmax(hats)
+    hats: da.Array = dilation(image, disk(big_r)) - dilation(image, disk(small_r))
+    hats: da.Array = minmax(hats)
     return image, hats
 
 
-def caps(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def caps(image: da.Array, small_r: int, big_r: int) -> Tuple[da.Array, da.Array, da.Array]:
     """Contrast-adaptive cap decomposition returning (hats, clean, troughs)."""
     image_eq, hats = _caps_preprocess(image, small_r, big_r)
 
-    clean = image_eq - np.minimum(image_eq, hats)
+    clean = image_eq - da.minimum(image_eq, hats)
     clean = minmax(clean)
 
-    troughs = np.maximum(image_eq, hats) - image_eq
+    troughs = da.maximum(image_eq, hats) - image_eq
     troughs = minmax(troughs)
     return hats, clean, troughs
 
 
-def caps_clean(image: np.ndarray, small_r: int, big_r: int) -> np.ndarray:
+def caps_clean(image: da.Array, small_r: int, big_r: int) -> da.Array:
     """Return only the 'clean' component of the cap decomposition."""
     image_eq, hats = _caps_preprocess(image, small_r, big_r)
-    clean = image_eq - np.minimum(image_eq, hats)
+    clean = image_eq - da.minimum(image_eq, hats)
     return minmax(clean)
 
 
-def caps_trough(image: np.ndarray, small_r: int, big_r: int) -> np.ndarray:
+def caps_trough(image: da.Array, small_r: int, big_r: int) -> da.Array:
     """Return only the 'troughs' component of the cap decomposition."""
     image_eq, hats = _caps_preprocess(image, small_r, big_r)
-    troughs = np.maximum(image_eq, hats) - image_eq
+    troughs = da.maximum(image_eq, hats) - image_eq
     return minmax(troughs)
 
 
-def caps_clean_troughs(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.ndarray, np.ndarray]:
+def caps_clean_troughs(image: da.Array, small_r: int, big_r: int) -> Tuple[da.Array, da.Array]:
     """Return both clean and trough components while avoiding extra work."""
     image_eq, hats = _caps_preprocess(image, small_r, big_r)
 
-    clean = image_eq - np.minimum(image_eq, hats)
+    clean = image_eq - da.minimum(image_eq, hats)
     clean = minmax(clean)
 
-    troughs = np.maximum(image_eq, hats) - image_eq
+    troughs = da.maximum(image_eq, hats) - image_eq
     troughs = minmax(troughs)
     return clean, troughs
 
 
-def show_caps(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def show_caps(image: da.Array, small_r: int, big_r: int) -> Tuple[da.Array, da.Array, da.Array]:
     """Visualize the cap decomposition for debugging."""
     hats, clean, troughs = caps(image, small_r, big_r)
 
@@ -194,110 +198,120 @@ def show_caps(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.ndarray, 
 
 
 def identify_crypt_seeds(
-    crypt_img: NDArray,
-    tissue_image: NDArray,
+    crypt_img: da.Array,
+    tissue_image: da.Array,
     blob_size_px: Optional[int] = None,
-) -> NDArray:
+) -> da.Array:
     """Legacy seed generator kept for reference."""
     del blob_size_px  # legacy placeholder
     tissue_clean, tissue_troughs = caps_clean_troughs(tissue_image, 1, 40)
     crypt_clean = caps_clean(crypt_img, 2, 40)
 
-    thinned_crypts = np.maximum(crypt_clean - tissue_clean, 0)
-    split_crypts = np.maximum(crypt_clean - tissue_troughs, 0)
+    thinned_crypts = da.maximum(crypt_clean - tissue_clean, 0)
+    split_crypts = da.maximum(crypt_clean - tissue_troughs, 0)
 
     good_crypts = minmax(opening(split_crypts * thinned_crypts, footprint=disk(5)) ** 0.5)
     distance = tissue_troughs - good_crypts
     maxi = local_maxima(good_crypts)
     crypt_seeds = watershed(distance, markers=maxi, mask=tissue_troughs < good_crypts)
-    labeled: np.ndarray = sk_label(crypt_seeds > 0)  # type: ignore
+    labeled: da.Array = sk_label(crypt_seeds > 0)  # type: ignore
     return labeled
 
 
 def limited_expansion(
-    crypt_img: NDArray,
-    tissue_image: NDArray,
+    crypt_img: da.Array,
+    tissue_image: da.Array,
     blob_size_px: Optional[int] = None,
-) -> NDArray:
+) -> da.Array:
     """Limit vertical expansion of crypts by suppressing tissue spillover."""
     del blob_size_px  # not used but kept for interface parity
     outer_troughs = caps_trough(minmax(tissue_image), 10, 50)
     outer_troughs = minmax(outer_troughs)
 
-    adjusted = np.maximum(crypt_img - outer_troughs, 0)
-    crypt_max = binary_opening(local_maxima(adjusted, indices=False), footprint=disk(1)).astype(bool)
+    adjusted = da.maximum(crypt_img - outer_troughs, 0)
+    crypt_max: da.Array = binary_opening(local_maxima(adjusted, indices=False), footprint=disk(1)).astype(bool)
     tissue_max = binary_opening(local_maxima(outer_troughs), disk(2))
 
-    alt = invert(dilation(minmax(adjusted), footprint=disk(2)) + minmax(outer_troughs))
-    spread = watershed(image=alt, markers=np.maximum(crypt_max * 1, tissue_max * 2))
+    alt: da.Array = invert(dilation(minmax(adjusted), footprint=disk(2)) + minmax(outer_troughs))
+    spread_early= delayed(watershed, pure=True)(image=alt, markers=da.maximum(crypt_max * 1, tissue_max * 2))
+    spread = da.from_delayed(spread_early, shape=crypt_img.shape, dtype=np.int32)
     return spread
 
 
 def identify_crypt_seeds_new(
-    crypt_img: np.ndarray,
-    tissue_image: np.ndarray,
+    crypt_img: da.Array,
+    tissue_image: da.Array,
     *,
     params: Optional[MorphologyParams] = None,
-) -> np.ndarray:
+) -> da.Array:
     """Newer seed logic that prefers solid crypts."""
     params = params or DEFAULT_MORPHOLOGY_PARAMS
 
     crypt_img = preprocess_for_caps(crypt_img, params.salt_and_pepper_noise_size)
-    tissue_image = preprocess_for_caps(equalize_adapthist(tissue_image), params.salt_and_pepper_noise_size)
+    
+    tissue_image: da.Array = preprocess_for_caps(
+        da.from_delayed(
+            delayed(equalize_adapthist)(tissue_image),
+            shape=tissue_image.shape, dtype=tissue_image.dtype), params.salt_and_pepper_noise_size)
 
     max_expansion = max(1, int(round(params.crypt_radius_px)))
     tissue_clean, tissue_troughs = caps_clean_troughs(tissue_image, 1, max_expansion)
     crypt_clean, crypt_troughs = caps_clean_troughs(crypt_img, 2, max_expansion)
 
-    thinned_crypts = np.maximum(crypt_clean - tissue_clean, 0)
-    split_crypts = np.maximum(crypt_clean - tissue_troughs, 0)
+    thinned_crypts: da.Array = da.maximum(crypt_clean - tissue_clean, 0)
+    split_crypts: da.Array = da.maximum(crypt_clean - tissue_troughs, 0)
 
-    good_crypts = minmax(opening(split_crypts * thinned_crypts, footprint=disk(5)) ** 0.5)
+    good_crypts = minmax(
+        da.from_delayed(delayed(opening)(split_crypts * thinned_crypts, footprint=disk(5)), shape=split_crypts.shape, dtype=split_crypts.dtype)** 0.5
+        )
     if params.peak_smoothing_sigma and params.peak_smoothing_sigma > 0:
-        good_crypts = gaussian_filter(good_crypts, params.peak_smoothing_sigma)
-        good_crypts = minmax(good_crypts)
+
+        good_crypts = delayed(gaussian_filter)(good_crypts, params.peak_smoothing_sigma)
+        good_crypts = minmax(da.from_delayed(good_crypts, shape=good_crypts.shape, dtype=good_crypts.dtype))
 
     distance = tissue_troughs - good_crypts
-    maxi = local_maxima(good_crypts)
-    seeds = watershed(distance, markers=maxi, mask=tissue_troughs < good_crypts)
-    labeled: np.ndarray = sk_label(seeds > 0)  # type: ignore
+    maxi = delayed(local_maxima)(good_crypts)
+    seeds = delayed(watershed)(distance, markers=maxi, mask=tissue_troughs < good_crypts)
+    pre_labeled = delayed(sk_label)(seeds > 0)  # type: ignore
+    labeled: da.Array = da.from_delayed(pre_labeled, shape=seeds.shape, dtype=seeds.dtype)
     return labeled
 
 
 def identify_potential_crypts_old_like(
-    crypt_img: np.ndarray,
-    tissue_image: np.ndarray,
+    crypt_img_in: da.Array,
+    tissue_image_in: da.Array,
     blob_size_px: Optional[int] = None,
-    external_crypt_seeds: Optional[np.ndarray] = None,
-    params: Optional[MorphologyParams] = None,
-) -> np.ndarray:
+    external_crypt_seeds: Optional[da.Array] = None,
+    params_in: Optional[MorphologyParams] = None,
+) -> da.Array:
     """Original watershed skeleton with optional external seeds."""
-    crypt_img = to_float01(crypt_img)
-    tissue_image = to_float01(tissue_image)
+    crypt_img: da.Array = to_float01(crypt_img_in)
+    tissue_image: da.Array = to_float01(tissue_image_in)
 
     if crypt_img.shape != tissue_image.shape:
         raise ValueError(f"Image shape mismatch: red {crypt_img.shape} vs blue {tissue_image.shape}")
 
-    params = params or DEFAULT_MORPHOLOGY_PARAMS
+    params: Optional[MorphologyParams] = params_in or DEFAULT_MORPHOLOGY_PARAMS
     effective_blob = float(blob_size_px) if blob_size_px else float(params.crypt_radius_px)
     erosion_dim = _odd(max(3, int(round(effective_blob / 10.0))))
-    erosion_footprint = np.ones((erosion_dim, erosion_dim), dtype=bool)
+    erosion_footprint: da.Array = da.ones((erosion_dim, erosion_dim), dtype=bool) # this conversion may be a little sketchy
 
     if external_crypt_seeds is None:
-        crypt_seeds_bool = crypt_img > np.minimum(tissue_image, crypt_img)
+        crypt_seeds_bool: da.Array = crypt_img > da.minimum(tissue_image, crypt_img)
         min_region_area = max(20, int(round((effective_blob**2) / 16.0)))
-        crypt_seeds_bool = binary_erosion(crypt_seeds_bool, footprint=erosion_footprint)
-        crypt_seeds_bool = remove_small_objects(crypt_seeds_bool, min_size=min_region_area)
-        labeled_diff_r: np.ndarray
-        labeled_diff_r, _ = ndi_label(crypt_seeds_bool)  # type: ignore
+        crypt_seeds_bool_cleaned = delayed(binary_erosion)(crypt_seeds_bool, footprint=erosion_footprint)
+        crypt_seeds_bool_cleaned = delayed(remove_small_objects)(crypt_seeds_bool, min_size=min_region_area)
+        
+        labeled_diff_r_del = delayed(sk_label)(crypt_seeds_bool_cleaned)  # type: ignore
     else:
-        external_crypt_seeds = external_crypt_seeds.astype(np.int32)
+        external_crypt_seeds = external_crypt_seeds.astype(da.int32)
         crypt_seed_mask = external_crypt_seeds > 0
         min_region_area = max(20, int(round((effective_blob**2) / 16.0)))
-        crypt_seed_mask = remove_small_objects(crypt_seed_mask, min_size=min_region_area)
-        labeled_diff_r = sk_label(crypt_seed_mask)  # type: ignore
+        crypt_seed_mask = delayed(remove_small_objects)(crypt_seed_mask, min_size=min_region_area)
+        labeled_diff_r_del = delayed(sk_label)(crypt_seed_mask)  # type: ignore
+    labeled_diff_r = da.from_delayed(labeled_diff_r_del, shape=crypt_img.shape, dtype=da.int32)
 
-    abs_diff = np.maximum(tissue_image - crypt_img, 0)
+    abs_diff = da.maximum(tissue_image - crypt_img, 0)
     mask_gt_red = abs_diff > crypt_img
 
     erosion_kernel_size = max(3, int(round(effective_blob * 0.15)))
@@ -305,10 +319,11 @@ def identify_potential_crypts_old_like(
     cv_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erosion_kernel_size, erosion_kernel_size))
     mask_u8 = (mask_gt_red.astype(np.uint8) * 255)
     erosion_iterations = max(1, int(round(effective_blob / 20.0)))
-    mask_eroded_u8 = cv2.erode(mask_u8, cv_kernel, iterations=erosion_iterations)
-    tissue_eroded = mask_eroded_u8.astype(bool)
+    mask_eroded_u8 = delayed(cv2.erode)(mask_u8, cv_kernel, iterations=erosion_iterations)
+    tissue_eroded = da.from_delayed(mask_eroded_u8, shape=mask_u8.shape, dtype=da.bool)
 
-    combined_labels = np.zeros_like(labeled_diff_r, dtype=int)
+
+    combined_labels = da.zeros_like(labeled_diff_r, dtype=int)
     combined_labels[tissue_eroded] = 2
     combined_labels[labeled_diff_r > 0] = 1
 
@@ -316,39 +331,46 @@ def identify_potential_crypts_old_like(
         expand_distance = max(1, int(round(params.intervilli_distance_px)))
     else:
         expand_distance = max(1, int(round(effective_blob * 2.5)))
-    expanded_labels = expand_labels(combined_labels, distance=expand_distance)
+    expanded_labels_del = delayed(expand_labels)(combined_labels, distance=expand_distance)
+    expanded_labels: da.Array = da.from_delayed(expanded_labels_del, shape=combined_labels.shape, dtype=combined_labels.dtype)
 
-    reworked = np.zeros_like(expanded_labels, dtype=np.int32)
+    reworked = da.zeros_like(expanded_labels, dtype=np.int32)
     reworked[expanded_labels == 2] = 1
     mask_copy = (expanded_labels != 2) & (labeled_diff_r != 0)
     reworked[mask_copy] = labeled_diff_r[mask_copy] + 1
 
     mask_ws = expanded_labels > 0
+    
+    dst1 = delayed(distance_transform_edt)(combined_labels == 1)  
+    dst2 = delayed(distance_transform_edt)(combined_labels == 2)  
 
-    elevation = minmax(distance_transform_edt(combined_labels == 2)) - minmax(  # type: ignore
-        distance_transform_edt(combined_labels == 1)  # type: ignore
+
+
+    elevation = minmax(da.from_delayed(dst2, shape=combined_labels.shape, dtype=da.float64)) - minmax(  # type: ignore
+        da.from_delayed(dst1, shape=combined_labels.shape, dtype=da.float64)  # type: ignore
     )
 
-    ws_labels = watershed(elevation, markers=reworked, mask=mask_ws).copy()
+    ws_labels_del = delayed(watershed)(elevation, markers=reworked, mask=mask_ws)
+    ws_labels: da.Array = da.from_delayed(ws_labels_del, shape=combined_labels.shape, dtype=np.int32)
     ws_labels[ws_labels == 1] = 0
     ws_labels[ws_labels > 1] -= 1
-    return ws_labels.astype(np.int32)
+    return ws_labels.astype(da.int32)
 
 
-def _seed_health_metrics(seed_labels: np.ndarray) -> Dict[str, Any]:
+def _seed_health_metrics(seed_labels: da.Array ) -> Dict[str, Any]:
     """Compute basic metrics to judge seed quality."""
     if seed_labels is None or seed_labels.size == 0:
         return dict(n_labels=0, coverage=0.0, mean_area=0.0)
-    n_labels = int(seed_labels.max())
-    coverage = float(np.count_nonzero(seed_labels)) / seed_labels.size
+    n_labels: int = da.max(seed_labels)
+    coverage = da.count_nonzero(seed_labels) / seed_labels.size
     if n_labels > 0:
-        areas = np.bincount(seed_labels.ravel())[1:]
-        mean_area = float(areas.mean()) if areas.size else 0.0
+        areas = da.bincount(seed_labels)[1:]
+        mean_area = areas.mean() if areas.size else 0.0
     else:
         mean_area = 0.0
     return dict(n_labels=n_labels, coverage=coverage, mean_area=mean_area)
 
-
+@delayed
 def _score_label_set(
     labels: Optional[np.ndarray],
     raw_img: np.ndarray,
@@ -365,8 +387,7 @@ def _score_label_set(
         summary.update(region_count=0, mean_quality_score=None, evaluation_score=None, reason="empty")
         return float("-inf"), summary
 
-    labels = np.asarray(labels)
-    region_count = int(labels.max())
+    region_count = labels.max()
     summary["region_count"] = region_count
 
     if region_count == 0:
@@ -404,8 +425,8 @@ def _score_label_set(
 
 
 def identify_potential_crypts_hybrid(
-    crypt_img: np.ndarray,
-    tissue_image: np.ndarray,
+    crypt_img: da.Array,
+    tissue_image: da.Array,
     blob_size_px: Optional[int] = None,
     use_new_seeds: bool = True,
     auto_fallback: bool = True,
@@ -413,7 +434,7 @@ def identify_potential_crypts_hybrid(
     min_coverage: float = 0.002,
     debug: bool = False,
     params: Optional[MorphologyParams] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[da.Array, Dict[str, Any]]:
     """
     Hybrid pipeline that evaluates both seed strategies and keeps the better result.
       1) Generate new seeds (optionally) and always run the legacy seed body.
@@ -429,16 +450,16 @@ def identify_potential_crypts_hybrid(
 
     dbg: Dict[str, Any] = {}
 
-    new_seeds = identify_crypt_seeds_new(crypt_img, tissue_image, params=params) if use_new_seeds else None
-    new_metrics = _seed_health_metrics(
-        new_seeds if new_seeds is not None else np.zeros_like(crypt_img, dtype=np.int32)
+    new_seeds: da.Array | None = identify_crypt_seeds_new(crypt_img, tissue_image, params=params) if use_new_seeds else None
+    new_metrics: Dict[str, Any] = _seed_health_metrics(
+        new_seeds if new_seeds is not None else da.zeros_like(crypt_img, dtype=da.int32)
     )
     dbg["new_seed_metrics"] = new_metrics
 
     metrics_meet_threshold = (new_metrics["n_labels"] >= min_seed_count) and (new_metrics["coverage"] >= min_coverage)
     dbg["seed_metrics_meet_threshold"] = bool(metrics_meet_threshold)
 
-    candidate_labels: Dict[str, np.ndarray] = {}
+    candidate_labels: Dict[str, da.Array] = {}
     candidate_summaries: Dict[str, Dict[str, Any]] = {}
 
     if use_new_seeds and new_seeds is not None:
@@ -447,7 +468,7 @@ def identify_potential_crypts_hybrid(
             tissue_image,
             blob_size_px=blob_size_px,
             external_crypt_seeds=new_seeds,
-            params=params,
+            params_in=params,
         )
 
     candidate_labels["legacy_seeded"] = identify_potential_crypts_old_like(
@@ -455,13 +476,13 @@ def identify_potential_crypts_hybrid(
         tissue_image,
         blob_size_px=blob_size_px,
         external_crypt_seeds=None,
-        params=params,
+        params_in=params,
     )
 
     selected_key = "legacy_seeded"
     best_score = float("-inf")
 
-    if auto_fallback:
+    if auto_fallback: # may need to delay this block
         for key, label_img in candidate_labels.items():
             if key == "new_seeded" and not metrics_meet_threshold:
                 summary = dict(
@@ -491,7 +512,7 @@ def identify_potential_crypts_hybrid(
 
     if debug:
         dbg["labels_max"] = int(labels.max())
-        dbg["labels_coverage"] = float(np.count_nonzero(labels)) / labels.size
+        dbg["labels_coverage"] = float(da.count_nonzero(labels)) / labels.size
         dbg["best_score"] = best_score
 
     return labels, dbg
@@ -500,29 +521,30 @@ def identify_potential_crypts_hybrid(
 # ---------------------------- driver ---------------------------- #
 
 
-def build_image_sets() -> list[Tuple[str, np.ndarray, np.ndarray]]:
+def build_image_sets() -> list[Tuple[str, da.Array, da.Array]]:
     """Load source images and return [(subject, crypt_channel, tissue_channel), ...]."""
-    jej2 = tiff.imread(
+    jej2 = da.array(tiff.imread(
         "/home/phillip/documents/yen-lab-discussion/rfp/Lyz Fabp1/CDKO 158.1/Jej-2c2.tif"
-    )
-    jej2_tissue = tiff.imread(
+    ))
+    jej2_tissue = da.array(tiff.imread(
         "/home/phillip/documents/yen-lab-discussion/rfp/Lyz Fabp1/CDKO 158.1/Jej-2c1.tif"
-    )
-    jej3 = tiff.imread(
+    ))
+    jej3 = da.array(tiff.imread(
         "/home/phillip/documents/yen-lab-discussion/rfp/Lyz Fabp1/CDKO 158.1/Jej-3c2.tif"
-    )
-    jej3_tissue = tiff.imread(
+    ))
+    jej3_tissue = da.array(tiff.imread(
         "/home/phillip/documents/yen-lab-discussion/rfp/Lyz Fabp1/CDKO 158.1/Jej-3c1.tif"
-    )
+    ))
     g3fr_rgb = tiff.imread("/home/phillip/documents/lysozyme/lysozyme images/Jej LYZ/G3/G3FR - 2.tif")
-    g3fr_sep_rfp = tiff.imread(
+    g3fr_sep_rfp = da.array(tiff.imread(
         "/home/phillip/documents/lysozyme/lysozyme images/Jej LYZ/G3/G3FR - 2_RFP.tif"
-    )
-    g3fr_sep_dapi = tiff.imread(
+    ))
+    g3fr_sep_dapi = da.array(tiff.imread(
         "/home/phillip/documents/lysozyme/lysozyme images/Jej LYZ/G3/G3FR - 2_DAPI.tif"
-    )
+    ))
 
-    evil_g3fr = remove_rectangles(g3fr_rgb)
+    evil_g3fr = da.from_delayed(delayed(remove_rectangles)(g3fr_rgb), shape=g3fr_rgb.shape, dtype=g3fr_rgb.dtype)
+
 
     return [
         ("Jej-2", jej2[..., 1], jej2_tissue[..., 2]),
@@ -532,11 +554,11 @@ def build_image_sets() -> list[Tuple[str, np.ndarray, np.ndarray]]:
     ]
 
 
-def _load_reference_image() -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _load_reference_image() -> Tuple[da.Array, da.Array, da.Array]:
     """Load a single reference RGB image (crypt, crypt channel, dapi channel)."""
-    image = tiff.imread(
+    image = da.array(tiff.imread(
         "/home/phillip/documents/yen-lab-discussion/rfp/Lyz Fabp1/CDKO 158.1/Jej-2.tif"
-    )
+    ))
     crypt_channel = minmax(image[:, :, 1])
     dapi_channel = minmax(image[:, :, 2])
     first_channel = minmax(image[:, :, 0])
@@ -561,11 +583,11 @@ def main() -> None:
         tissue = minmax(tissue)
         params = get_morphology_params(subject)
 
-        ax[i, 0].imshow(np.stack([crypt, np.zeros_like(crypt), tissue], axis=-1))
+        ax[i, 0].imshow(da.stack([crypt, da.zeros_like(crypt), tissue], axis=-1))
         ax[i, 0].axis("off")
         ax[i, 0].set_title(f"{subject} - Crypt")
 
-        old_labels = identify_potential_crypts_old_like(crypt, tissue, params=params)
+        old_labels = identify_potential_crypts_old_like(crypt, tissue, params_in=params)
         ax[i, 1].imshow(label2rgb(old_labels))
         ax[i, 1].axis("off")
         ax[i, 1].set_title(f"{subject} - Old identify potential crypts")

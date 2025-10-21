@@ -89,12 +89,11 @@ def segment_crypts(
         effective_blob_size_px = int(blob_size_px)
 
     # Wrap the entire pipeline in a delayed function
-    @delayed(pure=True)
-    def _segment_pipeline(crypt, tissue, blob_size, weights, max_reg, dbg):
+
+    def _segment_pipeline(crypt: da.Array, tissue: da.Array, blob_size: int, weights: dict[str, float], max_reg: int, dbg: bool):
         """Execute the full segmentation pipeline on numpy arrays."""
         # Ensure inputs are numpy arrays (compute if dask)
-        crypt = crypt.compute() if isinstance(crypt, da.Array) else np.asarray(crypt)
-        tissue = tissue.compute() if isinstance(tissue, da.Array) else np.asarray(tissue)
+        
         
         # Call the three main functions sequentially
         potential_crypts = identify_potential_crypts(crypt, tissue, blob_size, dbg)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Literal, Optional, Tuple
 
 import numpy as np
+import dask.array as da
 
 from .crypt_detection_solutions.crypt_identification_methodologies import (
     MorphologyParams,
@@ -49,8 +50,8 @@ def _calculate_intensity_metrics(
 
 
 def identify_potential_crypts(
-    crypt_img: np.ndarray,
-    tissue_image: np.ndarray,
+    crypt_img: da.Array,
+    tissue_image: da.Array,
     blob_size_px: int = 30,
     debug: bool = False,
     *,
@@ -58,7 +59,7 @@ def identify_potential_crypts(
     params: Optional[MorphologyParams] = None,
     hybrid_kwargs: Optional[Dict[str, Any]] = None,
     old_like_kwargs: Optional[Dict[str, Any]] = None,
-) -> np.ndarray:
+) -> da.Array:
     """
     Identify potential crypt regions.
 
