@@ -38,11 +38,10 @@ from image_ops_framework.helpers.overlays import render_label_overlay
 
 # Try to import cluster support
 try:
-    from src.dask.cluster import start_local_cluster
+    from dask.distributed import Client, LocalCluster
     CLUSTER_AVAILABLE = True
 except ImportError:
     CLUSTER_AVAILABLE = False
-    start_local_cluster = None
 
 
 def array_to_dask_lazy(arr: np.ndarray) -> da.Array:
@@ -178,14 +177,15 @@ def main(
     debug: bool = True,
     max_subjects: int = 10,
 ) -> None:
+    # Suppress the "large graph" warning - we handle this with client.scatter()
+    import warnings
+    warnings.filterwarnings('ignore', message='.*large graph.*')
+    
     print("=" * 80)
     print("DASK-BASED LYSOZYME CRYPT DETECTION PIPELINE")
     print("=" * 80)
     
-    # Setup results directory
-    results_dir = setup_results_dir(SCRIPT_DIR, exp_name="karen_dask")
-    
-    # Check for cluster support
+    # Check for cluster support and connect FIRST (before any other setup)
     cluster_context = None
     client = None
     
@@ -205,6 +205,8 @@ def main(
                     print(f"  Scheduler: {client.scheduler.address}")
                     print(f"  Dashboard: {client.dashboard_link}")
                     print(f"  Workers: {len(client.scheduler_info()['workers'])}")
+                    print(f"\n  📊 MONITOR: {client.dashboard_link}")
+                    print()
                 except (OSError, TimeoutError):
                     # No existing cluster, start our own
                     print(f"\nNo existing cluster found. Starting local Dask cluster...")
@@ -219,11 +221,15 @@ def main(
                     print(f"  Scheduler: {cluster.scheduler_address}")
                     print(f"  Dashboard: {cluster.dashboard_link}")
                     print(f"  Workers: {n_workers or 4}")
-                    print(f"\n  ⚠️  OPEN DASHBOARD: {cluster.dashboard_link}")
+                    print(f"\n  📊 MONITOR: {cluster.dashboard_link}")
+                    print()
             except Exception as e:
                 print(f"\nWARNING: Failed to start cluster: {e}")
                 print("  Falling back to threaded scheduler.")
                 use_cluster = False
+    
+    # Setup results directory (after cluster connection)
+    results_dir = setup_results_dir(SCRIPT_DIR, exp_name="karen_dask")
     
     # Configuration
     IMAGE_BASE_DIR = Path("lysozyme images")
@@ -233,19 +239,29 @@ def main(
     print("\n[1/6] Finding images...")
     
     # Try combined-channel images first
-    subject_names, combined_sources, _ = find_subject_image_sets(
-        img_dir=IMAGE_BASE_DIR,
-        sources=[("combined", "")],
-        max_subjects=max_subjects,
-    )
-    
-    combined_images = combined_sources[0] if combined_sources else []
-    
-    def _has_multi_channel(arr: np.ndarray) -> bool:
-        array = np.asarray(arr)
-        return array.ndim >= 3 and (array.shape[-1] >= 3 or array.shape[0] >= 3)
-    
-    use_combined = bool(combined_images) and all(_has_multi_channel(img) for img in combined_images)
+    use_combined = False
+    try:
+        subject_names, combined_sources, _ = find_subject_image_sets(
+            img_dir=IMAGE_BASE_DIR,
+            sources=[("combined", "")],
+            max_subjects=max_subjects,
+        )
+        
+        combined_images = combined_sources[0] if combined_sources else []
+        
+        def _has_multi_channel(arr: np.ndarray) -> bool:
+            array = np.asarray(arr)
+            return array.ndim >= 3 and (array.shape[-1] >= 3 or array.shape[0] >= 3)
+        
+        use_combined = bool(combined_images) and all(_has_multi_channel(img) for img in combined_images)
+    except ValueError as e:
+        if "Inconsistent image shape" in str(e):
+            if debug:
+                print(f"  Note: Mixed image formats detected, falling back to per-channel search")
+                print(f"  ({str(e).split('(')[0].strip()})")
+            use_combined = False
+        else:
+            raise
     
     if use_combined:
         print("Detected combined-channel images; extracting red and blue channels.")
@@ -306,19 +322,45 @@ def main(
     if debug:
         print(f"\nUsing blob size (crypt size) of {BLOB_SIZE_UM} microns.")
     
+    # Pre-scatter data to workers if using cluster (avoids large graph warning)
+    if use_cluster and client:
+        print("\n[2/6] Scattering data to cluster workers...")
+        if debug:
+            print("  (This avoids sending large graphs over the network)")
+        
+        # Scatter all images to workers at once
+        scattered_rfp = client.scatter(rfp_images, broadcast=False)
+        scattered_dapi = client.scatter(dapi_images, broadcast=False)
+        
+        if debug:
+            print(f"  Scattered {len(scattered_rfp)} image pairs to workers")
+    else:
+        scattered_rfp = rfp_images
+        scattered_dapi = dapi_images
+    
     # Build the lazy computation graph for all subjects
-    print("\n[2/6] Building dask computation graph...")
+    print("\n[3/6] Building dask computation graph...")
     
     # Dictionary to store delayed computations for each subject
     subject_computations: Dict[str, Dict] = {}
     
-    for subject_name, rfp_np, dapi_np, scale in zip(subject_names, rfp_images, dapi_images, microns_per_px_values):
+    for idx, (subject_name, scale) in enumerate(zip(subject_names, microns_per_px_values)):
         if debug:
             print(f"  Adding subject: {subject_name}")
         
-        # Convert numpy arrays to dask arrays (lazy reference, no copy)
-        rfp_img = array_to_dask_lazy(rfp_np)
-        dapi_img = array_to_dask_lazy(dapi_np)
+        # Get the images (either scattered futures or numpy arrays)
+        if use_cluster and client:
+            rfp_np = scattered_rfp[idx]
+            dapi_np = scattered_dapi[idx]
+            # Convert futures to dask arrays
+            rfp_img = da.from_delayed(rfp_np, shape=rfp_images[idx].shape, dtype=rfp_images[idx].dtype)
+            dapi_img = da.from_delayed(dapi_np, shape=dapi_images[idx].shape, dtype=dapi_images[idx].dtype)
+        else:
+            rfp_np = rfp_images[idx]
+            dapi_np = dapi_images[idx]
+            # Convert numpy arrays to dask arrays (lazy reference, no copy)
+            rfp_img = array_to_dask_lazy(rfp_np)
+            dapi_img = array_to_dask_lazy(dapi_np)
         
         # Create the computation graph (all lazy!)
         # Step 1: Segment crypts
@@ -372,8 +414,8 @@ def main(
             "normalized_rfp": normalized_rfp,
             "image_summary": image_summary,
             "per_crypt_summary": per_crypt_summary,
-            "rfp_original": rfp_np,  # Keep original for overlay
-            "dapi_original": dapi_np,
+            "rfp_original": rfp_images[idx],  # Keep original for overlay
+            "dapi_original": dapi_images[idx],
         }
     
     if debug:
@@ -381,9 +423,10 @@ def main(
         print("  (No computation has occurred yet - everything is lazy!)")
     
     # Now compute everything at once!
-    print("\n[3/6] Computing all results (this may take a while)...")
+    step_num = "4/7" if use_cluster else "3/6"
+    print(f"\n[{step_num}] Computing all results (this may take a while)...")
     if use_cluster and client:
-        print(f"  Using Dask distributed cluster with {len(client.cluster.workers)} workers")
+        print(f"  Using Dask distributed cluster with {len(client.scheduler_info()['workers'])} workers")
     else:
         print("  Using threaded scheduler with 4 workers")
     
@@ -419,7 +462,8 @@ def main(
         print("\n✓ All computations complete!")
     
     # Convert results to DataFrames
-    print("\n[4/6] Converting results to DataFrames...")
+    step_num = "5/7" if use_cluster else "4/6"
+    print(f"\n[{step_num}] Converting results to DataFrames...")
     
     # Image-level summary
     image_summary_df = convert_summary_to_dataframe(
@@ -436,7 +480,8 @@ def main(
         print(f"  Per-crypt summary: {len(per_crypt_df)} rows")
     
     # Save CSV results
-    print("\n[5/6] Saving results...")
+    step_num = "6/7" if use_cluster else "5/6"
+    print(f"\n[{step_num}] Saving results...")
     
     csv_output = results_dir / "karen_detect_crypts_dask.csv"
     image_summary_df.to_csv(csv_output, index=False)
@@ -450,7 +495,8 @@ def main(
     
     # Save overlay images if requested
     if save_images:
-        print("\n[6/6] Generating visualizations...")
+        step_num = "7/7" if use_cluster else "6/6"
+        print(f"\n[{step_num}] Generating visualizations...")
         try:
             save_overlay_images(
                 subject_names,
@@ -519,7 +565,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n-workers",
         type=int,
-        default=20,
+        default=30,
         help="Number of workers for local cluster (default: 4)",
     )
     parser.add_argument(
@@ -535,7 +581,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max-subjects",
         type=int,
-        default=10,
+        default=100,
         help="Maximum number of subjects to process (default: 10)",
     )
     
