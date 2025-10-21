@@ -131,7 +131,10 @@ def find_subject_image_sets(
         if max_subjects is not None and subjects_found >= max_subjects:
             break
 
-    _ensure_consistent_shapes(images_by_source, source_names, subject_names)
+    # Filter out subjects with inconsistent shapes instead of failing
+    subject_names, images_by_source = _filter_consistent_shapes(
+        images_by_source, source_names, subject_names
+    )
     return subject_names, images_by_source, source_names
 
 
@@ -350,23 +353,57 @@ def _squeeze_simple(arr: np.ndarray) -> np.ndarray:
     return squeezed
 
 
-def _ensure_consistent_shapes(
+def _filter_consistent_shapes(
     images_by_source: List[List[np.ndarray]],
     source_names: List[str],
     subject_names: List[str],
-) -> None:
+) -> Tuple[List[str], List[List[np.ndarray]]]:
+    """
+    Filter out subjects with inconsistent shapes within each source.
+    Returns only subjects that have consistent shapes across all images in their source.
+    """
+    if not images_by_source or not subject_names:
+        return subject_names, images_by_source
+    
+    # Track which subjects to keep
+    subjects_to_keep = set(range(len(subject_names)))
+    
     for src_idx, images in enumerate(images_by_source):
         if not images:
             continue
-        reference_shape = images[0].shape
+        
+        # Find the most common shape for this source
+        shape_counts: Dict[tuple, List[int]] = {}
         for subj_idx, img in enumerate(images):
-            if img.shape != reference_shape:
+            shape = img.shape
+            if shape not in shape_counts:
+                shape_counts[shape] = []
+            shape_counts[shape].append(subj_idx)
+        
+        # Use the most common shape as reference
+        if not shape_counts:
+            continue
+        
+        most_common_shape = max(shape_counts.keys(), key=lambda s: len(shape_counts[s]))
+        reference_indices = set(shape_counts[most_common_shape])
+        
+        # Remove subjects that don't match the most common shape for this source
+        mismatched = set(range(len(images))) - reference_indices
+        if mismatched:
+            for subj_idx in mismatched:
                 subject = subject_names[subj_idx] if subj_idx < len(subject_names) else subj_idx
-                raise ValueError(
-                    "Inconsistent image shape for source "
-                    f"'{source_names[src_idx]}': expected {reference_shape}, got {img.shape} "
-                    f"(subject '{subject}')"
-                )
+                print(f"  Note: Excluding '{subject}' - inconsistent shape for source '{source_names[src_idx]}': "
+                      f"expected {most_common_shape}, got {images[subj_idx].shape}")
+            subjects_to_keep -= mismatched
+    
+    # Filter all lists to keep only consistent subjects
+    if len(subjects_to_keep) < len(subject_names):
+        kept_indices = sorted(subjects_to_keep)
+        filtered_names = [subject_names[i] for i in kept_indices]
+        filtered_images = [[images[i] for i in kept_indices] for images in images_by_source]
+        return filtered_names, filtered_images
+    
+    return subject_names, images_by_source
 
 
 def _pick_best_subdir_label(records: Sequence[SourceImage]) -> str:

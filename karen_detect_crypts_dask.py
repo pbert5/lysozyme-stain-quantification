@@ -53,7 +53,8 @@ N_WORKERS = None                # Number of workers (None = auto-detect: CPU_COU
 THREADS_PER_WORKER = None       # Threads per worker (None = auto: CPU_COUNT/N_WORKERS)
 SAVE_IMAGES = True              # Generate overlay visualizations and plots
 DEBUG = True                    # Show detailed progress information
-MAX_SUBJECTS = None             # Limit number of subjects (None = process all)
+MAX_SUBJECTS = None           # Limit number of subjects (None = process all)
+
 
 # Advanced settings
 BLOB_SIZE_UM = 50.0            # Expected crypt size in microns
@@ -307,56 +308,54 @@ def main(
     combined_dapi_images = []
     failed_subjects = []
     
-    try:
-        all_subject_names, combined_sources, _ = find_subject_image_sets(
-            img_dir=IMAGE_BASE_DIR,
-            sources=[("combined", "")],
-            max_subjects=max_subjects,
-        )
-        
-        combined_images = combined_sources[0] if combined_sources else []
-        
-        def _has_multi_channel(arr: np.ndarray) -> bool:
-            array = np.asarray(arr)
-            return array.ndim >= 3 and (array.shape[-1] >= 3 or array.shape[0] >= 3)
-        
-        def _split_combined_image(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-            array = np.asarray(arr)
-            array = np.squeeze(array)
-            if array.ndim == 3 and array.shape[-1] >= 3:
-                channels_last = array
-            elif array.ndim == 3 and array.shape[0] >= 3:
-                channels_last = np.moveaxis(array, 0, -1)
+    # Helper functions for combined image processing
+    def _has_multi_channel(arr: np.ndarray) -> bool:
+        array = np.asarray(arr)
+        return array.ndim >= 3 and (array.shape[-1] >= 3 or array.shape[0] >= 3)
+    
+    def _split_combined_image(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        array = np.asarray(arr)
+        array = np.squeeze(array)
+        if array.ndim == 3 and array.shape[-1] >= 3:
+            channels_last = array
+        elif array.ndim == 3 and array.shape[0] >= 3:
+            channels_last = np.moveaxis(array, 0, -1)
+        else:
+            raise ValueError(f"Combined image must provide a 3-channel RGB payload; got shape {array.shape}")
+        if channels_last.shape[-1] < 3:
+            raise ValueError(f"Combined image requires at least 3 channels; got {channels_last.shape[-1]}")
+        red = channels_last[..., 0]
+        blue = channels_last[..., 2]
+        return red, blue
+    
+    # Search for combined images (finder now filters out shape mismatches automatically)
+    all_subject_names, combined_sources, _ = find_subject_image_sets(
+        img_dir=IMAGE_BASE_DIR,
+        sources=[("combined", "")],
+        max_subjects=max_subjects,
+    )
+    
+    combined_images = combined_sources[0] if combined_sources else []
+    
+    # Process each subject individually - failures don't compromise others
+    for subject_name, img in zip(all_subject_names, combined_images):
+        try:
+            if _has_multi_channel(img):
+                red, blue = _split_combined_image(img)
+                combined_subject_names.append(subject_name)
+                combined_rfp_images.append(red)
+                combined_dapi_images.append(blue)
             else:
-                raise ValueError(f"Combined image must provide a 3-channel RGB payload; got shape {array.shape}")
-            if channels_last.shape[-1] < 3:
-                raise ValueError(f"Combined image requires at least 3 channels; got {channels_last.shape[-1]}")
-            red = channels_last[..., 0]
-            blue = channels_last[..., 2]
-            return red, blue
-        
-        # Process each subject individually
-        for subject_name, img in zip(all_subject_names, combined_images):
-            try:
-                if _has_multi_channel(img):
-                    red, blue = _split_combined_image(img)
-                    combined_subject_names.append(subject_name)
-                    combined_rfp_images.append(red)
-                    combined_dapi_images.append(blue)
-                else:
-                    failed_subjects.append(subject_name)
-            except (ValueError, Exception) as e:
-                if debug:
-                    print(f"  Note: Could not use combined image for '{subject_name}': {str(e)[:80]}")
+                # Not multi-channel, mark for separate channel search
                 failed_subjects.append(subject_name)
-        
-        if combined_subject_names:
-            print(f"Detected {len(combined_subject_names)} combined-channel images; extracting red and blue channels.")
-        
-    except Exception as e:
-        if debug:
-            print(f"  Note: Combined image search failed: {str(e)[:100]}")
-        failed_subjects = []  # Will search all with per-channel
+        except (ValueError, Exception) as e:
+            # Individual failure - mark this subject for separate channel search
+            if debug:
+                print(f"  Note: Could not use combined image for '{subject_name}': {str(e)[:80]}")
+            failed_subjects.append(subject_name)
+    
+    if combined_subject_names:
+        print(f"✓ Loaded {len(combined_subject_names)} combined-channel images (red+blue extraction).")
     
     # For subjects that failed combined search, try per-channel search
     separate_subject_names = []
@@ -365,9 +364,9 @@ def main(
     
     if failed_subjects or not combined_subject_names:
         if failed_subjects:
-            print(f"Searching for separate channels for {len(failed_subjects)} subjects...")
+            print(f"→ Searching for separate RFP/DAPI channels for {len(failed_subjects)} subjects that failed combined loading...")
         else:
-            print("Combined-channel images not found; using per-channel search.")
+            print("→ No combined-channel images found; searching for separate RFP/DAPI channels...")
         
         # Search for separate RFP and DAPI channels
         sep_names, images_by_source, source_names = find_subject_image_sets(
@@ -390,7 +389,7 @@ def main(
             separate_dapi_images = images_by_source[1]
         
         if separate_subject_names:
-            print(f"Found {len(separate_subject_names)} subjects with separate channels.")
+            print(f"✓ Loaded {len(separate_subject_names)} subjects with separate channels.")
     
     # Merge both lists
     subject_names = combined_subject_names + separate_subject_names
@@ -403,7 +402,9 @@ def main(
     if not subject_names:
         raise ValueError("No valid images found!")
     
-    print(f"\nTotal: {len(subject_names)} subjects ({len(combined_subject_names)} combined, {len(separate_subject_names)} separate)")
+    print(f"\n✓ Image loading complete: {len(subject_names)} total subjects")
+    print(f"  → {len(combined_subject_names)} from combined RGB images")
+    print(f"  → {len(separate_subject_names)} from separate channel images")
     
     source_names = ["rfp", "dapi"]
     
