@@ -57,8 +57,107 @@ BLOB_SIZE_UM = 50.0            # Expected crypt size in microns
 MEMORY_PER_WORKER = "4GB"      # Memory limit per worker
 # pathing
 IMAGE_BASE_DIR = Path("lysozyme images")
-BLOB_SIZE_UM = 50.0
+BLOB_SIZE_UM = 50.0 * 0.4476
 # =============================================================================
+
+
+
+def find_tif_images_by_keys(
+    root_dir: Path,
+    keys: List[str],
+    max_subjects: Optional[int] = None,
+) -> Tuple[List[Path], List[Tuple[Path, ...]]]:
+    """
+    Recursively search for .tif images, pair them by matching keys and base name.
+    
+    Images are paired by extracting their base name (removing the key suffix) and 
+    grouping images with the same base name. Each image is assigned to the first 
+    matching key only (no duplicates).
+    
+    Parameters
+    ----------
+    root_dir : Path
+        Directory to search recursively
+    keys : List[str]
+        List of string keys to match and pair (e.g., ["_DAPI", "_RFP"])
+        Order matters - first match wins
+    max_subjects : Optional[int]
+        Maximum number of paired subjects to return
+    
+    Returns
+    -------
+    Tuple[List[Path], List[Tuple[Path, ...]]]
+        (unmatched_paths, paired_paths) where:
+        - unmatched_paths: List of .tif images that don't match any key
+        - paired_paths: List of tuples, each containing paths in key order
+          that share the same base name
+        
+    Example
+    -------
+    >>> unmatched, pairs = find_tif_images_by_keys(
+    ...     Path("./images"),
+    ...     keys=["_RFP", "_DAPI"]
+    ... )
+    >>> # pairs might look like:
+    >>> # [
+    >>> #   (Path("subject1_RFP.tif"), Path("subject1_DAPI.tif")),
+    >>> #   (Path("subject2_RFP.tif"), Path("subject2_DAPI.tif")),
+    >>> # ]
+    >>> # unmatched contains any .tif that doesn't have _RFP or _DAPI
+    """
+    # Find all .tif images recursively
+    tif_paths = list(root_dir.rglob("*.tif")) + list(root_dir.rglob("*.TIF"))
+    
+    if not tif_paths:
+        return [], []
+    
+    # Organize images by key and base name
+    matched_by_key: Dict[str, Dict[str, Path]] = {key: {} for key in keys}
+    unmatched: List[Path] = []
+    
+    for path in tif_paths:
+        matched = False
+        
+        # Try to match with each key in order
+        for key in keys:
+            if key.lower() in path.name.lower():
+                # Extract base name by removing the key
+                base_name = _extract_base_name(path.name, key)
+                if base_name:
+                    matched_by_key[key][base_name] = path
+                    matched = True
+                    break
+        
+        if not matched:
+            unmatched.append(path)
+    
+    # Find common base names across all keys
+    if not keys:
+        return unmatched, []
+    
+    # Get base names that exist for all keys
+    common_bases = set(matched_by_key[keys[0]].keys())
+    for key in keys[1:]:
+        common_bases &= set(matched_by_key[key].keys())
+    
+    # Build paired tuples
+    paired: List[Tuple[Path, ...]] = []
+    for base_name in sorted(common_bases):
+        pair = tuple(matched_by_key[key][base_name] for key in keys)
+        paired.append(pair)
+        
+        # Apply max_subjects limit
+        if max_subjects is not None and len(paired) >= max_subjects:
+            break
+    
+    # Add unpaired images (matched a key but no complete set) to unmatched
+    paired_bases = set(base_name for base_name in common_bases)
+    for key in keys:
+        for base_name, path in matched_by_key[key].items():
+            if base_name not in paired_bases:
+                unmatched.append(path)
+    
+    return unmatched, paired
 
 
 def get_scale_um_per_px(image_path: Path, default_scale_value: float, scale_keys: list[str], scale_values: list[float]) -> float:
@@ -77,6 +176,7 @@ def main(
     save_images: bool = SAVE_IMAGES,
     debug: bool = DEBUG,
     max_subjects: Optional[int] = MAX_SUBJECTS,
+    blob_size_um: float = BLOB_SIZE_UM,
 ) -> None:
     print("=" * 80)
     print("DASK-BASED LYSOZYME CRYPT DETECTION PIPELINE")
@@ -205,7 +305,8 @@ def main(
                 blob_size_um=blob_size_um,
                 debug=debug,
                 max_regions=5)
-        ))
+        )).compute()
+
 
 
 

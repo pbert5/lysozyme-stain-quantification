@@ -182,5 +182,45 @@ def cli_main(argv: Optional[list[str]] = None) -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover
+
+@contextmanager
+def start_local_cluster(
+    *,
+    n_workers: Optional[int] = None,
+    threads_per_worker: Optional[int] = None,
+    memory_limit: Optional[str] = None,
+    scheduler_port: Optional[int] = None,
+    dashboard_address: str = ":8787",
+    processes: Optional[bool] = None,
+    silence_logs: bool | str | int = "error",
+    set_as_default: bool = True,
+) -> Iterator[Tuple["LocalCluster", "Client"]]:
+    """
+    Context manager that spins up a LocalCluster/Client pair and tears it down on exit.
+
+    Examples
+    --------
+    >>> from image_ops_framework.helpers.cluster import start_local_cluster
+    >>> with start_local_cluster(n_workers=2) as (cluster, client):
+    ...     client.wait_for_workers(2)
+    ...     print(cluster.dashboard_link)
+    """
+    Client, LocalCluster = _lazy_import_dask()
+
+    cluster = LocalCluster(
+        n_workers=n_workers,
+        threads_per_worker=threads_per_worker,
+        memory_limit=memory_limit,
+        scheduler_port=scheduler_port,
+        dashboard_address=dashboard_address,
+        silence_logs=silence_logs,
+        processes=_resolve_processes_flag(processes),
+    )
+    client = Client(cluster, set_as_default=set_as_default)
+    try:
+        yield cluster, client
+    finally:
+        client.close()
+        cluster.close()
     mp.freeze_support()
     sys.exit(cli_main())

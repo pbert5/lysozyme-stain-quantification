@@ -240,7 +240,7 @@ def limited_expansion(
 
 def identify_crypt_seeds_new(
     crypt_img: da.Array,
-    tissue_image: da.Array,
+    tissue_img: da.Array,
     *,
     params: Optional[MorphologyParams] = None,
 ) -> da.Array:
@@ -249,13 +249,13 @@ def identify_crypt_seeds_new(
 
     crypt_img = preprocess_for_caps(crypt_img, params.salt_and_pepper_noise_size)
     
-    tissue_image: da.Array = preprocess_for_caps(
+    tissue_img_processed: da.Array = preprocess_for_caps(
         da.from_delayed(
-            delayed(equalize_adapthist)(tissue_image),
-            shape=tissue_image.shape, dtype=tissue_image.dtype), params.salt_and_pepper_noise_size)
+            delayed(equalize_adapthist)(tissue_img),
+            shape=tissue_img.shape, dtype=tissue_img.dtype), params.salt_and_pepper_noise_size)
 
     max_expansion = max(1, int(round(params.crypt_radius_px)))
-    tissue_clean, tissue_troughs = caps_clean_troughs(tissue_image, 1, max_expansion)
+    tissue_clean, tissue_troughs = caps_clean_troughs(tissue_img_processed, 1, max_expansion)
     crypt_clean, crypt_troughs = caps_clean_troughs(crypt_img, 2, max_expansion)
 
     thinned_crypts: da.Array = da.maximum(crypt_clean - tissue_clean, 0)
@@ -373,56 +373,173 @@ def _seed_health_metrics(seed_labels: da.Array ) -> Dict[str, Any]:
 
 
 def _score_label_set(
-    labels: Optional[np.ndarray],
-    raw_img: np.ndarray,
+    labels: Optional[da.Array],
+    raw_img: da.Array,
     *,
     debug: bool = False,
-) -> Tuple[float, Dict[str, Any]]:
+) -> Tuple[da.Array, da.Array]:
     """
     Evaluate a set of labels using the scoring selector.
 
-    Returns a tuple of (evaluation_score, summary_dict) where higher scores are better.
+    Returns a tuple of (evaluation_score, summary_dict) as delayed objects where higher scores are better.
+    Both outputs are dask delayed objects that need to be computed.
     """
-    summary: Dict[str, Any] = {}
-    if labels is None or labels.size == 0:
-        summary.update(region_count=0, mean_quality_score=None, evaluation_score=None, reason="empty")
-        return float("-inf"), summary
+    
+    @delayed
+    def _compute_score_delayed(labels_arr: np.ndarray, raw_arr: np.ndarray) -> Tuple[float, Dict[str, Any]]:
+        """Compute score from numpy arrays."""
+        from skimage.measure import regionprops
+        import pandas as pd
+        from sklearn.linear_model import LinearRegression
+        
+        summary: Dict[str, Any] = {}
+        
+        if labels_arr is None or labels_arr.size == 0:
+            summary.update(region_count=0, mean_quality_score=None, evaluation_score=None, reason="empty")
+            return float("-inf"), summary
 
-    region_count = labels.max()
-    summary["region_count"] = region_count
+        region_count = int(labels_arr.max())
+        summary["region_count"] = region_count
 
-    if region_count == 0:
-        summary.update(mean_quality_score=None, evaluation_score=None, reason="no_regions")
-        return float("-inf"), summary
+        if region_count == 0:
+            summary.update(mean_quality_score=None, evaluation_score=None, reason="no_regions")
+            return float("-inf"), summary
 
-    try:
-        _, scoring_debug = scoring_selector(
-            labels,
-            raw_img,
-            debug=debug,
-            max_regions=False,
-            return_details=True,
-        )
-    except Exception as exc:  # pragma: no cover - defensive
-        summary.update(mean_quality_score=None, evaluation_score=None, reason=f"scoring_failed:{exc!r}")
-        return float("-inf"), summary
+        try:
+            # Compute region properties directly instead of calling scoring_selector
+            regions = regionprops(labels_arr, intensity_image=raw_arr)
+            if len(regions) == 0:
+                summary.update(mean_quality_score=None, evaluation_score=None, reason="no_regions")
+                return float("-inf"), summary
+            
+            # Build properties dataframe
+            properties = []
+            for region in regions:
+                if raw_arr is not None:
+                    red_intensity_per_area = region.mean_intensity
+                else:
+                    red_intensity_per_area = 0.0
+                
+                circularity = (
+                    4 * np.pi * region.area / (region.perimeter ** 2)
+                    if region.perimeter > 0
+                    else 0.0
+                )
+                
+                properties.append({
+                    "label_id": int(region.label),
+                    "area": float(region.area),
+                    "physical_com": tuple(region.centroid),
+                    "red_intensity_per_area": float(red_intensity_per_area),
+                    "circularity": float(circularity),
+                    "perimeter": float(region.perimeter),
+                })
+            
+            properties_df = pd.DataFrame(properties)
+            
+            # Calculate line fit deviation
+            if len(properties_df) >= 2:
+                centers = np.array(list(properties_df["physical_com"]))
+                X = centers[:, 1].reshape(-1, 1)
+                y = centers[:, 0]
+                reg = LinearRegression().fit(X, y)
+                m = float(reg.coef_[0])
+                b = float(reg.intercept_)
+                x_coords = centers[:, 1]
+                y_coords = centers[:, 0]
+                distances = np.abs(m * x_coords - y_coords + b) / np.sqrt(m**2 + 1)
+                areas = properties_df["area"].to_numpy(dtype=float)
+                radius_approx = np.sqrt(areas / 2.0)
+                radius_approx[radius_approx == 0] = 1.0
+                normalized_distances = distances / radius_approx
+                properties_df["normalized_line_distance"] = normalized_distances
+            else:
+                properties_df["normalized_line_distance"] = 0.0
+            
+            # Calculate scores
+            max_circularity = float(properties_df["circularity"].max())
+            properties_df["circularity_score"] = (
+                1 - (properties_df["circularity"] / max_circularity)
+                if max_circularity > 0
+                else 1.0
+            )
+            
+            max_area = float(properties_df["area"].max())
+            properties_df["area_score"] = (
+                1 - (properties_df["area"] / max_area) if max_area > 0 else 0.0
+            )
+            
+            max_line_dist = float(properties_df["normalized_line_distance"].max())
+            properties_df["line_fit_score"] = (
+                properties_df["normalized_line_distance"] / max_line_dist
+                if max_line_dist > 0
+                else 0.0
+            )
+            
+            max_red_intensity = float(properties_df["red_intensity_per_area"].max())
+            properties_df["red_intensity_score"] = (
+                1 - (properties_df["red_intensity_per_area"] / max_red_intensity)
+                if max_red_intensity > 0
+                else 1.0
+            )
+            
+            # Default weights
+            weights = {
+                "circularity": 0.35,
+                "area": 0.25,
+                "line_fit": 0.15,
+                "red_intensity": 0.15,
+            }
+            
+            properties_df["quality_score"] = (
+                weights["circularity"] * properties_df["circularity_score"]
+                + weights["area"] * properties_df["area_score"]
+                + weights["line_fit"] * properties_df["line_fit_score"]
+                + weights["red_intensity"] * properties_df["red_intensity_score"]
+            )
+            
+            mean_quality = float(properties_df["quality_score"].mean())
+            evaluation_score = -mean_quality  # Lower quality_score is better; invert
+            summary.update(
+                mean_quality_score=mean_quality,
+                evaluation_score=evaluation_score,
+            )
+            
+            if debug:
+                summary["quality_scores_sample"] = properties_df["quality_score"].tolist()[:10]
+                
+        except Exception as exc:  # pragma: no cover - defensive
+            summary.update(mean_quality_score=None, evaluation_score=None, reason=f"scoring_failed:{exc!r}")
+            return float("-inf"), summary
 
-    properties_df = scoring_debug.get("properties_df")
-    if properties_df is None or len(properties_df) == 0:
-        summary.update(mean_quality_score=None, evaluation_score=None, reason="no_properties")
-        return float("-inf"), summary
-
-    mean_quality = float(properties_df["quality_score"].mean())
-    evaluation_score = -mean_quality  # Lower quality_score is better; invert so higher is better.
-    summary.update(
-        mean_quality_score=mean_quality,
-        evaluation_score=evaluation_score,
-    )
-
-    if debug:
-        summary["quality_scores_sample"] = properties_df["quality_score"].tolist()[:10]
-
-    return evaluation_score, summary
+        return evaluation_score, summary
+    
+    if labels is None:
+        # Return delayed values for None case
+        score_delayed = delayed(lambda: (float("-inf"), {"reason": "labels_none"}))()
+        score_da = da.from_delayed(score_delayed, shape=(), dtype=object)
+        return score_da, score_da
+    
+    # Create delayed computation
+    result_delayed = _compute_score_delayed(labels, raw_img)
+    
+    # Extract score and summary as separate delayed values
+    @delayed
+    def extract_score(result):
+        return result[0]
+    
+    @delayed  
+    def extract_summary(result):
+        return result[1]
+    
+    score_delayed = extract_score(result_delayed)
+    summary_delayed = extract_summary(result_delayed)
+    
+    # Convert to dask arrays (scalars)
+    score_da = da.from_delayed(score_delayed, shape=(), dtype=np.float64)
+    summary_da = da.from_delayed(summary_delayed, shape=(), dtype=object)
+    
+    return score_da, summary_da
 
 
 def identify_potential_crypts_hybrid(
@@ -461,7 +578,6 @@ def identify_potential_crypts_hybrid(
     dbg["seed_metrics_meet_threshold"] = bool(metrics_meet_threshold)
 
     candidate_labels: Dict[str, da.Array] = {}
-    candidate_summaries: Dict[str, Dict[str, Any]] = {}
 
     if use_new_seeds and new_seeds is not None:
         candidate_labels["new_seeded"] = identify_potential_crypts_old_like(
@@ -480,43 +596,219 @@ def identify_potential_crypts_hybrid(
         params_in=params,
     )
 
-    selected_key = "legacy_seeded"
-    best_score = float("-inf")
+    # Wrap the selection logic in a delayed function
+    @delayed
+    def _select_best_candidate(
+        crypt_arr: np.ndarray,
+        candidate_label_dict: Dict[str, np.ndarray],
+        metrics_ok: bool,
+        use_auto_fallback: bool,
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """Select the best candidate based on scoring."""
+        from skimage.measure import regionprops
+        import pandas as pd
+        from sklearn.linear_model import LinearRegression
+        
+        selected_key = "legacy_seeded"
+        best_score = float("-inf")
+        candidate_summaries: Dict[str, Dict[str, Any]] = {}
 
-    if auto_fallback: # may need to delay this block
-        for key, label_img in candidate_labels.items():
-            if key == "new_seeded" and not metrics_meet_threshold:
-                summary = dict(
-                    region_count=int(label_img.max()),
-                    mean_quality_score=None,
-                    evaluation_score=float("-inf"),
-                    reason="seed_metrics_below_threshold",
-                )
+        if use_auto_fallback:
+            for key, label_img_np in candidate_label_dict.items():
+                if key == "new_seeded" and not metrics_ok:
+                    summary = dict(
+                        region_count=int(label_img_np.max()),
+                        mean_quality_score=None,
+                        evaluation_score=float("-inf"),
+                        reason="seed_metrics_below_threshold",
+                    )
+                    candidate_summaries[key] = summary
+                    continue
+                
+                # Compute score for this candidate - inline scoring logic
+                try:
+                    regions = regionprops(label_img_np, intensity_image=crypt_arr)
+                    if len(regions) == 0:
+                        summary = dict(
+                            mean_quality_score=None,
+                            evaluation_score=float("-inf"),
+                            reason="no_regions",
+                        )
+                    else:
+                        # Build properties
+                        properties = []
+                        for region in regions:
+                            if crypt_arr is not None:
+                                red_intensity_per_area = region.mean_intensity
+                            else:
+                                red_intensity_per_area = 0.0
+                            
+                            circularity = (
+                                4 * np.pi * region.area / (region.perimeter ** 2)
+                                if region.perimeter > 0
+                                else 0.0
+                            )
+                            
+                            properties.append({
+                                "label_id": int(region.label),
+                                "area": float(region.area),
+                                "physical_com": tuple(region.centroid),
+                                "red_intensity_per_area": float(red_intensity_per_area),
+                                "circularity": float(circularity),
+                                "perimeter": float(region.perimeter),
+                            })
+                        
+                        properties_df = pd.DataFrame(properties)
+                        
+                        # Calculate line fit
+                        if len(properties_df) >= 2:
+                            centers = np.array(list(properties_df["physical_com"]))
+                            X = centers[:, 1].reshape(-1, 1)
+                            y = centers[:, 0]
+                            reg = LinearRegression().fit(X, y)
+                            m = float(reg.coef_[0])
+                            b = float(reg.intercept_)
+                            x_coords = centers[:, 1]
+                            y_coords = centers[:, 0]
+                            distances = np.abs(m * x_coords - y_coords + b) / np.sqrt(m**2 + 1)
+                            areas = properties_df["area"].to_numpy(dtype=float)
+                            radius_approx = np.sqrt(areas / 2.0)
+                            radius_approx[radius_approx == 0] = 1.0
+                            normalized_distances = distances / radius_approx
+                            properties_df["normalized_line_distance"] = normalized_distances
+                        else:
+                            properties_df["normalized_line_distance"] = 0.0
+                        
+                        # Calculate scores
+                        max_circularity = float(properties_df["circularity"].max())
+                        properties_df["circularity_score"] = (
+                            1 - (properties_df["circularity"] / max_circularity)
+                            if max_circularity > 0
+                            else 1.0
+                        )
+                        
+                        max_area = float(properties_df["area"].max())
+                        properties_df["area_score"] = (
+                            1 - (properties_df["area"] / max_area) if max_area > 0 else 0.0
+                        )
+                        
+                        max_line_dist = float(properties_df["normalized_line_distance"].max())
+                        properties_df["line_fit_score"] = (
+                            properties_df["normalized_line_distance"] / max_line_dist
+                            if max_line_dist > 0
+                            else 0.0
+                        )
+                        
+                        max_red_intensity = float(properties_df["red_intensity_per_area"].max())
+                        properties_df["red_intensity_score"] = (
+                            1 - (properties_df["red_intensity_per_area"] / max_red_intensity)
+                            if max_red_intensity > 0
+                            else 1.0
+                        )
+                        
+                        # Default weights
+                        weights_dict = {
+                            "circularity": 0.35,
+                            "area": 0.25,
+                            "line_fit": 0.15,
+                            "red_intensity": 0.15,
+                        }
+                        
+                        properties_df["quality_score"] = (
+                            weights_dict["circularity"] * properties_df["circularity_score"]
+                            + weights_dict["area"] * properties_df["area_score"]
+                            + weights_dict["line_fit"] * properties_df["line_fit_score"]
+                            + weights_dict["red_intensity"] * properties_df["red_intensity_score"]
+                        )
+                        
+                        mean_quality = float(properties_df["quality_score"].mean())
+                        score = -mean_quality  # Lower quality_score is better; invert
+                        summary = dict(
+                            mean_quality_score=mean_quality,
+                            evaluation_score=score,
+                        )
+                        
+                        if score > best_score:
+                            best_score = score
+                            selected_key = key
+                            
+                except Exception as exc:
+                    summary = dict(
+                        mean_quality_score=None,
+                        evaluation_score=float("-inf"),
+                        reason=f"scoring_failed:{exc!r}",
+                    )
+                
                 candidate_summaries[key] = summary
-                continue
-            score, summary = _score_label_set(label_img, crypt_img, debug=debug)
-            candidate_summaries[key] = summary
-            if score > best_score:
-                best_score = score
-                selected_key = key
+        else:
+            if "new_seeded" in candidate_label_dict and use_new_seeds and metrics_ok:
+                selected_key = "new_seeded"
+            candidate_summaries = {selected_key: dict(evaluation_score=None, reason="auto_fallback_disabled")}
+            best_score = float("nan")
+
+        selected_labels = candidate_label_dict[selected_key]
+        
+        debug_info = {
+            "selected_candidate": selected_key,
+            "candidate_summaries": candidate_summaries,
+            "using_new_seeds": selected_key == "new_seeded",
+            "best_score": best_score,
+        }
+        
+        return selected_labels, debug_info
+
+    # Prepare inputs for the delayed selection
+    if auto_fallback:
+        # Call the delayed function with all candidates
+        result_delayed = _select_best_candidate(
+            crypt_img,
+            candidate_labels,
+            metrics_meet_threshold,
+            auto_fallback,
+        )
+        
+        # Extract labels and debug info
+        @delayed
+        def get_labels(result):
+            return result[0]
+        
+        @delayed
+        def get_debug(result):
+            return result[1]
+        
+        labels_delayed = get_labels(result_delayed)
+        debug_delayed = get_debug(result_delayed)
+        
+        # Convert to dask array
+        shape = crypt_img.shape
+        labels = da.from_delayed(labels_delayed, shape=shape, dtype=np.int32)
+        
+        # Merge static and delayed debug info
+        dbg_final = {**dbg}
+        # Note: debug_delayed is a delayed object, needs compute to access
+        dbg_final["_delayed_debug"] = debug_delayed
+        
     else:
+        # Simple case: just pick one without scoring
         if "new_seeded" in candidate_labels and use_new_seeds and metrics_meet_threshold:
             selected_key = "new_seeded"
-        candidate_summaries = {selected_key: dict(evaluation_score=None, reason="auto_fallback_disabled")}
-        best_score = float("nan")
-
-    labels = candidate_labels[selected_key]
-
-    dbg["selected_candidate"] = selected_key
-    dbg["candidate_summaries"] = candidate_summaries
-    dbg["using_new_seeds"] = selected_key == "new_seeded"
+        else:
+            selected_key = "legacy_seeded"
+        
+        labels = candidate_labels[selected_key]
+        dbg_final = {
+            **dbg,
+            "selected_candidate": selected_key,
+            "candidate_summaries": {selected_key: dict(evaluation_score=None, reason="auto_fallback_disabled")},
+            "using_new_seeds": selected_key == "new_seeded",
+            "best_score": float("nan"),
+        }
 
     if debug:
-        dbg["labels_max"] = int(labels.max())
-        dbg["labels_coverage"] = float(da.count_nonzero(labels)) / labels.size
-        dbg["best_score"] = best_score
+        dbg_final["labels_max"] = labels.max()
+        dbg_final["labels_coverage"] = da.count_nonzero(labels) / labels.size
 
-    return labels, dbg
+    return labels, dbg_final
 
 
 # ---------------------------- driver ---------------------------- #

@@ -432,20 +432,20 @@ def main(
         print(f"\nUsing blob size (crypt size) of {BLOB_SIZE_UM} microns.")
     
     # Pre-scatter data to workers if using cluster (avoids large graph warning)
-    if use_cluster and client:
-        print("\n[2/6] Scattering data to cluster workers...")
-        if debug:
-            print("  (This avoids sending large graphs over the network)")
+    # if use_cluster and client:
+    #     print("\n[2/6] Scattering data to cluster workers...")
+    #     if debug:
+    #         print("  (This avoids sending large graphs over the network)")
         
-        # Scatter all images to workers at once
-        scattered_rfp = client.scatter(rfp_images, broadcast=False)
-        scattered_dapi = client.scatter(dapi_images, broadcast=False)
+    #     # Scatter all images to workers at once
+    #     scattered_rfp = client.scatter(rfp_images, broadcast=False)
+    #     scattered_dapi = client.scatter(dapi_images, broadcast=False)
         
-        if debug:
-            print(f"  Scattered {len(scattered_rfp)} image pairs to workers")
-    else:
-        scattered_rfp = rfp_images
-        scattered_dapi = dapi_images
+    #     if debug:
+    #         print(f"  Scattered {len(scattered_rfp)} image pairs to workers")
+    # else:
+    scattered_rfp = rfp_images
+    scattered_dapi = dapi_images
     
     # Build the lazy computation graph for all subjects
     print("\n[3/6] Building dask computation graph...")
@@ -458,18 +458,18 @@ def main(
             print(f"  Adding subject: {subject_name}")
         
         # Get the images (either scattered futures or numpy arrays)
-        if use_cluster and client:
-            rfp_np = scattered_rfp[idx]
-            dapi_np = scattered_dapi[idx]
-            # Convert futures to dask arrays
-            rfp_img = da.from_delayed(rfp_np, shape=rfp_images[idx].shape, dtype=rfp_images[idx].dtype)
-            dapi_img = da.from_delayed(dapi_np, shape=dapi_images[idx].shape, dtype=dapi_images[idx].dtype)
-        else:
-            rfp_np = rfp_images[idx]
-            dapi_np = dapi_images[idx]
-            # Convert numpy arrays to dask arrays (lazy reference, no copy)
-            rfp_img = array_to_dask_lazy(rfp_np)
-            dapi_img = array_to_dask_lazy(dapi_np)
+        # if use_cluster and client:
+        #     rfp_np = scattered_rfp[idx]
+        #     dapi_np = scattered_dapi[idx]
+        #     # Convert futures to dask arrays
+        #     rfp_img = da.from_delayed(rfp_np, shape=rfp_images[idx].shape, dtype=rfp_images[idx].dtype)
+        #     dapi_img = da.from_delayed(dapi_np, shape=dapi_images[idx].shape, dtype=dapi_images[idx].dtype)
+        # else:
+        rfp_np = rfp_images[idx]
+        dapi_np = dapi_images[idx]
+        # Convert numpy arrays to dask arrays (lazy reference, no copy)
+        rfp_img = array_to_dask_lazy(rfp_np)
+        dapi_img = array_to_dask_lazy(dapi_np)
         
         # Create the computation graph (all lazy!)
         # Step 1: Segment crypts

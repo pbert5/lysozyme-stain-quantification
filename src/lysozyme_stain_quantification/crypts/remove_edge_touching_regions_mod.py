@@ -1,5 +1,6 @@
 import numpy as np
 from skimage.segmentation import clear_border, relabel_sequential
+import dask.array as da
 
 
 def remove_edge_touching_regions_sk(labels, debug=False):

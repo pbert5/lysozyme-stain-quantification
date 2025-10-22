@@ -14,7 +14,10 @@ ignore/chats_demo/terms.json
 .gitignore
 
 lysozyme images/*
-karen_detect_crypts.py
+
 .gitignore
 run.ipynb
 lysozyme.code-workspace
+results/*
+method_development/figures/crypt_segmentation_overview.png
+src/lysozyme_stain_quantification/crypts/crypt_detection_solutions/figures/crypt_segmentation_overview.png

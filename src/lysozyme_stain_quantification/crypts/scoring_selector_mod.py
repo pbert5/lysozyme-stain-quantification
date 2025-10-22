@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import dask.array as da
 from dask.delayed import delayed
 import dask
+from typing import Tuple, Dict, Any, List, Optional
 
 
 DEFAULT_WEIGHTS = {
@@ -25,259 +26,300 @@ DEFAULT_WEIGHTS = {
 
 
 def scoring_selector(
-    label_img: np.ndarray,
-    raw_img: np.ndarray | None = None,
+    label_img: da.Array | np.ndarray,
+    raw_img: da.Array | np.ndarray | None = None,
     *,
     debug: bool = False,
     max_regions: int | bool = 5,
     weights: dict[str, float] | None = None,
     return_details: bool = False,
-):
+) -> da.Array | Tuple[da.Array, Any]:
     """Select the best regions based on quality metrics.
 
     Args:
-        label_img: Labeled image array with detected regions.
-        raw_img: Optional raw red channel image for quality assessment.
+        label_img: Labeled image array with detected regions (dask or numpy).
+        raw_img: Optional raw red channel image for quality assessment (dask or numpy).
         debug: Whether to enable debug output.
         max_regions: Maximum number of regions to select; falsy values keep all.
         weights: Optional weighting for the scoring components.
         return_details: When True, also return debug metadata alongside labels.
 
     Returns:
-        Filtered label array, optionally paired with debug metadata when
+        Filtered label array as dask array, optionally paired with debug metadata when
         ``return_details`` is True.
     """
 
-    working_labels = np.asarray(label_img).copy()
     weights = weights if weights is not None else DEFAULT_WEIGHTS
-    scoring_history: list[dict[str, float]] = []
+    
+    # Define the core computation as a delayed function
+    @delayed
+    def _scoring_computation(label_arr: np.ndarray, raw_arr: Optional[np.ndarray]) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """Execute scoring logic on numpy arrays."""
+        working_labels = label_arr.copy()
+        scoring_history: List[Dict[str, float]] = []
 
-    def _log(message: str) -> None:
-        if debug:
-            print(message)
-
-    def _calculate_region_properties() -> pd.DataFrame:
-        if debug:
-            unique_labels = np.unique(working_labels)
-            _log(
-                f"[SCORING DEBUG] Input label array has {len(unique_labels)} "
-                f"unique labels: {unique_labels}"
-            )
-
-        regions = regionprops(working_labels, intensity_image=raw_img)
-        if len(regions) == 0:
-            return pd.DataFrame()
-
-        properties: list[dict[str, object]] = []
-        for region in regions:
+        def _log(message: str) -> None:
             if debug:
+                print(message)
+
+        def _calculate_region_properties() -> pd.DataFrame:
+            if debug:
+                unique_labels = np.unique(working_labels)
                 _log(
-                    f"[SCORING DEBUG] Processing label {region.label}: "
-                    f"area = {region.area} pixels"
+                    f"[SCORING DEBUG] Input label array has {len(unique_labels)} "
+                    f"unique labels: {unique_labels}"
                 )
 
-            if raw_img is not None:
-                total_red_intensity = region.mean_intensity * region.area
-                red_intensity_per_area = region.mean_intensity
-            else:
-                total_red_intensity = 0.0
-                red_intensity_per_area = 0.0
+            regions = regionprops(working_labels, intensity_image=raw_arr)
+            if len(regions) == 0:
+                return pd.DataFrame()
 
-            circularity = (
-                4 * np.pi * region.area / (region.perimeter ** 2)
-                if region.perimeter > 0
+            properties: List[Dict[str, object]] = []
+            for region in regions:
+                if debug:
+                    _log(
+                        f"[SCORING DEBUG] Processing label {region.label}: "
+                        f"area = {region.area} pixels"
+                    )
+
+                if raw_arr is not None:
+                    total_red_intensity = region.mean_intensity * region.area
+                    red_intensity_per_area = region.mean_intensity
+                else:
+                    total_red_intensity = 0.0
+                    red_intensity_per_area = 0.0
+
+                circularity = (
+                    4 * np.pi * region.area / (region.perimeter ** 2)
+                    if region.perimeter > 0
+                    else 0.0
+                )
+
+                properties.append(
+                    {
+                        "label_id": int(region.label),
+                        "area": float(region.area),
+                        "physical_com": tuple(region.centroid),
+                        "red_intensity_per_area": float(red_intensity_per_area),
+                        "total_red_intensity": float(total_red_intensity),
+                        "circularity": float(circularity),
+                        "perimeter": float(region.perimeter),
+                    }
+                )
+
+            return pd.DataFrame(properties)
+
+        def _calculate_line_fit_deviation(properties_df: pd.DataFrame) -> pd.DataFrame:
+            if len(properties_df) < 2:
+                properties_df = properties_df.copy()
+                properties_df["distance_from_line"] = 0.0
+                properties_df["normalized_line_distance"] = 0.0
+                return properties_df
+
+            centers = np.array(list(properties_df["physical_com"]))
+            X = centers[:, 1].reshape(-1, 1)
+            y = centers[:, 0]
+
+            reg = LinearRegression().fit(X, y)
+            m = float(reg.coef_[0])
+            b = float(reg.intercept_)
+
+            x_coords = centers[:, 1]
+            y_coords = centers[:, 0]
+            distances = np.abs(m * x_coords - y_coords + b) / np.sqrt(m**2 + 1)
+
+            areas = properties_df["area"].to_numpy(dtype=float)
+            radius_approx = np.sqrt(areas / 2.0)
+            radius_approx[radius_approx == 0] = 1.0
+            normalized_distances = distances / radius_approx
+
+            properties_df = properties_df.copy()
+            properties_df["distance_from_line"] = distances
+            properties_df["normalized_line_distance"] = normalized_distances
+            return properties_df
+
+        def _score_regions(properties_df: pd.DataFrame) -> pd.DataFrame:
+            if len(properties_df) == 0:
+                return properties_df
+
+            properties_df = properties_df.copy()
+
+            max_circularity = float(properties_df["circularity"].max())
+            properties_df["circularity_score"] = (
+                1 - (properties_df["circularity"] / max_circularity)
+                if max_circularity > 0
+                else 1.0
+            )
+
+            max_area = float(properties_df["area"].max())
+            properties_df["area_score"] = (
+                1 - (properties_df["area"] / max_area) if max_area > 0 else 0.0
+            )
+
+            max_line_dist = float(properties_df["normalized_line_distance"].max())
+            properties_df["line_fit_score"] = (
+                properties_df["normalized_line_distance"] / max_line_dist
+                if max_line_dist > 0
                 else 0.0
             )
 
-            properties.append(
-                {
-                    "label_id": int(region.label),
-                    "area": float(region.area),
-                    "physical_com": tuple(region.centroid),
-                    "red_intensity_per_area": float(red_intensity_per_area),
-                    "total_red_intensity": float(total_red_intensity),
-                    "circularity": float(circularity),
-                    "perimeter": float(region.perimeter),
-                }
+            max_red_intensity = float(properties_df["red_intensity_per_area"].max())
+            properties_df["red_intensity_score"] = (
+                1
+                - (properties_df["red_intensity_per_area"] / max_red_intensity)
+                if max_red_intensity > 0
+                else 1.0
             )
 
-        return pd.DataFrame(properties)
-
-    def _calculate_line_fit_deviation(properties_df: pd.DataFrame) -> pd.DataFrame:
-        if len(properties_df) < 2:
-            properties_df = properties_df.copy()
-            properties_df["distance_from_line"] = 0.0
-            properties_df["normalized_line_distance"] = 0.0
-            return properties_df
-
-        centers = np.array(list(properties_df["physical_com"]))
-        X = centers[:, 1].reshape(-1, 1)
-        y = centers[:, 0]
-
-        reg = LinearRegression().fit(X, y)
-        m = float(reg.coef_[0])
-        b = float(reg.intercept_)
-
-        x_coords = centers[:, 1]
-        y_coords = centers[:, 0]
-        distances = np.abs(m * x_coords - y_coords + b) / np.sqrt(m**2 + 1)
-
-        areas = properties_df["area"].to_numpy(dtype=float)
-        radius_approx = np.sqrt(areas / 2.0)
-        radius_approx[radius_approx == 0] = 1.0
-        normalized_distances = distances / radius_approx
-
-        properties_df = properties_df.copy()
-        properties_df["distance_from_line"] = distances
-        properties_df["normalized_line_distance"] = normalized_distances
-        return properties_df
-
-    def _score_regions(properties_df: pd.DataFrame) -> pd.DataFrame:
-        if len(properties_df) == 0:
-            return properties_df
-
-        properties_df = properties_df.copy()
-
-        max_circularity = float(properties_df["circularity"].max())
-        properties_df["circularity_score"] = (
-            1 - (properties_df["circularity"] / max_circularity)
-            if max_circularity > 0
-            else 1.0
-        )
-
-        max_area = float(properties_df["area"].max())
-        properties_df["area_score"] = (
-            1 - (properties_df["area"] / max_area) if max_area > 0 else 0.0
-        )
-
-        max_line_dist = float(properties_df["normalized_line_distance"].max())
-        properties_df["line_fit_score"] = (
-            properties_df["normalized_line_distance"] / max_line_dist
-            if max_line_dist > 0
-            else 0.0
-        )
-
-        max_red_intensity = float(properties_df["red_intensity_per_area"].max())
-        properties_df["red_intensity_score"] = (
-            1
-            - (properties_df["red_intensity_per_area"] / max_red_intensity)
-            if max_red_intensity > 0
-            else 1.0
-        )
-
-        properties_df["quality_score"] = (
-            weights.get("circularity", 0.4) * properties_df["circularity_score"]
-            + weights.get("area", 0.3) * properties_df["area_score"]
-            + weights.get("line_fit", 0.2) * properties_df["line_fit_score"]
-            + weights.get("red_intensity", 0.1)
-            * properties_df["red_intensity_score"]
-        )
-
-        if debug:
-            scoring_history.append(
-                {
-                    "max_circularity": max_circularity,
-                    "max_area": max_area,
-                    "max_line_dist": max_line_dist,
-                    "max_red_intensity": max_red_intensity,
-                    "weights": weights,
-                }
+            properties_df["quality_score"] = (
+                weights.get("circularity", 0.4) * properties_df["circularity_score"]
+                + weights.get("area", 0.3) * properties_df["area_score"]
+                + weights.get("line_fit", 0.2) * properties_df["line_fit_score"]
+                + weights.get("red_intensity", 0.1)
+                * properties_df["red_intensity_score"]
             )
 
-        return properties_df.sort_values("quality_score").reset_index(drop=True)
-
-    def _select_best_regions(properties_df: pd.DataFrame) -> list[int]:
-        sorted_df = properties_df.sort_values("quality_score")
-        selection_cap = len(sorted_df) if not max_regions else min(int(max_regions), len(sorted_df))
-        best_regions = sorted_df.head(selection_cap)
-
-        if debug:
-            _log(
-                f"[SCORING DEBUG] Selected top {selection_cap} regions out of {len(sorted_df)} total"
-            )
-            _log(f"[SCORING DEBUG] Selected labels: {best_regions['label_id'].tolist()}")
-            _log(f"[SCORING DEBUG] Quality scores: {best_regions['quality_score'].tolist()}")
-            for _, row in best_regions.iterrows():
-                _log(
-                    f"[SCORING DEBUG] Label {int(row['label_id'])}: "
-                    f"area={row['area']:.1f}, circ={row['circularity']:.3f}, "
-                    f"red_int={row['red_intensity_per_area']:.2f}, "
-                    f"line_dist={row['normalized_line_distance']:.2f}, "
-                    f"final_score={row['quality_score']:.3f}"
+            if debug:
+                scoring_history.append(
+                    {
+                        "max_circularity": max_circularity,
+                        "max_area": max_area,
+                        "max_line_dist": max_line_dist,
+                        "max_red_intensity": max_red_intensity,
+                    }
                 )
 
-        return [int(label) for label in best_regions["label_id"].tolist()]
+            return properties_df.sort_values("quality_score").reset_index(drop=True)
 
-    def _create_filtered_labels(selected_label_ids: list[int]) -> np.ndarray:
-        filtered = np.zeros_like(working_labels)
-        if not selected_label_ids:
+        def _select_best_regions(properties_df: pd.DataFrame) -> List[int]:
+            sorted_df = properties_df.sort_values("quality_score")
+            selection_cap = len(sorted_df) if not max_regions else min(int(max_regions), len(sorted_df))
+            best_regions = sorted_df.head(selection_cap)
+
+            if debug:
+                _log(
+                    f"[SCORING DEBUG] Selected top {selection_cap} regions out of {len(sorted_df)} total"
+                )
+                _log(f"[SCORING DEBUG] Selected labels: {best_regions['label_id'].tolist()}")
+                _log(f"[SCORING DEBUG] Quality scores: {best_regions['quality_score'].tolist()}")
+                for _, row in best_regions.iterrows():
+                    _log(
+                        f"[SCORING DEBUG] Label {int(row['label_id'])}: "
+                        f"area={row['area']:.1f}, circ={row['circularity']:.3f}, "
+                        f"red_int={row['red_intensity_per_area']:.2f}, "
+                        f"line_dist={row['normalized_line_distance']:.2f}, "
+                        f"final_score={row['quality_score']:.3f}"
+                    )
+
+            return [int(label) for label in best_regions["label_id"].tolist()]
+
+        def _create_filtered_labels(selected_label_ids: List[int]) -> np.ndarray:
+            filtered = np.zeros_like(working_labels)
+            if not selected_label_ids:
+                return filtered
+
+            if debug:
+                _log(
+                    f"[SCORING DEBUG] Creating filtered labels from {len(selected_label_ids)} selected regions"
+                )
+                _log(f"[SCORING DEBUG] Selected IDs: {selected_label_ids}")
+
+            lookup = np.zeros(max(selected_label_ids) + 1, dtype=filtered.dtype)
+            for new_id, old_id in enumerate(selected_label_ids, start=1):
+                lookup[old_id] = new_id
+                if debug:
+                    pixels_count = int(np.sum(working_labels == old_id))
+                    _log(f"[SCORING DEBUG] Relabeled {old_id} -> {new_id}, {pixels_count} pixels")
+
+            mask = np.isin(working_labels, selected_label_ids)
+            filtered[mask] = lookup[working_labels[mask]]
+
+            if debug:
+                _log(
+                    f"[SCORING DEBUG] Filtered label array unique labels: {np.unique(filtered)}"
+                )
+
             return filtered
 
         if debug:
-            _log(
-                f"[SCORING DEBUG] Creating filtered labels from {len(selected_label_ids)} selected regions"
-            )
-            _log(f"[SCORING DEBUG] Selected IDs: {selected_label_ids}")
+            print("Starting quality-based region selection...")
 
-        lookup = np.zeros(max(selected_label_ids) + 1, dtype=filtered.dtype)
-        for new_id, old_id in enumerate(selected_label_ids, start=1):
-            lookup[old_id] = new_id
+        properties_df = _calculate_region_properties()
+        if len(properties_df) == 0:
             if debug:
-                pixels_count = int(np.sum(working_labels == old_id))
-                _log(f"[SCORING DEBUG] Relabeled {old_id} -> {new_id}, {pixels_count} pixels")
+                _log("[SCORING DEBUG] No regions found to score")
+            filtered_labels = np.zeros_like(working_labels)
+            debug_info = {
+                "properties_df": properties_df,
+                "selected_labels": [],
+                "scoring_history": scoring_history,
+                "original_regions": max(len(np.unique(working_labels)) - 1, 0),
+                "selected_regions": 0,
+            }
+            return filtered_labels, debug_info
 
-        mask = np.isin(working_labels, selected_label_ids)
-        filtered[mask] = lookup[working_labels[mask]]
+        properties_df = _calculate_line_fit_deviation(properties_df)
+        properties_df = _score_regions(properties_df)
 
         if debug:
+            _log(f"[SCORING DEBUG] Scored {len(properties_df)} regions")
+
+        selected_labels = _select_best_regions(properties_df)
+        filtered_labels = _create_filtered_labels(selected_labels)
+
+        if debug:
+            original_count = len(np.unique(working_labels)) - 1
+            selected_count = len(np.unique(filtered_labels)) - 1
             _log(
-                f"[SCORING DEBUG] Filtered label array unique labels: {np.unique(filtered)}"
+                f"[SCORING DEBUG] Selection complete: {max(original_count, 0)} -> {max(selected_count, 0)} regions"
             )
 
-        return filtered
-
-    if debug:
-        print("Starting quality-based region selection...")
-
-    properties_df = _calculate_region_properties()
-    if len(properties_df) == 0:
-        if debug:
-            _log("[SCORING DEBUG] No regions found to score")
-        filtered_labels = np.zeros_like(working_labels)
         debug_info = {
             "properties_df": properties_df,
-            "selected_labels": [],
+            "selected_labels": selected_labels,
             "scoring_history": scoring_history,
             "original_regions": max(len(np.unique(working_labels)) - 1, 0),
-            "selected_regions": 0,
+            "selected_regions": len(selected_labels),
         }
-        return (filtered_labels, debug_info) if return_details else filtered_labels
 
-    properties_df = _calculate_line_fit_deviation(properties_df)
-    properties_df = _score_regions(properties_df)
+        return filtered_labels, debug_info
 
-    if debug:
-        _log(f"[SCORING DEBUG] Scored {len(properties_df)} regions")
-
-    selected_labels = _select_best_regions(properties_df)
-    filtered_labels = _create_filtered_labels(selected_labels)
-
-    if debug:
-        original_count = len(np.unique(working_labels)) - 1
-        selected_count = len(np.unique(filtered_labels)) - 1
-        _log(
-            f"[SCORING DEBUG] Selection complete: {max(original_count, 0)} -> {max(selected_count, 0)} regions"
-        )
-
-    debug_info = {
-        "properties_df": properties_df,
-        "selected_labels": selected_labels,
-        "scoring_history": scoring_history,
-        "original_regions": max(len(np.unique(working_labels)) - 1, 0),
-        "selected_regions": len(selected_labels),
-    }
-
-    return (filtered_labels, debug_info) if return_details else filtered_labels
+    # Convert inputs to numpy if they're dask arrays
+    if isinstance(label_img, da.Array):
+        label_shape = label_img.shape
+        label_dtype = label_img.dtype
+        # Create delayed computation
+        result_delayed = _scoring_computation(label_img, raw_img)
+    else:
+        label_shape = label_img.shape
+        label_dtype = label_img.dtype
+        # Create delayed computation
+        result_delayed = _scoring_computation(label_img, raw_img)
+    
+    # Extract the filtered labels and debug info
+    if return_details:
+        @delayed
+        def extract_labels(result_tuple):
+            return result_tuple[0]
+        
+        @delayed
+        def extract_debug(result_tuple):
+            return result_tuple[1]
+        
+        labels_delayed = extract_labels(result_delayed)
+        debug_delayed = extract_debug(result_delayed)
+        
+        filtered_labels_da = da.from_delayed(labels_delayed, shape=label_shape, dtype=label_dtype)
+        # Debug info remains delayed until computed
+        return filtered_labels_da, debug_delayed
+    else:
+        @delayed
+        def extract_labels_only(result_tuple):
+            return result_tuple[0]
+        
+        labels_delayed = extract_labels_only(result_delayed)
+        filtered_labels_da = da.from_delayed(labels_delayed, shape=label_shape, dtype=label_dtype)
+        return filtered_labels_da
 
 
 def plot_scoring_results(
