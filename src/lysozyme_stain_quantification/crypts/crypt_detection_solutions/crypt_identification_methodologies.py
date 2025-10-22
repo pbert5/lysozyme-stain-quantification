@@ -31,8 +31,8 @@ from src.lysozyme_stain_quantification.utils.remove_artifacts import remove_rect
 import dask.array as da
 
 from dask.delayed import delayed
-from ..scoring_selector_mod import scoring_selector
 
+from ..scoring_selector_mod import scoring_selector
 
 # ---------------------------- utilities ---------------------------- #
 
@@ -121,7 +121,7 @@ def preprocess_for_caps(img: da.Array, salt_and_pepper_noise_size: Optional[int]
     if salt_and_pepper_noise_size is None or salt_and_pepper_noise_size <= 0:
         return image
 
-    radius = da.max(1, int(round(salt_and_pepper_noise_size)))
+    radius = max(1, int(round(salt_and_pepper_noise_size)))
     footprint = disk(radius)
     white_hat = delayed(white_tophat)(image, footprint)
     cleaned: da.Array = image - da.from_delayed(white_hat, shape=image.shape, dtype=image.dtype)
@@ -272,8 +272,9 @@ def identify_crypt_seeds_new(
     distance = tissue_troughs - good_crypts
     maxi = delayed(local_maxima)(good_crypts)
     seeds = delayed(watershed)(distance, markers=maxi, mask=tissue_troughs < good_crypts)
+
     pre_labeled = delayed(sk_label)(seeds > 0)  # type: ignore
-    labeled: da.Array = da.from_delayed(pre_labeled, shape=seeds.shape, dtype=seeds.dtype)
+    labeled: da.Array = da.from_delayed(pre_labeled, shape=good_crypts.shape, dtype=good_crypts.dtype)
     return labeled
 
 
@@ -334,10 +335,10 @@ def identify_potential_crypts_old_like(
     expanded_labels_del = delayed(expand_labels)(combined_labels, distance=expand_distance)
     expanded_labels: da.Array = da.from_delayed(expanded_labels_del, shape=combined_labels.shape, dtype=combined_labels.dtype)
 
-    reworked = da.zeros_like(expanded_labels, dtype=np.int32)
-    reworked[expanded_labels == 2] = 1
-    mask_copy = (expanded_labels != 2) & (labeled_diff_r != 0)
-    reworked[mask_copy] = labeled_diff_r[mask_copy] + 1
+    reworked: da.Array = da.zeros_like(expanded_labels, dtype=np.int32)
+    reworked: da.Array = da.where(expanded_labels == 2, 1, reworked)
+    mask_copy: da.Array = (expanded_labels != 2) & (labeled_diff_r != 0)
+    reworked = da.where(mask_copy, labeled_diff_r + 1, reworked)
 
     mask_ws = expanded_labels > 0
     
@@ -352,8 +353,8 @@ def identify_potential_crypts_old_like(
 
     ws_labels_del = delayed(watershed)(elevation, markers=reworked, mask=mask_ws)
     ws_labels: da.Array = da.from_delayed(ws_labels_del, shape=combined_labels.shape, dtype=np.int32)
-    ws_labels[ws_labels == 1] = 0
-    ws_labels[ws_labels > 1] -= 1
+    ws_labels = da.where(ws_labels == 1, 0, ws_labels)
+    ws_labels = da.where(ws_labels > 1, ws_labels - 1, ws_labels)
     return ws_labels.astype(da.int32)
 
 
@@ -364,13 +365,13 @@ def _seed_health_metrics(seed_labels: da.Array ) -> Dict[str, Any]:
     n_labels: int = da.max(seed_labels)
     coverage = da.count_nonzero(seed_labels) / seed_labels.size
     if n_labels > 0:
-        areas = da.bincount(seed_labels)[1:]
+        areas = da.bincount(da.ravel(seed_labels))
         mean_area = areas.mean() if areas.size else 0.0
     else:
         mean_area = 0.0
     return dict(n_labels=n_labels, coverage=coverage, mean_area=mean_area)
 
-@delayed
+
 def _score_label_set(
     labels: Optional[np.ndarray],
     raw_img: np.ndarray,

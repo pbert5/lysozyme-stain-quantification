@@ -25,8 +25,8 @@ DEFAULT_WEIGHTS = {
 
 
 def scoring_selector(
-    label_img: da.Array ,
-    raw_img: da.Array | None = None,
+    label_img: np.ndarray,
+    raw_img: np.ndarray | None = None,
     *,
     debug: bool = False,
     max_regions: int | bool = 5,
@@ -48,7 +48,7 @@ def scoring_selector(
         ``return_details`` is True.
     """
 
-    working_labels: = da.asarray(label_img).copy()
+    working_labels = np.asarray(label_img).copy()
     weights = weights if weights is not None else DEFAULT_WEIGHTS
     scoring_history: list[dict[str, float]] = []
 
@@ -180,7 +180,7 @@ def scoring_selector(
                     "max_area": max_area,
                     "max_line_dist": max_line_dist,
                     "max_red_intensity": max_red_intensity,
-                    "weights": dict(weights),
+                    "weights": weights,
                 }
             )
 
