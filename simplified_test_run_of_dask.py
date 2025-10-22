@@ -303,7 +303,7 @@ def main(
 
   
     full_bag = db.concat([seperate_channels_bag, combined_channels_bag])
-    full_bag = full_bag.map(
+    full_bag = full_bag.map( #TODO should add a propagate old keys func
         lambda x: dict(
             paths=x["paths"],
             rfp=x["rfp"],
