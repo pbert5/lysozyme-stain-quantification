@@ -37,7 +37,7 @@ def _as_image(value: Any) -> tuple[np.ndarray | da.Array, tuple[int, ...]]:
 
 
 def segment_crypts(
-    channels: Sequence[np.ndarray | da.Array],
+    channels: tuple[da.Array, da.Array, Optional[float | int]],
     blob_size_px: int | None = 15,
     *,
     blob_size_um: float | None = None,
