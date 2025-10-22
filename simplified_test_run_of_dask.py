@@ -193,6 +193,18 @@ def main(
                 scale_values=[0.2253],
             )
 
+        )).map(lambda x: dict(
+            paths=x["paths"],
+            rfp=x["rfp"],
+            dapi=x["dapi"],
+            source_type=x["source_type"],
+            scale_um_per_px=x["scale_um_per_px"],
+            crypt_labels= segment_crypts(
+                channels=(x["rfp"], x["dapi"] ),
+                microns_per_px=x["scale_um_per_px"],
+                blob_size_um=blob_size_um,
+                debug=debug,
+                max_regions=5)
         ))
 
 
