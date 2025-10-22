@@ -43,9 +43,9 @@ def segment_crypts(
     blob_size_um: float | None = None,
     debug: bool = False,
     scoring_weights: dict[str, float] | None = None,
-    masks: Sequence[np.ndarray] | None = None,
+    masks: Sequence[da.Array] | None = None,
     max_regions: int = 5,
-    microns_per_px: float | None = None,
+    microns_per_px: float ,
 ) -> da.Array:
     """Segment crypts in the given image - returns dask array for lazy evaluation.
 
@@ -71,10 +71,7 @@ def segment_crypts(
     if crypt_img.shape != tissue_image.shape:
         raise ValueError(f"Shape mismatch: red {crypt_img.shape} vs blue {tissue_image.shape}")
     
-    if channels[2] is not None:
-        microns_per_px: float = _to_float(channels[2])
-    elif microns_per_px is not None:
-        microns_per_px = float(microns_per_px)
+    
 
     effective_blob_size_px: int
     if blob_size_um is not None:
