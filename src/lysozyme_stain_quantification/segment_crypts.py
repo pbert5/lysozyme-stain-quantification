@@ -96,8 +96,9 @@ def segment_crypts(
         
         
         # Call the three main functions sequentially
-        potential_crypts = identify_potential_crypts(crypt, tissue, blob_size, dbg)
-        cleaned_crypts = remove_edge_touching_regions_sk(potential_crypts)
+        potential_crypts: da.Array = identify_potential_crypts(crypt, tissue, blob_size, dbg)
+        cleaned_crypts: da.Array = da.from_delayed(delayed(remove_edge_touching_regions_sk)(potential_crypts), shape=potential_crypts.shape, dtype=potential_crypts.dtype)
+
         best_crypts, crypt_scores = scoring_selector(
             cleaned_crypts,
             crypt,
