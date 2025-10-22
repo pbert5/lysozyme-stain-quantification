@@ -138,7 +138,7 @@ def find_tif_images_by_keys(
     # Organize images by key and base name
     matched_by_key: Dict[str, Dict[str, Path]] = {key: {} for key in keys}
     unmatched: List[Path] = []
-    
+    subjects = 0
     for path in tif_paths:
         matched = False
         
@@ -154,6 +154,10 @@ def find_tif_images_by_keys(
         
         if not matched:
             unmatched.append(path)
+            subjects += 1
+            if max_subjects is not None and subjects >= max_subjects:
+                break
+            
     
     # Find common base names across all keys
     if not keys:
@@ -169,17 +173,18 @@ def find_tif_images_by_keys(
     for base_name in sorted(common_bases):
         pair = tuple(matched_by_key[key][base_name] for key in keys)
         paired.append(pair)
-        
-        # Apply max_subjects limit
-        if max_subjects is not None and len(paired) >= max_subjects:
+        subjects += 1
+        if max_subjects is not None and subjects >= max_subjects:
             break
+        
+        
     
-    # Add unpaired images (matched a key but no complete set) to unmatched
-    paired_bases = set(base_name for base_name in common_bases)
-    for key in keys:
-        for base_name, path in matched_by_key[key].items():
-            if base_name not in paired_bases:
-                unmatched.append(path)
+    # # Add unpaired images (matched a key but no complete set) to unmatched
+    # paired_bases = set(base_name for base_name in common_bases)
+    # for key in keys:
+    #     for base_name, path in matched_by_key[key].items():
+    #         if base_name not in paired_bases:
+    #             unmatched.append(path)
     
     return unmatched, paired
 
@@ -348,21 +353,20 @@ def main(
     seperate_channels_bag = db.from_sequence(pairs).map(
         lambda x:dict(
             paths=x,
-            rfp=imread(x[0]).squeeze()[...,0],
-            dapi=imread(x[1]).squeeze()[...,2],
+            rfp=(imread(x[0])[...,0]).squeeze(),
+            dapi=(imread(x[1])[...,2]).squeeze(),
             source_type="separate_channels",
         ))
-    if debug:
-        print(f"[x] Created Dask bag with {seperate_channels_bag.count().compute()} subjects from separate channels.\n")
+  
     combined_channels_bag = db.from_sequence(unmatched).map(
         lambda x:dict(
             paths=[x],
-            image=imread(x).squeeze(),
+            image=imread(x),
         )).map( #TODO: prob need to add in remove rectangles
             lambda x:dict(
                 paths=x["paths"],
-                rfp=x["image"],
-                dapi=x["image"],
+                rfp=x["image"][...,0].squeeze(),
+                dapi=x["image"][...,2].squeeze(),
                 source_type="combined_channels",
             )
         )
