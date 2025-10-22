@@ -412,3 +412,68 @@ def _pick_best_subdir_label(records: Sequence[SourceImage]) -> str:
         return ""
     counts = Counter(labels)
     return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+
+
+def find_tif_images_by_keys(
+    root_dir: Path,
+    keys: List[str],
+) -> Dict[str, List[Path]]:
+    """
+    Recursively search for .tif images and sort by matching keys.
+    
+    Each image is assigned to the first matching key only (no duplicates).
+    
+    Parameters
+    ----------
+    root_dir : Path
+        Directory to search recursively
+    keys : List[str]
+        List of string keys to match (e.g., ["_DAPI", "_RFP", ""])
+        Order matters - first match wins
+    
+    Returns
+    -------
+    Dict[str, List[Path]]
+        Dictionary mapping each key to list of matching image paths
+        
+    Example
+    -------
+    >>> sorted_paths = find_tif_images_by_keys(
+    ...     Path("./images"),
+    ...     keys=["_DAPI", "_RFP", ""]
+    ... )
+    >>> print(sorted_paths["_DAPI"])  # All DAPI images
+    >>> print(sorted_paths["_RFP"])   # All RFP images (excluding any that matched DAPI)
+    >>> print(sorted_paths[""])       # All remaining .tif images
+    """
+    import pandas as pd
+    
+    # Find all .tif images recursively
+    tif_paths = list(root_dir.rglob("*.tif")) + list(root_dir.rglob("*.TIF"))
+    
+    if not tif_paths:
+        return {key: [] for key in keys}
+    
+    # Create dataframe with paths and names
+    df = pd.DataFrame({
+        "path": tif_paths,
+        "name": [p.name for p in tif_paths],
+    })
+    
+    # Assign each image to first matching key
+    df["matched_key"] = None
+    
+    for key in keys:
+        # Find unassigned images that match this key
+        mask = (df["matched_key"].isna()) & (df["name"].str.contains(key, case=False, regex=False))
+        df.loc[mask, "matched_key"] = key
+    
+    # Group by matched key and extract paths
+    sorted_paths = {key: [] for key in keys}
+    
+    for key in keys:
+        matched = df[df["matched_key"] == key]["path"].tolist()
+        sorted_paths[key] = matched
+    
+    return sorted_paths
