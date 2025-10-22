@@ -5,7 +5,7 @@ from typing import Sequence, Any
 
 import numpy as np
 import dask.array as da
-from dask import delayed
+from dask.delayed import delayed
 import xarray as xr
 
 from .crypts.identify_potential_crypts_ import identify_potential_crypts
