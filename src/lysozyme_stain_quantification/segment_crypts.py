@@ -70,9 +70,9 @@ def segment_crypts(
     tissue_image, tissue_shape = _as_image(channels[1])
     if crypt_img.shape != tissue_image.shape:
         raise ValueError(f"Shape mismatch: red {crypt_img.shape} vs blue {tissue_image.shape}")
-
-    if len(channels) >= 3:
-        microns_per_px = _to_float(channels[2])
+    
+    if channels[2] is not None:
+        microns_per_px: float = _to_float(channels[2])
     elif microns_per_px is not None:
         microns_per_px = float(microns_per_px)
 
