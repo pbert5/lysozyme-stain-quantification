@@ -44,12 +44,12 @@ except ImportError:
 # =============================================================================
 
 USE_CLUSTER = True              # Use distributed Dask cluster for parallel processing
-FORCE_RESPAWN_CLUSTER = True   # Force respawn cluster if params don't match (WARNING: closes existing cluster)
+FORCE_RESPAWN_CLUSTER = False   # Force respawn cluster if params don't match (WARNING: closes existing cluster)
 N_WORKERS = None                # Number of workers (None = auto-detect: CPU_COUNT/2)
 THREADS_PER_WORKER = None       # Threads per worker (None = auto: CPU_COUNT/N_WORKERS)
 SAVE_IMAGES = True              # Generate overlay visualizations and plots
 DEBUG = True                    # Show detailed progress information
-MAX_SUBJECTS = 5           # Limit number of subjects (None = process all)
+MAX_SUBJECTS = 10           # Limit number of subjects (None = process all)
 
 
 # Advanced settings
@@ -203,10 +203,18 @@ def main(
     max_subjects: Optional[int] = MAX_SUBJECTS,
     blob_size_um: float = BLOB_SIZE_UM,
 ) -> None:
+    # Suppress the "large graph" warning - we handle this with client.scatter()
+    import warnings
+    warnings.filterwarnings('ignore', message='.*large graph.*')
+    
     print("=" * 80)
     print("DASK-BASED LYSOZYME CRYPT DETECTION PIPELINE")
     print("=" * 80)
-
+    
+    # Check for cluster support and connect FIRST (before any other setup)
+    cluster_context = None
+    client = None
+    
     if use_cluster:
         if not CLUSTER_AVAILABLE:
             print("\nWARNING: Cluster support not available. Falling back to threaded scheduler.")
@@ -315,15 +323,24 @@ def main(
                 print("  Falling back to threaded scheduler.")
                 use_cluster = False
     # Setup results directory (after cluster connection)
+    if debug:
+        print("[ ] Setting up results directory...")
     results_dir: Path = setup_results_dir(SCRIPT_DIR, exp_name="simple_dask")
-    print(f"Results will be saved to: {results_dir.resolve()}\n")
+    print(f"[x] Results will be saved to: {results_dir.resolve()}\n")
     # Find subject image sets
+    if debug:
+        print("[ ] Searching for subject image sets...")
     unmatched, pairs = find_tif_images_by_keys(
         IMAGE_BASE_DIR,
         keys=["_RFP", "_DAPI"],
 
         max_subjects=max_subjects,
     )
+    if debug:
+        print(f"[x] Found {len(pairs)} paired subjects and {len(unmatched)} unmatched images.\n")
+
+    if debug:
+        print("[ ] Creating Dask bags for image processing...")
     image_bags = {}
     # for key, paths in :
     #     print(f"Found {len(paths)} images for key '{key}'")
@@ -335,6 +352,8 @@ def main(
             dapi=imread(x[1]).squeeze()[...,2],
             source_type="separate_channels",
         ))
+    if debug:
+        print(f"[x] Created Dask bag with {seperate_channels_bag.count().compute()} subjects from separate channels.\n")
     combined_channels_bag = db.from_sequence(unmatched).map(
         lambda x:dict(
             paths=[x],
@@ -347,6 +366,8 @@ def main(
                 source_type="combined_channels",
             )
         )
+    if debug:
+        print(f"[x] Created Dask bag with {combined_channels_bag.count().compute()} subjects from combined channels.\n")
 
   
     full_bag = db.concat([seperate_channels_bag, combined_channels_bag])
