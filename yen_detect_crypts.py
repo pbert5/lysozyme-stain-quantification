@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 
 import pandas as pd
+from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -110,6 +111,7 @@ def main() -> None:
         channels=["normalized_rfp", "crypts", "microns_per_px"],
         output_name="crypt_fluorescence_summary",
         intensity_upper_bound=1,
+        probe_output=True,
     )
     if DEBUG:
         print(f"[END] Summarized crypt fluorescence")
@@ -119,7 +121,7 @@ def main() -> None:
         channels=["normalized_rfp", "crypts", "microns_per_px"],
         output_name="crypt_fluorescence_per_crypt",
         use_apply_ufunc=True,
-        vectorize=False, #TODO: what is this doing? 
+        probe_output=True,
     )
     if DEBUG:
         print(f"[END] Summarized per-crypt fluorescence details")
@@ -174,27 +176,69 @@ def main() -> None:
     if DEBUG:
         print("[BEGIN] Saving per-crypt detail summary to csv...")
     per_crypt_da: xr.DataArray = ds["crypt_fluorescence_per_crypt"]  # type: ignore
-    per_crypt_records = []
-    numeric_fields = list(per_crypt_da.coords["field"].values)
-    record_counts = per_crypt_da.coords["record_count"].values if "record_count" in per_crypt_da.coords else np.zeros(per_crypt_da.sizes["subject"], dtype=int)
-    subject_display = per_crypt_da.coords.get("subject_display_name", per_crypt_da.coords["subject"]).values
+    per_crypt_records: list[dict[str, Any]] = []
     int_fields = {"crypt_label", "crypt_index", "pixel_area"}
-    for subj_idx, subject in enumerate(per_crypt_da.coords["subject"].values):
-        count = int(record_counts[subj_idx]) if record_counts.size else 0
-        if count <= 0:
-            continue
-        data = per_crypt_da.isel(subject=subj_idx).values  # shape (max_records, len(fields))
-        for rec_idx in range(count):
-            row = {"subject_name": subject_display[subj_idx]}
-            for field_idx, field in enumerate(numeric_fields):
-                value = data[rec_idx, field_idx]
-                if np.isnan(value):
-                    row[field] = np.nan
-                elif field in int_fields:
-                    row[field] = int(round(value))
-                else:
-                    row[field] = float(value)
-            per_crypt_records.append(row)
+
+    if per_crypt_da.ndim == 1 and per_crypt_da.dtype == object:
+        base_fields = list(per_crypt_da.attrs.get("fields", PER_CRYPT_FIELD_ORDER))
+        numeric_fields = [field for field in base_fields if field != "subject_name"]
+
+        subject_records = per_crypt_da.data
+        if hasattr(subject_records, "compute"):
+            subject_records = subject_records.compute()
+        subject_records = subject_records.tolist()
+
+        subject_display = per_crypt_da.coords.get("subject_display_name", per_crypt_da.coords["subject"]).data
+        if hasattr(subject_display, "compute"):
+            subject_display = subject_display.compute()
+        subject_display = subject_display.tolist()
+
+        record_counts_da = per_crypt_da.coords.get("record_count")
+        if record_counts_da is not None:
+            record_counts = record_counts_da.data
+            if hasattr(record_counts, "compute"):
+                record_counts = record_counts.compute()
+            record_counts = record_counts.tolist()
+        else:
+            record_counts = [len(records or []) for records in subject_records]
+
+        for subj_idx, records in enumerate(subject_records):
+            count = int(record_counts[subj_idx]) if record_counts else len(records or [])
+            if not records or count <= 0:
+                continue
+            display_name = subject_display[subj_idx]
+            for record in records[:count]:
+                row = {"subject_name": display_name}
+                for field in numeric_fields:
+                    value = record.get(field, np.nan)
+                    if value is None or (isinstance(value, float) and np.isnan(value)):
+                        row[field] = np.nan
+                    elif field in int_fields:
+                        row[field] = int(round(value))
+                    else:
+                        row[field] = float(value)
+                per_crypt_records.append(row)
+    else:
+        numeric_fields = list(per_crypt_da.coords["field"].values)
+        record_counts = per_crypt_da.coords["record_count"].values if "record_count" in per_crypt_da.coords else np.zeros(per_crypt_da.sizes["subject"], dtype=int)
+        subject_display = per_crypt_da.coords.get("subject_display_name", per_crypt_da.coords["subject"]).values
+        int_fields = {"crypt_label", "crypt_index", "pixel_area"}
+        for subj_idx, subject in enumerate(per_crypt_da.coords["subject"].values):
+            count = int(record_counts[subj_idx]) if record_counts.size else 0
+            if count <= 0:
+                continue
+            data = per_crypt_da.isel(subject=subj_idx).values  # shape (max_records, len(fields))
+            for rec_idx in range(count):
+                row = {"subject_name": subject_display[subj_idx]}
+                for field_idx, field in enumerate(numeric_fields):
+                    value = data[rec_idx, field_idx]
+                    if np.isnan(value):
+                        row[field] = np.nan
+                    elif field in int_fields:
+                        row[field] = int(round(value))
+                    else:
+                        row[field] = float(value)
+                per_crypt_records.append(row)
     per_crypt_df = pd.DataFrame(per_crypt_records, columns=list(PER_CRYPT_FIELD_ORDER))
     per_crypt_df.to_csv(results_dir / "karen_detect_crypts_per_crypt.csv", index=False)
     if DEBUG:
