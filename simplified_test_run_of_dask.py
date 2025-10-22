@@ -198,6 +198,7 @@ def main(
     n_workers: Optional[int] = N_WORKERS,
     threads_per_worker: Optional[int] = THREADS_PER_WORKER,
     save_images: bool = SAVE_IMAGES,
+    force_respawn_cluster: bool = FORCE_RESPAWN_CLUSTER,
     debug: bool = DEBUG,
     max_subjects: Optional[int] = MAX_SUBJECTS,
     blob_size_um: float = BLOB_SIZE_UM,
@@ -212,61 +213,107 @@ def main(
             print("  Install dask.distributed or check cluster.py import.")
             use_cluster = False
         else:
-            from dask.distributed import Client, LocalCluster
-            
-            # Auto-detect optimal worker configuration first (needed for comparison)
-            import multiprocessing
-            n_cpus = multiprocessing.cpu_count()
-            
-            desired_n_workers = n_workers
-            desired_threads_per_worker = threads_per_worker
-            
-            if desired_n_workers is None:
-                # Default: balanced strategy (half cores as workers, 2 threads each)
-                desired_n_workers = max(1, n_cpus // 2 - 2)
-            
-            if desired_threads_per_worker is None:
-                # Calculate threads to use all CPUs
-                desired_threads_per_worker = max(1, n_cpus // desired_n_workers)
-            
-            # Try to connect to existing cluster first
-            existing_client = None
-
-            cluster_context = None  # Store cluster reference to prevent garbage collection
-            
-            
-            print(f"\nStarting new Dask cluster...")
-            
-            # Memory per worker: total RAM / workers (with safety margin)
-            # Assume 4GB per worker as safe default, can be increased
-            memory_per_worker = "4GB"
-            
-            if debug:
-                print(f"  Detected {n_cpus} CPUs")
-                print(f"  Configuring: {desired_n_workers} workers × {desired_threads_per_worker} threads = {desired_n_workers * desired_threads_per_worker} total threads")
-            
-            cluster = LocalCluster(
-                n_workers=10,
-                threads_per_worker=desired_threads_per_worker,
-                memory_limit=memory_per_worker,
-                dashboard_address=":8787",
-            )
-            client = Client(cluster)
-            #cluster_context = cluster  # Store for cleanup
-            
-            # Verify the cluster was created with correct parameters
-            
-            
-            print(f"  Scheduler: {cluster.scheduler_address}")
-            print(f"  Dashboard: {cluster.dashboard_link}")
-            
-            
-            
-            
-            print(f"\n  📊 MONITOR: {cluster.dashboard_link}")
-            print()
+            try:
+                from dask.distributed import Client, LocalCluster
                 
-    
+                # Auto-detect optimal worker configuration first (needed for comparison)
+                import multiprocessing
+                n_cpus = multiprocessing.cpu_count()
+                
+                desired_n_workers = n_workers
+                desired_threads_per_worker = threads_per_worker
+                
+                if desired_n_workers is None:
+                    # Default: balanced strategy (half cores as workers, 2 threads each)
+                    desired_n_workers = max(1, n_cpus // 2)
+                
+                if desired_threads_per_worker is None:
+                    # Calculate threads to use all CPUs
+                    desired_threads_per_worker = max(1, n_cpus // desired_n_workers)
+                
+                # Try to connect to existing cluster first
+                existing_client = None
+                needs_respawn = False
+                
+                try:
+                    existing_client = Client(timeout='2s')  # Try to connect to default scheduler
+                    scheduler_info = existing_client.scheduler_info()
+                    workers_info = scheduler_info['workers']
+                    actual_n_workers = scheduler_info["n_workers"]
+                    
+                    # Check threads per worker (sample from first worker)
+                    actual_threads_per_worker = None
+                    if workers_info:
+                        first_worker = list(workers_info.values())[0]
+                        actual_threads_per_worker = first_worker.get('nthreads', None)
+                    
+                    print(f"\n✓ Found existing Dask cluster!")
+                    print(f"  Scheduler: {existing_client.scheduler.address}") #type: ignore[attr-defined]
+                    print(f"  Dashboard: {existing_client.dashboard_link}")
+                    print(f"  Workers: {actual_n_workers} × {actual_threads_per_worker} threads")
+                    
+                    # Check if parameters match
+                    params_match = (
+                        actual_n_workers == desired_n_workers and
+                        actual_threads_per_worker == desired_threads_per_worker
+                    )
+                    
+                    if not params_match:
+                        print(f"\n[x]  Cluster parameters don't match desired configuration:")
+                        print(f"    Existing: {actual_n_workers} workers × {actual_threads_per_worker} threads")
+                        print(f"    Desired:  {desired_n_workers} workers × {desired_threads_per_worker} threads")
+                        
+                        if force_respawn_cluster:
+                            print(f"    FORCE_RESPAWN_CLUSTER=True: Closing existing cluster and respawning...")
+                            needs_respawn = True
+                            existing_client.close()
+                            existing_client = None
+                        else:
+                            print(f"    Using existing cluster anyway (set FORCE_RESPAWN_CLUSTER=True to respawn)")
+                    else:
+                        print(f"  ✓ Parameters match desired configuration")
+                    
+                    if existing_client is not None:
+                        client = existing_client
+                        print(f"\n  📊 MONITOR: {client.dashboard_link}")
+                        print()
+                        
+                except (OSError, TimeoutError):
+                    # No existing cluster, need to start our own
+                    needs_respawn = True
+                    if debug:
+                        print(f"\nNo existing cluster found.")
+                
+                # Start new cluster if needed
+                if needs_respawn or existing_client is None:
+                    print(f"\nStarting new Dask cluster...")
+                    
+                    # Memory per worker: total RAM / workers (with safety margin)
+                    # Assume 4GB per worker as safe default, can be increased
+                    memory_per_worker = "4GB"
+                    
+                    if debug:
+                        print(f"  Detected {n_cpus} CPUs")
+                        print(f"  Configuring: {desired_n_workers} workers × {desired_threads_per_worker} threads = {desired_n_workers * desired_threads_per_worker} total threads")
+                    
+                    cluster = LocalCluster(
+                        n_workers=desired_n_workers,
+                        threads_per_worker=desired_threads_per_worker,
+                        memory_limit=memory_per_worker,
+                        dashboard_address=":8787",
+                    )
+                    client = cluster.get_client()
+                    cluster_context = cluster  # Store for cleanup
+                    print(f"  Scheduler: {cluster.scheduler_address}")
+                    print(f"  Dashboard: {cluster.dashboard_link}")
+                    print(f"  Workers: {desired_n_workers} × {desired_threads_per_worker} threads = {desired_n_workers * desired_threads_per_worker} total")
+                    print(f"\n  📊 MONITOR: {cluster.dashboard_link}")
+                    print()
+                    
+            except Exception as e:
+                print(f"\nWARNING: Failed to start cluster: {e}")
+                print("  Falling back to threaded scheduler.")
+                use_cluster = False
     # Setup results directory (after cluster connection)
     results_dir: Path = setup_results_dir(SCRIPT_DIR, exp_name="simple_dask")
     print(f"Results will be saved to: {results_dir.resolve()}\n")
