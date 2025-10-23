@@ -39,6 +39,9 @@ try:
 except ImportError:
     CLUSTER_AVAILABLE = False
 # endregion 
+import logging
+
+logging.getLogger("src.lysozyme_stain_quantification.normalize_rfp").setLevel(logging.ERROR)
 
 # region configuration
 # =============================================================================
