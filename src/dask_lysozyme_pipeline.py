@@ -51,7 +51,7 @@ except ImportError:
         print("  Ensure that 'scientific_image_finder' and 'lysozyme_stain_quantification' are installed and accessible.")
         raise e
 # Add src to path
-SCRIPT_DIR = Path(__file__).parent
+SCRIPT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 # Import image-ops-framework for proper overlay rendering
 sys.path.insert(0, str(Path.home() / "documents" / "image-ops-framework" / "src"))
