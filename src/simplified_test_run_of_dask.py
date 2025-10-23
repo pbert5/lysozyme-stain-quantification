@@ -2,10 +2,11 @@
 from __future__ import annotations
 import argparse
 import logging
+import time
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Sequence, Union
-
+import time
 import dask
 import dask.array as da
 import dask.bag as db
@@ -272,8 +273,27 @@ def save_overlay_image(
     overlay_dir = output_dir / "renderings"
     overlay_dir.mkdir(parents=True, exist_ok=True)
 
+    # Convert potential dask arrays to numpy inside the task and min-max normalize to [0, 1]
+    def _to_numpy_local(a: Union[np.ndarray, da.Array]) -> np.ndarray:
+        return a.compute() if isinstance(a, da.Array) else np.asarray(a)
+
+    def _minmax01(a: np.ndarray) -> np.ndarray:
+        arr = np.asarray(a, dtype=np.float32)
+        if arr.size == 0:
+            return arr
+        lo = float(np.nanmin(arr))
+        hi = float(np.nanmax(arr))
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            return np.zeros_like(arr, dtype=np.float32)
+        out = (arr - lo) / (hi - lo)
+        return np.clip(out, 0.0, 1.0)
+
+    rfp_np = _minmax01(_to_numpy_local(rfp_image))
+    dapi_np = _minmax01(_to_numpy_local(dapi_image))
+    labels_np = _to_numpy_local(crypt_labels)
+
     overlay_xr = render_label_overlay(
-        channels=[rfp_image, dapi_image, crypt_labels],
+        channels=[rfp_np, dapi_np, labels_np],
         fill_alpha=0.35,
         outline_alpha=1.0,
         outline_width=2,
@@ -628,7 +648,10 @@ def main(
     if debug:
         print(f"[x] Executing Dask bag with {len(unmatched) + len(paired_subject_names)} subjects...\n")
 
+    start_time = time.perf_counter()
     results = full_bag.compute()
+    elapsed = time.perf_counter() - start_time
+    print(f"[x] Compute took {elapsed:.2f} seconds")
     if debug:
         print(f"\n[x] Completed processing all subjects.\n")
 
