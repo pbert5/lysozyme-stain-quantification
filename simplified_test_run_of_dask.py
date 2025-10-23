@@ -319,7 +319,7 @@ def main(
                         threads_per_worker=desired_threads_per_worker,
                         memory_limit=memory_per_worker,
                         dashboard_address=":8787",
-                        silence_logs=logging.ERROR if not debug else logging.INFO,  
+                        silence_logs=logging.FATAL
                     )
                     client = cluster.get_client()
                     cluster_context = cluster  # Store for cleanup
