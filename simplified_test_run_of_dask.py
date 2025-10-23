@@ -425,6 +425,9 @@ def main(
         print(f"\n[x] Completed processing all subjects.\n")
 
 
+    cluster_context.close() if cluster_context is not None else None
+
+
 
 
 # endregion main function
