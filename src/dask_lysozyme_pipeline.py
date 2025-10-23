@@ -274,8 +274,12 @@ def save_overlay_image(
     overlay_dir.mkdir(parents=True, exist_ok=True)
 
     # Convert potential dask arrays to numpy inside the task and min-max normalize to [0, 1]
-    def _to_numpy_local(a: Union[np.ndarray, da.Array]) -> np.ndarray:
-        return a.compute() if isinstance(a, da.Array) else np.asarray(a)
+    def _to_numpy_local(a: Union[np.ndarray, da.Array, Sequence[np.ndarray | da.Array]]) -> np.ndarray:
+        if isinstance(a, da.Array):
+            return a.compute()
+        elif isinstance(a, (list, tuple)):
+            return np.asarray(a)
+        return np.asarray(a)
 
     def _minmax01(a: np.ndarray) -> np.ndarray:
         arr = np.asarray(a, dtype=np.float32)
