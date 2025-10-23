@@ -25,8 +25,11 @@ from skimage.morphology import (
 )
 from skimage.segmentation import expand_labels, watershed
 from skimage.util import invert
+try:
+    from src.lysozyme_stain_quantification.utils.remove_artifacts import remove_rectangles
+except ImportError:
+    from lysozyme_stain_quantification.utils.remove_artifacts import remove_rectangles
 
-from src.lysozyme_stain_quantification.utils.remove_artifacts import remove_rectangles
 
 from ..scoring_selector_mod import scoring_selector
 
