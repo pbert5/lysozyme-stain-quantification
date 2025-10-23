@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 from dask_image.imread import imread
 
 
+
 try:
     from src.scientific_image_finder.finder import find_subject_image_sets
     from src.lysozyme_stain_quantification.segment_crypts import segment_crypts
@@ -81,8 +82,8 @@ N_WORKERS = None                # Number of workers (None = auto-detect: CPU_COU
 THREADS_PER_WORKER = None       # Threads per worker (None = auto: CPU_COUNT/N_WORKERS)
 SAVE_IMAGES = True              # Generate overlay visualizations and plots
 DEBUG = True                    # Show detailed progress information
-MAX_SUBJECTS = None           # Limit number of subjects (None = process all)
-
+MAX_SUBJECTS = 2           # Limit number of subjects (None = process all)
+USE_TIMESTAMPS = False
 
 # Advanced settings
 BLOB_SIZE_UM = 50.0            # Expected crypt size in microns
@@ -98,6 +99,7 @@ def find_tif_images_by_keys(
     root_dir: Path,
     keys: List[str],
     max_subjects: Optional[int] = None,
+    use_timestamps: Optional[bool] = False
 ) -> Tuple[List[Path], List[Tuple[Path, ...]], List[str], List[str]]:
     """
     Recursively search for .tif images, pair them by matching keys and base name.
@@ -139,7 +141,7 @@ def find_tif_images_by_keys(
     >>> # ]
     >>> # unmatched contains any .tif that doesn't have _RFP or _DAPI
     """
-    def _extract_base_name(file_name: str, search_key: str) -> str | None:
+    def _extract_base_name(file_name: str, search_key: str, ) -> str | None:
         key = (search_key or "").lower().strip()
         lower_name = file_name.lower()
 
@@ -163,21 +165,27 @@ def find_tif_images_by_keys(
             return file_name[:idx].rstrip(" _-")
 
         return None
-    from datetime import datetime, timezone
-    _TIMESTAMP_FMT = "%Y-%m-%d %H:%M:%S"
+    if use_timestamps:
+        from datetime import datetime, timezone
+        _TIMESTAMP_FMT = "%Y-%m-%d %H:%M:%S"
 
-    def _make_subject_label(base_name: str, subdir_label: str, paths: List[Path], existing: set[str]) -> str:
+    def _make_subject_label(base_name: str, subdir_label: str, paths: List[Path], existing: set[str], use_timestamps: Optional[bool] = False) -> str:
         label = base_name.strip()
         if subdir_label:
             label = f"{label} [{subdir_label}]"
         if label in existing:
-            ts = min(p.stat().st_mtime for p in paths)
-            ts_str = datetime.fromtimestamp(ts, tz=timezone.utc).strftime(_TIMESTAMP_FMT)
-            base_with_ts = f"{label} [{ts_str}]"
-            candidate = base_with_ts
-            suffix = 2
+            if use_timestamps:
+                ts = min(p.stat().st_mtime for p in paths)
+                ts_str = datetime.fromtimestamp(ts, tz=timezone.utc).strftime(_TIMESTAMP_FMT)
+                base_mod = f"{label} [{ts_str}]"
+                candidate = base_mod
+                suffix = 2
+            else:
+                base_mod = label
+                candidate = f"{base_mod} (2)"
+                suffix = 2
             while candidate in existing:
-                candidate = f"{base_with_ts} ({suffix})"
+                candidate = f"{base_mod} ({suffix})"
                 suffix += 1
             label = candidate
         return label
@@ -186,7 +194,7 @@ def find_tif_images_by_keys(
     tif_paths = list(root_dir.rglob("*.tif")) + list(root_dir.rglob("*.TIF"))
     
     if not tif_paths:
-        return [], []
+        return [], [] , [], []
     
     # Organize images by key and base name
     matched_by_key: Dict[str, Dict[str, Path]] = {key: {} for key in keys}
@@ -214,7 +222,7 @@ def find_tif_images_by_keys(
     
     # Find common base names across all keys
     if not keys:
-        return unmatched, []
+        return unmatched, [], [], []
     
     # Get base names that exist for all keys
     common_bases = set(matched_by_key[keys[0]].keys())
@@ -242,7 +250,7 @@ def find_tif_images_by_keys(
             # if both equal, take it; else pick lexicographically for determinism
             subdir_label = sorted(non_empty)[0] if len(set(non_empty)) > 1 else non_empty[0]
         paired_subject_names.append(
-            _make_subject_label(base_name, subdir_label, list(pair), used_labels)
+            _make_subject_label(base_name, subdir_label, list(pair), used_labels, use_timestamps=use_timestamps)
         )
         used_labels.add(paired_subject_names[-1])
         subjects += 1
