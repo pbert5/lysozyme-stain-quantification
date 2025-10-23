@@ -438,6 +438,7 @@ def main(
     max_subjects: Optional[int] = MAX_SUBJECTS,
     blob_size_um: float = BLOB_SIZE_UM,
     connect_to_existing_cluster: bool = False,
+    use_timestamps: Optional[bool] = USE_TIMESTAMPS,
 ) -> None:
     # Suppress the "large graph" warning - we handle this with client.scatter()
     import warnings
@@ -574,6 +575,7 @@ def main(
         keys=["_RFP", "_DAPI"],
 
         max_subjects=max_subjects,
+        use_timestamps=use_timestamps
     )
 
 
