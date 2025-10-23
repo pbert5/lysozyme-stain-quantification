@@ -70,7 +70,7 @@ def find_tif_images_by_keys(
     root_dir: Path,
     keys: List[str],
     max_subjects: Optional[int] = None,
-) -> Tuple[List[Path], List[Tuple[Path, ...]]]:
+) -> Tuple[List[Path], List[Tuple[Path, ...]], List[str], List[str]]:
     """
     Recursively search for .tif images, pair them by matching keys and base name.
     
@@ -90,15 +90,17 @@ def find_tif_images_by_keys(
     
     Returns
     -------
-    Tuple[List[Path], List[Tuple[Path, ...]]]
-        (unmatched_paths, paired_paths) where:
+    Tuple[List[Path], List[Tuple[Path, ...]], List[str], List[str]]
+        (unmatched_paths, paired_paths, paired_subject_names, unmatched_subject_names) where:
         - unmatched_paths: List of .tif images that don't match any key
         - paired_paths: List of tuples, each containing paths in key order
           that share the same base name
+        - paired_subject_names: Subject labels for paired_paths (same order)
+        - unmatched_subject_names: Subject labels for unmatched_paths (same order)
         
     Example
     -------
-    >>> unmatched, pairs = find_tif_images_by_keys(
+    >>> unmatched, pairs, pair_names, unmatched_names = find_tif_images_by_keys(
     ...     Path("./images"),
     ...     keys=["_RFP", "_DAPI"]
     ... )
@@ -133,6 +135,25 @@ def find_tif_images_by_keys(
             return file_name[:idx].rstrip(" _-")
 
         return None
+    from datetime import datetime, timezone
+    _TIMESTAMP_FMT = "%Y-%m-%d %H:%M:%S"
+
+    def _make_subject_label(base_name: str, subdir_label: str, paths: List[Path], existing: set[str]) -> str:
+        label = base_name.strip()
+        if subdir_label:
+            label = f"{label} [{subdir_label}]"
+        if label in existing:
+            ts = min(p.stat().st_mtime for p in paths)
+            ts_str = datetime.fromtimestamp(ts, tz=timezone.utc).strftime(_TIMESTAMP_FMT)
+            base_with_ts = f"{label} [{ts_str}]"
+            candidate = base_with_ts
+            suffix = 2
+            while candidate in existing:
+                candidate = f"{base_with_ts} ({suffix})"
+                suffix += 1
+            label = candidate
+        return label
+
     # Find all .tif images recursively
     tif_paths = list(root_dir.rglob("*.tif")) + list(root_dir.rglob("*.TIF"))
     
@@ -172,11 +193,30 @@ def find_tif_images_by_keys(
     for key in keys[1:]:
         common_bases &= set(matched_by_key[key].keys())
     
-    # Build paired tuples
+    # Build paired tuples and subject names
     paired: List[Tuple[Path, ...]] = []
+    paired_subject_names: List[str] = []
+    used_labels: set[str] = set()
     for base_name in sorted(common_bases):
         pair = tuple(matched_by_key[key][base_name] for key in keys)
         paired.append(pair)
+        # Prefer subdir relative to root if both in same folder; else choose first's
+        rel_dirs = []
+        for p in pair:
+            try:
+                rel_dirs.append(str(p.parent.relative_to(root_dir)))
+            except Exception:
+                rel_dirs.append("")
+        # pick most common non-empty or empty
+        subdir_label = ""
+        non_empty = [d for d in rel_dirs if d]
+        if non_empty:
+            # if both equal, take it; else pick lexicographically for determinism
+            subdir_label = sorted(non_empty)[0] if len(set(non_empty)) > 1 else non_empty[0]
+        paired_subject_names.append(
+            _make_subject_label(base_name, subdir_label, list(pair), used_labels)
+        )
+        used_labels.add(paired_subject_names[-1])
         subjects += 1
         if max_subjects is not None and subjects >= max_subjects:
             break
@@ -190,13 +230,21 @@ def find_tif_images_by_keys(
     #         if base_name not in paired_bases:
     #             unmatched.append(path)
     
-    return unmatched, paired
+    # Build subject names for unmatched (e.g., combined-channel images)
+    unmatched_subject_names: List[str] = []
+    for path in unmatched:
+        # derive base by treating as generic (no key)
+        base = _extract_base_name(path.name, "") or Path(path.name).stem
+        try:
+            subdir = str(path.parent.relative_to(root_dir))
+        except Exception:
+            subdir = ""
+        label = _make_subject_label(base, subdir, [path], used_labels)
+        unmatched_subject_names.append(label)
+        used_labels.add(label)
 
-def _to_numpy(array_like: Union[np.ndarray, da.Array]) -> np.ndarray:
-    """Materialize dask arrays and return a numpy view."""
-    if isinstance(array_like, da.Array):
-        return array_like.compute()
-    return np.asarray(array_like)
+    return unmatched, paired, paired_subject_names, unmatched_subject_names
+
 
 
 def save_overlay_image(
@@ -400,7 +448,7 @@ def main(
     print(f"[x] Results will be saved to: {results_dir.resolve()}\n")
     # Find subject image sets
 
-    unmatched, pairs = find_tif_images_by_keys(
+    unmatched, pairs, paired_subject_names, unmatched_subject_names = find_tif_images_by_keys(
         IMAGE_BASE_DIR,
         keys=["_RFP", "_DAPI"],
 
@@ -410,28 +458,31 @@ def main(
 
     image_bags = {}
   
-    seperate_channels_bag = db.from_sequence(pairs).map(
-        lambda x:dict(
-            paths=x,
-            rfp=(imread(x[0])[...,0]).squeeze(),
-            dapi=(imread(x[1])[...,2]).squeeze(),
+    seperate_channels_bag = db.from_sequence(list(zip(pairs, paired_subject_names))).map(
+        lambda p: dict(
+            paths=p[0],
+            rfp=(imread(p[0][0])[..., 0]).squeeze(),
+            dapi=(imread(p[0][1])[..., 2]).squeeze(),
             source_type="separate_channels",
-        ))
+            subject_name=p[1],
+        )
+    )
 
-    combined_channels_bag = db.from_sequence(unmatched).map(
-        lambda x:dict(
-            paths=[x],
-            image=imread(x),
-        )).map( #TODO: prob need to add in remove rectangles
-            lambda x:dict(
+    combined_channels_bag = (
+        db.from_sequence(list(zip(unmatched, unmatched_subject_names)))
+        .map(lambda p: dict(paths=[p[0]], image=imread(p[0]), subject_name=p[1]))
+        .map(  # TODO: prob need to add in remove rectangles
+            lambda x: dict(
                 paths=x["paths"],
-                rfp=x["image"][...,0].squeeze(),
-                dapi=x["image"][...,2].squeeze(),
+                rfp=x["image"][..., 0].squeeze(),
+                dapi=x["image"][..., 2].squeeze(),
                 source_type="combined_channels",
+                subject_name=x["subject_name"],
             )
         )
+    )
     if debug:
-        print(f"[x] Created Dask bag with:\n\t {combined_channels_bag.count().compute()} subjects from combined channels\n\t and {seperate_channels_bag.count().compute()} subjects from seperate channels.\n")
+        print(f"[x] Created Dask bag with:\n\t {len(unmatched)} subjects from combined channels\n\t and {len(paired_subject_names)} subjects from seperate channels.\n")
 
   
     full_bag = db.concat([seperate_channels_bag, combined_channels_bag])
@@ -473,7 +524,7 @@ def main(
                 normalized_rfp=x["normalized_rfp"],
                 crypt_labels=x["crypt_labels"],
                 microns_per_px=x["scale_um_per_px"],
-                subject_name=x["paths"][0].stem,
+                subject_name=x.get("subject_name", Path(x["paths"][0]).stem),
             )
         )
     )
@@ -501,7 +552,7 @@ def main(
 
     # region execute graph
     if debug:
-        print(f"[x] Executing Dask bag with {full_bag.count().compute()} subjects...\n")
+        print(f"[x] Executing Dask bag with {len(unmatched) + len(paired_subject_names)} subjects...\n")
 
     results = full_bag.compute()
     if debug:
