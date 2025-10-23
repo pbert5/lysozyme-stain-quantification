@@ -304,13 +304,15 @@ def save_overlay_image(
         normalize_scalar=True,
     )
     overlay_rgb = np.moveaxis(overlay_xr.values, 0, -1)
-
-    safe_name = (
-        subject_name.replace("/", "_")
-        .replace(" ", "_")
-        .replace("[", "")
-        .replace("]", "")
-    )
+    if isinstance(subject_name, (list, tuple)):
+        safe_name = "_".join(str(s) for s in subject_name)
+    elif isinstance(subject_name, (str, Path)):
+        safe_name: str = (
+            str(subject_name).replace("/", "_")
+            .replace(" ", "_")
+            .replace("[", "")
+            .replace("]", "")
+            )
     output_path = overlay_dir / f"{safe_name}_{image_source_type}_overlay.png"
     plt.imsave(output_path, overlay_rgb)
 
