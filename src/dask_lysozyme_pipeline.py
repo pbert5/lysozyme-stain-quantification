@@ -66,10 +66,14 @@ except ImportError:
 # endregion 
 import logging
 try:
-    logging.getLogger("src.lysozyme_stain_quantification.normalize_rfp").setLevel(logging.ERROR)
-except Exception:
     logging.getLogger("lysozyme_stain_quantification.normalize_rfp").setLevel(logging.ERROR)
     
+except Exception as e:
+    try:
+        logging.getLogger("src.lysozyme_stain_quantification.normalize_rfp").setLevel(logging.ERROR)
+    except Exception:
+        raise e
+
 
 # region configuration
 # =============================================================================
@@ -82,7 +86,7 @@ N_WORKERS = None                # Number of workers (None = auto-detect: CPU_COU
 THREADS_PER_WORKER = None       # Threads per worker (None = auto: CPU_COUNT/N_WORKERS)
 SAVE_IMAGES = True              # Generate overlay visualizations and plots
 DEBUG = True                    # Show detailed progress information
-MAX_SUBJECTS = 2           # Limit number of subjects (None = process all)
+MAX_SUBJECTS = None           # Limit number of subjects (None = process all)
 USE_TIMESTAMPS = False
 
 # Advanced settings
