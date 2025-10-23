@@ -249,55 +249,56 @@ def main(
                 # Try to connect to existing cluster first
                 existing_client = None
                 needs_respawn = False
-                
-                try:
-                    existing_client = Client(address="tcp://127.0.0.1:45693", timeout='2s')  # Try to connect to default scheduler
-                    scheduler_info = existing_client.scheduler_info()
-                    workers_info = scheduler_info['workers']
-                    actual_n_workers = scheduler_info["n_workers"]
-                    
-                    # Check threads per worker (sample from first worker)
-                    actual_threads_per_worker = None
-                    if workers_info:
-                        first_worker = list(workers_info.values())[0]
-                        actual_threads_per_worker = first_worker.get('nthreads', None)
-                    
-                    print(f"\n✓ Found existing Dask cluster!")
-                    print(f"  Scheduler: {existing_client.scheduler.address}") #type: ignore[attr-defined]
-                    print(f"  Dashboard: {existing_client.dashboard_link}")
-                    print(f"  Workers: {actual_n_workers} × {actual_threads_per_worker} threads")
-                    
-                    # Check if parameters match
-                    params_match = (
-                        actual_n_workers == desired_n_workers and
-                        actual_threads_per_worker == desired_threads_per_worker
-                    )
-                    
-                    if not params_match:
-                        print(f"\n[x]  Cluster parameters don't match desired configuration:")
-                        print(f"    Existing: {actual_n_workers} workers × {actual_threads_per_worker} threads")
-                        print(f"    Desired:  {desired_n_workers} workers × {desired_threads_per_worker} threads")
+
+                if connect_to_existing_cluster:
+                    try:
+                        existing_client = Client(address="tcp://127.0.0.1:45693", timeout='2s')  # Try to connect to default scheduler
+                        scheduler_info = existing_client.scheduler_info()
+                        workers_info = scheduler_info['workers']
+                        actual_n_workers = scheduler_info["n_workers"]
                         
-                        if force_respawn_cluster:
-                            print(f"    FORCE_RESPAWN_CLUSTER=True: Closing existing cluster and respawning...")
-                            needs_respawn = True
-                            existing_client.close()
-                            existing_client = None
+                        # Check threads per worker (sample from first worker)
+                        actual_threads_per_worker = None
+                        if workers_info:
+                            first_worker = list(workers_info.values())[0]
+                            actual_threads_per_worker = first_worker.get('nthreads', None)
+                        
+                        print(f"\n✓ Found existing Dask cluster!")
+                        print(f"  Scheduler: {existing_client.scheduler.address}") #type: ignore[attr-defined]
+                        print(f"  Dashboard: {existing_client.dashboard_link}")
+                        print(f"  Workers: {actual_n_workers} × {actual_threads_per_worker} threads")
+                        
+                        # Check if parameters match
+                        params_match = (
+                            actual_n_workers == desired_n_workers and
+                            actual_threads_per_worker == desired_threads_per_worker
+                        )
+                        
+                        if not params_match:
+                            print(f"\n[x]  Cluster parameters don't match desired configuration:")
+                            print(f"    Existing: {actual_n_workers} workers × {actual_threads_per_worker} threads")
+                            print(f"    Desired:  {desired_n_workers} workers × {desired_threads_per_worker} threads")
+                            
+                            if force_respawn_cluster:
+                                print(f"    FORCE_RESPAWN_CLUSTER=True: Closing existing cluster and respawning...")
+                                needs_respawn = True
+                                existing_client.close()
+                                existing_client = None
+                            else:
+                                print(f"    Using existing cluster anyway (set FORCE_RESPAWN_CLUSTER=True to respawn)")
                         else:
-                            print(f"    Using existing cluster anyway (set FORCE_RESPAWN_CLUSTER=True to respawn)")
-                    else:
-                        print(f"  ✓ Parameters match desired configuration")
-                    
-                    if existing_client is not None:
-                        client = existing_client
-                        print(f"\n  📊 MONITOR: {client.dashboard_link}")
-                        print()
+                            print(f"  ✓ Parameters match desired configuration")
                         
-                except (OSError, TimeoutError):
-                    # No existing cluster, need to start our own
-                    needs_respawn = True
-                    if debug:
-                        print(f"\nNo existing cluster found.")
+                        if existing_client is not None:
+                            client = existing_client
+                            print(f"\n  📊 MONITOR: {client.dashboard_link}")
+                            print()
+                            
+                    except (OSError, TimeoutError):
+                        # No existing cluster, need to start our own
+                        needs_respawn = True
+                        if debug:
+                            print(f"\nNo existing cluster found.")
                 
                 # Start new cluster if needed
                 if needs_respawn or existing_client is None:
