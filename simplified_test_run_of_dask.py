@@ -53,7 +53,7 @@ N_WORKERS = None                # Number of workers (None = auto-detect: CPU_COU
 THREADS_PER_WORKER = None       # Threads per worker (None = auto: CPU_COUNT/N_WORKERS)
 SAVE_IMAGES = True              # Generate overlay visualizations and plots
 DEBUG = True                    # Show detailed progress information
-MAX_SUBJECTS = 100           # Limit number of subjects (None = process all)
+MAX_SUBJECTS = None           # Limit number of subjects (None = process all)
 
 
 # Advanced settings
@@ -248,7 +248,7 @@ def find_tif_images_by_keys(
 
 
 def save_overlay_image(
-    subject_path: Union[Path, str, Sequence[Union[Path, str]]],
+    subject_name: Union[Path, str, Sequence[Union[Path, str]]],
     rfp_image: Union[np.ndarray, da.Array, Sequence[Union[np.ndarray, da.Array]]],
     dapi_image: Union[np.ndarray, da.Array, Sequence[Union[np.ndarray, da.Array]]],
     crypt_labels: Union[np.ndarray, da.Array, Sequence[Union[np.ndarray, da.Array]]],
@@ -264,17 +264,13 @@ def save_overlay_image(
             return value[0]
         return value
 
-    subject_path = subject_path
-    rfp_np = rfp_image
-    dapi_np = dapi_image
-    labels_np = crypt_labels
-    source = image_source_type
+  
 
     overlay_dir = output_dir / "renderings"
     overlay_dir.mkdir(parents=True, exist_ok=True)
 
     overlay_xr = render_label_overlay(
-        channels=[rfp_np, dapi_np, labels_np],
+        channels=[rfp_image, dapi_image, crypt_labels],
         fill_alpha=0.35,
         outline_alpha=1.0,
         outline_width=2,
@@ -283,12 +279,12 @@ def save_overlay_image(
     overlay_rgb = np.moveaxis(overlay_xr.values, 0, -1)
 
     safe_name = (
-        subject_path.stem.replace("/", "_")
+        subject_name.replace("/", "_")
         .replace(" ", "_")
         .replace("[", "")
         .replace("]", "")
     )
-    output_path = overlay_dir / f"{safe_name}_{source}_overlay.png"
+    output_path = overlay_dir / f"{safe_name}_{image_source_type}_overlay.png"
     plt.imsave(output_path, overlay_rgb)
 
     return output_path
@@ -535,12 +531,13 @@ def main(
             | dict(
                 overlay_paths=[
                     save_overlay_image(
-                        subject_path=x["paths"][0],
+                        subject_name=x["subject_name"],
                         rfp_image=x["rfp"],
                         dapi_image=x["dapi"],
                         crypt_labels=x["crypt_labels"],
                         output_dir=results_dir,
                         image_source_type=x["source_type"],
+
                     )
                 ]
             )
