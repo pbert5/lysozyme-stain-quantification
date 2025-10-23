@@ -4,6 +4,7 @@ Quantify per-crypt fluorescence and geometry for lysozyme staining experiments.
 
 from __future__ import annotations
 
+import string
 from typing import Any, Sequence, Iterable
 
 import numpy as np
@@ -219,7 +220,9 @@ def _summarize_single_subject(
 
 
 def summarize_crypt_fluorescence(
-    channels: Sequence[Any],
+    normalized_rfp: np.ndarray | xr.DataArray,
+    crypt_labels: np.ndarray | xr.DataArray,
+    microns_per_px: float,
     *,
     masks: Sequence[Any] | None = None,
     intensity_upper_bound: float | None = None,
@@ -259,27 +262,22 @@ def summarize_crypt_fluorescence(
     """
     del masks  # unused but required by the stack contract
 
-    if len(channels) < 3:
-        raise ValueError(
-            "summarize_crypt_fluorescence expects channels=[normalized_rfp, crypt_labels, microns_per_px]."
-        )
 
-    normalized_input = channels[0]
-    crypt_input = channels[1]
-    microns_input = channels[2]
 
-    if isinstance(normalized_input, xr.DataArray) and "subject" in normalized_input.dims:
-        if not isinstance(crypt_input, xr.DataArray) or "subject" not in crypt_input.dims:
+  
+
+    if isinstance(normalized_rfp, xr.DataArray) and "subject" in normalized_rfp.dims:
+        if not isinstance(crypt_labels, xr.DataArray) or "subject" not in crypt_labels.dims:
             raise ValueError("crypt_labels must be an xarray DataArray with a 'subject' dimension.")
-        if not isinstance(microns_input, xr.DataArray) or "subject" not in microns_input.dims:
+        if not isinstance(microns_per_px, xr.DataArray) or "subject" not in microns_per_px.dims:
             raise ValueError("microns_per_px must be an xarray DataArray with a 'subject' dimension.")
 
-        subjects = list(_ensure_subject_order(normalized_input))
+        subjects = list(_ensure_subject_order(normalized_rfp))
         metrics_list: list[np.ndarray] = []
         for subject_coord in subjects:
-            rfp = _as_image(normalized_input.sel(subject=subject_coord).values, dtype=np.float64)
-            labels = _as_image(crypt_input.sel(subject=subject_coord).values)
-            microns_value = _as_scalar_float(microns_input.sel(subject=subject_coord).values)
+            rfp = _as_image(normalized_rfp.sel(subject=subject_coord).values, dtype=np.float64)
+            labels = _as_image(crypt_labels.sel(subject=subject_coord).values)
+            microns_value = _as_scalar_float(microns_per_px.sel(subject=subject_coord).values)
             metrics = _summarize_single_subject(
                 normalized_rfp=rfp,
                 crypt_labels=labels,
@@ -304,9 +302,9 @@ def summarize_crypt_fluorescence(
             name="crypt_fluorescence_summary",
         )
 
-    normalized_rfp = _as_image(normalized_input, dtype=np.float64)
-    crypt_labels = _as_image(crypt_input)
-    microns_per_px = _as_scalar_float(microns_input)
+    normalized_rfp = _as_image(normalized_rfp, dtype=np.float64)
+    crypt_labels = _as_image(crypt_labels)
+    microns_per_px = _as_scalar_float(microns_per_px)
 
     metrics = _summarize_single_subject(
         normalized_rfp=normalized_rfp,
@@ -450,8 +448,10 @@ def _compute_per_crypt_records(
     return records
 def summarize_crypt_fluorescence_per_crypt(
     *,
-    channels: Sequence[Any],
-    masks: Sequence[Any] | None = None,
+    normalized_rfp: np.ndarray,
+    crypt_labels: np.ndarray,
+    microns_per_px: float,
+    subject_name: string,
 ) -> xr.DataArray:
     """
     Collect per-crypt statistics for every subject as an object-valued DataArray.
@@ -471,39 +471,23 @@ def summarize_crypt_fluorescence_per_crypt(
         A one-dimensional array with ``subject`` dimension. Each element contains a
         ``list`` of ``dict`` records with fields defined by ``PER_CRYPT_FIELD_ORDER``.
     """
-    del masks  # unused
 
-    if len(channels) < 3:
-        raise ValueError(
-            "summarize_crypt_fluorescence_per_crypt expects channels="
-            "[normalized_rfp, crypt_labels, microns_per_px, (optional) subject_name]."
-        )
 
-    normalized_rfp_input = channels[0]
-    crypt_labels_input = channels[1]
-    microns_per_px_input = channels[2]
-    subject_name_input = channels[3] if len(channels) > 3 else None
 
-    if _has_subject_dim(normalized_rfp_input):
-        normalized_rfp_da = normalized_rfp_input
-        crypt_labels_da = crypt_labels_input
-        microns_per_px_da = microns_per_px_input
-        subject_name_da = subject_name_input
 
-        if not isinstance(crypt_labels_da, xr.DataArray) or "subject" not in crypt_labels_da.dims:
-            raise ValueError("crypt_labels channel must be an xarray DataArray with a 'subject' dimension.")
-        if not isinstance(microns_per_px_da, xr.DataArray) or "subject" not in microns_per_px_da.dims:
-            raise ValueError("microns_per_px channel must be an xarray DataArray with a 'subject' dimension.")
 
-        subjects = _ensure_subject_order(normalized_rfp_da)
+
+
+
+        
         numeric_fields = [field for field in PER_CRYPT_FIELD_ORDER if field != "subject_name"]
         subject_names: list[str] = []
         records_per_subject: list[list[dict[str, Any]]] = []
 
         for idx, subject_coord in enumerate(subjects):
-            rfp_sel = normalized_rfp_da.sel(subject=subject_coord)
-            labels_sel = crypt_labels_da.sel(subject=subject_coord)
-            microns_sel = microns_per_px_da.sel(subject=subject_coord)
+            rfp_sel = normalized_rfp.sel(subject=subject_coord)
+            labels_sel = crypt_labels.sel(subject=subject_coord)
+            microns_sel = microns_per_px.sel(subject=subject_coord)
 
             rfp = np.asarray(rfp_sel.values)
             labels = np.asarray(labels_sel.values)
@@ -512,8 +496,8 @@ def summarize_crypt_fluorescence_per_crypt(
                 raise ValueError("microns_per_px channel yielded no values for a subject.")
             microns_value = float(microns_arr[0])
 
-            if subject_name_da is not None:
-                subject_value = subject_name_da.sel(subject=subject_coord).values
+            if subject_name is not None:
+                subject_value = subject_name.sel(subject=subject_coord).values
                 subject_name = _extract_subject_name(subject_value, subject_coord)
             else:
                 subject_name = _extract_subject_name(subject_coord, fallback=None)
@@ -553,15 +537,15 @@ def summarize_crypt_fluorescence_per_crypt(
         )
 
     # When use_apply_ufunc=True the function receives single-subject numpy arrays.
-    rfp = _as_image(normalized_rfp_input)
-    labels = _as_image(crypt_labels_input)
-    microns_arr = np.asarray(microns_per_px_input).reshape(-1)
+    rfp = _as_image(normalized_rfp)
+    labels = _as_image(crypt_labels)
+    microns_arr = np.asarray(microns_per_px).reshape(-1)
     if microns_arr.size == 0:
         raise ValueError("microns_per_px channel yielded no values for a subject.")
     microns_value = float(microns_arr[0])
 
-    if subject_name_input is not None:
-        subject_name = _extract_subject_name(subject_name_input, fallback="subject")
+    if subject_name is not None:
+        subject_name = _extract_subject_name(subject_name, fallback="subject")
     else:
         subject_name = "subject"
 

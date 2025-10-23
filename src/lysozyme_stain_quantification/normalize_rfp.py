@@ -18,10 +18,10 @@ def _as_image(value: Any, *, dtype: type | None = None) -> tuple[np.ndarray, tup
 
 
 def compute_normalized_rfp(
-    channels: Sequence[np.ndarray | da.Array],
-    *,
-    masks: Sequence[np.ndarray] | None = None,
-    **_: Any,
+    rfp_image: np.ndarray | da.Array,
+    dapi_image: np.ndarray | da.Array,
+    crypt_labels: np.ndarray | da.Array,
+
 ) -> da.Array:
     """
     Compute a normalized RFP image that reflects crypt staining relative to background tissue.
@@ -34,14 +34,12 @@ def compute_normalized_rfp(
     Returns:
         Dask array of normalized RFP values where positive numbers indicate stronger crypt contrast.
     """
-    del masks  # masks unused by normalization
+    
 
-    if len(channels) < 3:
-        raise ValueError("compute_normalized_rfp requires RFP, DAPI, and crypt label images.")
 
-    red_channel, red_shape = _as_image(channels[0], dtype=np.float64)
-    blue_channel, blue_shape = _as_image(channels[1], dtype=np.float64)
-    crypt_labels, crypt_shape = _as_image(channels[2])
+    red_channel, red_shape = _as_image(rfp_image, dtype=np.float64)
+    blue_channel, blue_shape = _as_image(dapi_image, dtype=np.float64)
+    crypt_labels, crypt_shape = _as_image(crypt_labels)
 
     if red_channel.shape != blue_channel.shape or red_channel.shape != crypt_labels.shape:
         raise ValueError("RFP, DAPI, and crypt label images must share the same shape.")
