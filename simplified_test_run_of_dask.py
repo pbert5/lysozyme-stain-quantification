@@ -251,7 +251,7 @@ def main(
                 needs_respawn = False
                 
                 try:
-                    existing_client = Client(timeout='2s')  # Try to connect to default scheduler
+                    existing_client = Client(address="tcp://127.0.0.1:45693", timeout='2s')  # Try to connect to default scheduler
                     scheduler_info = existing_client.scheduler_info()
                     workers_info = scheduler_info['workers']
                     actual_n_workers = scheduler_info["n_workers"]
@@ -355,8 +355,7 @@ def main(
             dapi=(imread(x[1])[...,2]).squeeze(),
             source_type="separate_channels",
         ))
-    if debug:
-        print(f"[x] Created Dask bag with {seperate_channels_bag.count().compute()} subjects from separate channels.\n")
+
     combined_channels_bag = db.from_sequence(unmatched).map(
         lambda x:dict(
             paths=[x],
@@ -370,7 +369,7 @@ def main(
             )
         )
     if debug:
-        print(f"[x] Created Dask bag with {combined_channels_bag.count().compute()} subjects from combined channels.\n")
+        print(f"[x] Created Dask bag with:\n\t {combined_channels_bag.count().compute()} subjects from combined channels\n\t and {seperate_channels_bag.count().compute()} subjects from seperate channels.\n")
 
   
     full_bag = db.concat([seperate_channels_bag, combined_channels_bag])
@@ -417,8 +416,13 @@ def main(
 
     # end region build graph
 
+    # region execute graph
+    if debug:
+        print(f"[x] Executing Dask bag with {full_bag.count().compute()} subjects...\n")
 
-
+    results = full_bag.compute()
+    if debug:
+        print(f"\n[x] Completed processing all subjects.\n")
 
 
 
