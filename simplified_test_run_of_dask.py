@@ -357,7 +357,8 @@ def main(
             dapi=(imread(x[1])[...,2]).squeeze(),
             source_type="separate_channels",
         ))
-  
+    if debug:
+        print(f"[x] Created Dask bag with {seperate_channels_bag.count().compute()} subjects from separate channels.\n")
     combined_channels_bag = db.from_sequence(unmatched).map(
         lambda x:dict(
             paths=[x],
@@ -376,11 +377,7 @@ def main(
   
     full_bag = db.concat([seperate_channels_bag, combined_channels_bag])
     full_bag = full_bag.map( #TODO should add a propagate old keys func
-        lambda x: dict(
-            paths=x["paths"],
-            rfp=x["rfp"],
-            dapi=x["dapi"],
-            source_type=x["source_type"],
+        lambda x: x | dict(
             # Add more processing steps here as needed
             scale_um_per_px=get_scale_um_per_px(
                 image_path=x["paths"][0],
@@ -389,19 +386,36 @@ def main(
                 scale_values=[0.2253],
             )
 
-        )).map(lambda x: dict(
-            paths=x["paths"],
-            rfp=x["rfp"],
-            dapi=x["dapi"],
-            source_type=x["source_type"],
-            scale_um_per_px=x["scale_um_per_px"],
+        )).map(lambda x: x |dict(
             crypt_labels= segment_crypts(
                 channels=(x["rfp"], x["dapi"] ),
                 microns_per_px=x["scale_um_per_px"],
                 blob_size_um=blob_size_um,
                 debug=False,
                 max_regions=5)
-        )).compute()
+        )).map(
+            lambda x: x |dict(
+                normalized_rfp=compute_normalized_rfp(
+                    rfp_image=x["rfp"],
+                    dapi_image=x["dapi"],
+                    crypt_labels=x["crypt_labels"],
+                )
+            )
+        ).map(
+            lambda x: x | dict(
+                summary_df=summarize_crypt_fluorescence(
+                    normalized_rfp=x["normalized_rfp"],
+                    crypt_labels=x["crypt_labels"],
+                    microns_per_px=x["scale_um_per_px"],
+                ),
+                per_crypt_df=summarize_crypt_fluorescence_per_crypt(
+                    normalized_rfp=x["normalized_rfp"],
+                    crypt_labels=x["crypt_labels"],
+                    microns_per_px=x["scale_um_per_px"],
+                    subject_name=x["paths"][0].stem,
+                )
+            )
+        )
 
 
 
