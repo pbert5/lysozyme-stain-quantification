@@ -302,6 +302,55 @@ def get_scale_um_per_px(image_path: Path, default_scale_value: float, scale_keys
 
 # endregion helper funcs
 
+# region channel extraction helpers (no early compute)
+def _identify_channel_axis_lite(arr_shape: Tuple[int, ...]) -> int | None:
+    """Heuristic to locate channel axis for HxWxC or CxHxW images."""
+    if len(arr_shape) < 3:
+        return None
+    # Prefer channels-last when small channel count
+    if arr_shape[-1] <= 4 and (len(arr_shape) == 3 or arr_shape[-1] != arr_shape[-2]):
+        return -1
+    # Fallback to channels-first when first dim looks like channels
+    if arr_shape[0] <= 4 and arr_shape[0] != arr_shape[1]:
+        return 0
+    return None
+
+
+def _moveaxis_like(arr: Union[np.ndarray, da.Array], source: int, dest: int):
+    return da.moveaxis(arr, source, dest) if isinstance(arr, da.Array) else np.moveaxis(arr, source, dest)
+
+
+def _squeeze_like(arr: Union[np.ndarray, da.Array]):
+    return arr.squeeze()
+
+
+def _to_2d_channel(arr: Union[np.ndarray, da.Array], preferred_index: int = 0) -> Union[np.ndarray, da.Array]:
+    """Return a 2D view of arr, selecting a channel if needed (no compute)."""
+    # Already 2D
+    if hasattr(arr, "ndim") and arr.ndim == 2:
+        return arr
+    arr_sq = _squeeze_like(arr)
+    if hasattr(arr_sq, "ndim") and arr_sq.ndim == 2:
+        return arr_sq
+    shape = getattr(arr_sq, "shape", None)
+    if shape is None:
+        return arr_sq
+    if len(shape) == 3:
+        axis = _identify_channel_axis_lite(shape)
+        if axis is None:
+            axis = -1  # assume channels-last
+        arr_ch_last = _moveaxis_like(arr_sq, axis, -1)
+        channels = arr_ch_last.shape[-1]
+        # Choose a safe index
+        idx = preferred_index if isinstance(channels, int) and channels > preferred_index else 0
+        return arr_ch_last[..., idx]
+    return arr_sq
+
+
+def _is_2d(arr: Union[np.ndarray, da.Array]) -> bool:
+    return getattr(arr, "ndim", None) == 2
+# endregion channel extraction helpers
+
 # region main function
 def main(
     use_cluster: bool = USE_CLUSTER,
@@ -457,8 +506,8 @@ def main(
     seperate_channels_bag = db.from_sequence(list(zip(pairs, paired_subject_names))).map(
         lambda p: dict(
             paths=p[0],
-            rfp=(imread(p[0][0])[..., 0]).squeeze(),
-            dapi=(imread(p[0][1])[..., 2]).squeeze(),
+            rfp=_to_2d_channel(imread(p[0][0]), preferred_index=0),
+            dapi=_to_2d_channel(imread(p[0][1]), preferred_index=2),
             source_type="separate_channels",
             subject_name=p[1],
         )
@@ -470,8 +519,8 @@ def main(
         .map(  # TODO: prob need to add in remove rectangles
             lambda x: dict(
                 paths=x["paths"],
-                rfp=x["image"][..., 0].squeeze(),
-                dapi=x["image"][..., 2].squeeze(),
+                rfp=_to_2d_channel(x["image"], preferred_index=0),
+                dapi=_to_2d_channel(x["image"], preferred_index=2),
                 source_type="combined_channels",
                 subject_name=x["subject_name"],
             )
@@ -482,6 +531,8 @@ def main(
 
   
     full_bag = db.concat([seperate_channels_bag, combined_channels_bag])
+    # Filter out any subjects that did not yield 2D RFP/DAPI (no early compute)
+    full_bag = full_bag.filter(lambda x: _is_2d(x["rfp"]) and _is_2d(x["dapi"]))
     full_bag = full_bag.map( #TODO should add a propagate old keys func
         lambda x: x | dict(
             # Add more processing steps here as needed
