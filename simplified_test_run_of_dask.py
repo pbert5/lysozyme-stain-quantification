@@ -24,6 +24,9 @@ from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary impor
     PER_CRYPT_FIELD_ORDER,
 )
 from src.lysozyme_stain_quantification.utils.setup_tools import setup_results_dir, plot_all_crypts
+from src.lysozyme_stain_quantification.utils.remove_artifacts import (
+    remove_rectangular_artifacts,
+)
 # Add src to path
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
@@ -351,6 +354,14 @@ def _is_2d(arr: Union[np.ndarray, da.Array]) -> bool:
     return getattr(arr, "ndim", None) == 2
 # endregion channel extraction helpers
 
+# region artifact removal helper (executed lazily on workers)
+def _remove_rectangles_for_combined(image: Union[np.ndarray, da.Array]) -> np.ndarray:
+    # Ensure numpy array for OpenCV operations inside remove_rectangular_artifacts
+    np_img = image.compute() if isinstance(image, da.Array) else np.asarray(image)
+    cleaned = remove_rectangular_artifacts(channels=[np_img])
+    return cleaned
+# endregion artifact removal helper
+
 # endregion channel extraction helpers
 
 # region main function
@@ -518,7 +529,8 @@ def main(
     combined_channels_bag = (
         db.from_sequence(list(zip(unmatched, unmatched_subject_names)))
         .map(lambda p: dict(paths=[p[0]], image=imread(p[0]), subject_name=p[1]))
-        .map(  # TODO: prob need to add in remove rectangles
+        .map(lambda x: x | {"image": _remove_rectangles_for_combined(x["image"])})
+        .map(
             lambda x: dict(
                 paths=x["paths"],
                 rfp=_to_2d_channel(x["image"], preferred_index=0),
