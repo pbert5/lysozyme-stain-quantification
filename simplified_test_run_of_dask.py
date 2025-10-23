@@ -351,6 +351,8 @@ def _is_2d(arr: Union[np.ndarray, da.Array]) -> bool:
     return getattr(arr, "ndim", None) == 2
 # endregion channel extraction helpers
 
+# endregion channel extraction helpers
+
 # region main function
 def main(
     use_cluster: bool = USE_CLUSTER,
@@ -588,13 +590,25 @@ def main(
                         crypt_labels=x["crypt_labels"],
                         output_dir=results_dir,
                         image_source_type=x["source_type"],
-
                     )
                 ]
             )
         )
     else:
         full_bag = full_bag.map(lambda x: x | dict(overlay_paths=[]))
+
+    # Prune heavy arrays before returning to the driver; keep only lightweight results
+    def _prune_heavy(x: Dict[str, object]) -> Dict[str, object]:
+        return {
+            "subject_name": x["subject_name"],
+            "source_type": x["source_type"],
+            "microns_per_px": x["scale_um_per_px"],
+            "summary_image": x["summary_image"],
+            "per_crypt": x["per_crypt_df"],
+            "overlay_paths": x.get("overlay_paths", []),
+        }
+
+    full_bag = full_bag.map(_prune_heavy)
 
     # end region build graph
 
@@ -608,6 +622,72 @@ def main(
 
 
     cluster_context.close() if cluster_context is not None else None
+
+    # Collate lightweight results into two CSVs
+    image_summary_records: List[Dict[str, object]] = []
+    per_crypt_records: List[Dict[str, object]] = []
+
+    for item in results:
+        name = str(item.get("subject_name", ""))
+        source_type = str(item.get("source_type", "unknown"))
+        scale = item.get("microns_per_px", None)
+        summary = item.get("summary_image", {})
+        per_crypt = item.get("per_crypt", {})
+
+        # Image-level record
+        row: Dict[str, object] = {
+            "subject_name": name,
+            "image_source_type": source_type,
+            "microns_per_px": scale,
+        }
+        if isinstance(summary, dict):
+            for field in SUMMARY_FIELD_ORDER:
+                row[field] = summary.get(field, float("nan"))
+        image_summary_records.append(row)
+
+        # Per-crypt records
+        if isinstance(per_crypt, dict):
+            records = per_crypt.get("records", [])
+            if isinstance(records, list):
+                for rec in records:
+                    if not isinstance(rec, dict):
+                        continue
+                    rec_out = dict(rec)
+                    rec_out["subject_name"] = rec_out.get("subject_name", name)
+                    rec_out["image_source_type"] = source_type
+                    per_crypt_records.append(rec_out)
+
+    # Build DataFrames and save
+    image_summary_df = pd.DataFrame(image_summary_records)
+    if not image_summary_df.empty:
+        cols = ["subject_name", "image_source_type", "microns_per_px"] + list(SUMMARY_FIELD_ORDER)
+        image_summary_df = image_summary_df.reindex(columns=[c for c in cols if c in image_summary_df.columns])
+
+    per_crypt_df = pd.DataFrame(per_crypt_records)
+    if not per_crypt_df.empty:
+        cols_pc = list(PER_CRYPT_FIELD_ORDER)
+        if "image_source_type" not in cols_pc:
+            cols_pc.insert(1, "image_source_type")
+        per_crypt_df = per_crypt_df.reindex(columns=[c for c in cols_pc if c in per_crypt_df.columns])
+
+    print("\n[Saving] Writing aggregated CSVs...")
+    img_csv = results_dir / "simple_dask_image_summary.csv"
+    pc_csv = results_dir / "simple_dask_per_crypt.csv"
+    if not image_summary_df.empty:
+        image_summary_df.to_csv(img_csv, index=False)
+        if debug:
+            print(f"  Saved: {img_csv}")
+    else:
+        if debug:
+            print("  No image summary rows to save.")
+
+    if not per_crypt_df.empty:
+        per_crypt_df.to_csv(pc_csv, index=False)
+        if debug:
+            print(f"  Saved: {pc_csv}")
+    else:
+        if debug:
+            print("  No per-crypt rows to save.")
 
 
 
