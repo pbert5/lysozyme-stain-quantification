@@ -404,7 +404,9 @@ def main(
                     normalized_rfp=x["normalized_rfp"],
                     crypt_labels=x["crypt_labels"],
                     microns_per_px=x["scale_um_per_px"],
-                ),
+                ))
+        ).map(
+            lambda x: x | dict(
                 per_crypt_df=summarize_crypt_fluorescence_per_crypt(
                     normalized_rfp=x["normalized_rfp"],
                     crypt_labels=x["crypt_labels"],
