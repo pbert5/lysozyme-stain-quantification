@@ -4,11 +4,10 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Sequence, Union
 
 import dask
 import dask.array as da
-from dask.delayed import delayed
 import dask.bag as db
 import numpy as np
 import pandas as pd
@@ -193,6 +192,59 @@ def find_tif_images_by_keys(
     
     return unmatched, paired
 
+def _to_numpy(array_like: Union[np.ndarray, da.Array]) -> np.ndarray:
+    """Materialize dask arrays and return a numpy view."""
+    if isinstance(array_like, da.Array):
+        return array_like.compute()
+    return np.asarray(array_like)
+
+
+def save_overlay_image(
+    subject_path: Union[Path, str, Sequence[Union[Path, str]]],
+    rfp_image: Union[np.ndarray, da.Array, Sequence[Union[np.ndarray, da.Array]]],
+    dapi_image: Union[np.ndarray, da.Array, Sequence[Union[np.ndarray, da.Array]]],
+    crypt_labels: Union[np.ndarray, da.Array, Sequence[Union[np.ndarray, da.Array]]],
+    output_dir: Path,
+    image_source_type: Union[str, Sequence[str], None] = None,
+) -> Path:
+    """Render and store a single subject overlay using render_label_overlay."""
+
+    def _as_single(value: Union[Sequence, object], label: str):
+        if isinstance(value, (list, tuple)):
+            if len(value) != 1:
+                raise ValueError(f"{label} must describe exactly one subject (got {len(value)}).")
+            return value[0]
+        return value
+
+    subject_path = Path(_as_single(subject_path, "subject_path"))
+    rfp_np = _to_numpy(_as_single(rfp_image, "rfp_image"))
+    dapi_np = _to_numpy(_as_single(dapi_image, "dapi_image"))
+    labels_np = _to_numpy(_as_single(crypt_labels, "crypt_labels"))
+    source = _as_single(image_source_type, "image_source_type") if image_source_type is not None else "unknown"
+
+    overlay_dir = output_dir / "renderings"
+    overlay_dir.mkdir(parents=True, exist_ok=True)
+
+    overlay_xr = render_label_overlay(
+        channels=[rfp_np, dapi_np, labels_np],
+        fill_alpha=0.35,
+        outline_alpha=1.0,
+        outline_width=2,
+        normalize_scalar=True,
+    )
+    overlay_rgb = np.moveaxis(overlay_xr.values, 0, -1)
+
+    safe_name = (
+        subject_path.stem.replace("/", "_")
+        .replace(" ", "_")
+        .replace("[", "")
+        .replace("]", "")
+    )
+    output_path = overlay_dir / f"{safe_name}_{source}_overlay.png"
+    plt.imsave(output_path, overlay_rgb)
+
+    return output_path
+
 
 def get_scale_um_per_px(image_path: Path, default_scale_value: float, scale_keys: list[str], scale_values: list[float]) -> float:
     matched_value = default_scale_value
@@ -201,6 +253,9 @@ def get_scale_um_per_px(image_path: Path, default_scale_value: float, scale_keys
                 matched_value = value
                 break
     return matched_value
+
+
+
 # endregion helper funcs
 
 # region main function
@@ -413,15 +468,34 @@ def main(
                     microns_per_px=x["scale_um_per_px"],
                 ))
         ).map(
-            lambda x: x | dict(
-                per_crypt_df=summarize_crypt_fluorescence_per_crypt(
-                    normalized_rfp=x["normalized_rfp"],
-                    crypt_labels=x["crypt_labels"],
-                    microns_per_px=x["scale_um_per_px"],
-                    subject_name=x["paths"][0].stem,
-                )
+        lambda x: x | dict(
+            per_crypt_df=summarize_crypt_fluorescence_per_crypt(
+                normalized_rfp=x["normalized_rfp"],
+                crypt_labels=x["crypt_labels"],
+                microns_per_px=x["scale_um_per_px"],
+                subject_name=x["paths"][0].stem,
             )
         )
+    )
+
+    if save_images:
+        full_bag = full_bag.map(
+            lambda x: x
+            | dict(
+                overlay_paths=[
+                    save_overlay_image(
+                        subject_path=x["paths"][0],
+                        rfp_image=x["rfp"],
+                        dapi_image=x["dapi"],
+                        crypt_labels=x["crypt_labels"],
+                        output_dir=results_dir,
+                        image_source_type=x["source_type"],
+                    )
+                ]
+            )
+        )
+    else:
+        full_bag = full_bag.map(lambda x: x | dict(overlay_paths=[]))
 
     # end region build graph
 
