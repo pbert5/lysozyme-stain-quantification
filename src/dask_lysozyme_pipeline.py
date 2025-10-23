@@ -519,7 +519,7 @@ def main(
                 use_cluster = False
     # endregion cluster setup
 
-    # region build graph
+    # region build bag graph
     # Setup results directory (after cluster connection)
 
     results_dir: Path = setup_results_dir(SCRIPT_DIR, exp_name="simple_dask")
@@ -535,7 +535,7 @@ def main(
 
 
     image_bags = {}
-  
+    # region build bags
     seperate_channels_bag = db.from_sequence(list(zip(pairs, paired_subject_names))).map(
         lambda p: dict(
             paths=p[0],
@@ -563,10 +563,15 @@ def main(
     if debug:
         print(f"[x] Created Dask bag with:\n\t {len(unmatched)} subjects from combined channels\n\t and {len(paired_subject_names)} subjects from seperate channels.\n")
 
-  
+    
     full_bag = db.concat([seperate_channels_bag, combined_channels_bag])
     # Filter out any subjects that did not yield 2D RFP/DAPI (no early compute)
     full_bag = full_bag.filter(lambda x: _is_2d(x["rfp"]) and _is_2d(x["dapi"]))
+
+    # endregion build bags
+    # region map ops
+
+
     full_bag = full_bag.map( #TODO should add a propagate old keys func
         lambda x: x | dict(
             # Add more processing steps here as needed
@@ -609,6 +614,8 @@ def main(
             )
         )
     )
+    
+    # region map overlay saves
 
     if save_images:
         full_bag = full_bag.map(
@@ -628,7 +635,8 @@ def main(
         )
     else:
         full_bag = full_bag.map(lambda x: x | dict(overlay_paths=[]))
-
+    # endregion map overlay saves
+    # region prune heavy
     # Prune heavy arrays before returning to the driver; keep only lightweight results
     def _prune_heavy(x: Dict[str, object]) -> Dict[str, object]:
         return {
@@ -641,8 +649,9 @@ def main(
         }
 
     full_bag = full_bag.map(_prune_heavy)
+    # endregion prune heavy
 
-    # end region build graph
+    # end region build bag graph
 
     # region execute graph
     if debug:
@@ -655,8 +664,10 @@ def main(
     if debug:
         print(f"\n[x] Completed processing all subjects.\n")
 
-
+    # endregion execute graph
+    # Cleanup cluster if needed
     cluster_context.close() if cluster_context is not None else None
+    # region save stats
 
     # Collate lightweight results into two CSVs
     image_summary_records: List[Dict[str, object]] = []
@@ -723,6 +734,7 @@ def main(
     else:
         if debug:
             print("  No per-crypt rows to save.")
+    # endregion save stats
 
 
 
