@@ -1,5 +1,5 @@
+# region imports
 from __future__ import annotations
-
 import argparse
 import sys
 from pathlib import Path
@@ -37,8 +37,9 @@ try:
     CLUSTER_AVAILABLE = True
 except ImportError:
     CLUSTER_AVAILABLE = False
+# endregion 
 
-
+# region configuration
 # =============================================================================
 # CONFIGURATION - Edit these defaults for quick runs without command-line args
 # =============================================================================
@@ -59,9 +60,9 @@ MEMORY_PER_WORKER = "4GB"      # Memory limit per worker
 IMAGE_BASE_DIR = Path("lysozyme images")
 BLOB_SIZE_UM = 50.0 * 0.4476
 # =============================================================================
+# endregion configuration
 
-
-
+# region helper funcs
 def find_tif_images_by_keys(
     root_dir: Path,
     keys: List[str],
@@ -196,8 +197,9 @@ def get_scale_um_per_px(image_path: Path, default_scale_value: float, scale_keys
                 matched_value = value
                 break
     return matched_value
+# endregion helper funcs
 
-
+# region main function
 def main(
     use_cluster: bool = USE_CLUSTER,
     n_workers: Optional[int] = N_WORKERS,
@@ -219,7 +221,7 @@ def main(
     # Check for cluster support and connect FIRST (before any other setup)
     cluster_context = None
     client = None
-    
+    # region cluster setup
     if use_cluster:
         if not CLUSTER_AVAILABLE:
             print("\nWARNING: Cluster support not available. Falling back to threaded scheduler.")
@@ -327,29 +329,25 @@ def main(
                 print(f"\nWARNING: Failed to start cluster: {e}")
                 print("  Falling back to threaded scheduler.")
                 use_cluster = False
+    # endregion cluster setup
+
+    # region build graph
     # Setup results directory (after cluster connection)
-    if debug:
-        print("[ ] Setting up results directory...")
+
     results_dir: Path = setup_results_dir(SCRIPT_DIR, exp_name="simple_dask")
     print(f"[x] Results will be saved to: {results_dir.resolve()}\n")
     # Find subject image sets
-    if debug:
-        print("[ ] Searching for subject image sets...")
+
     unmatched, pairs = find_tif_images_by_keys(
         IMAGE_BASE_DIR,
         keys=["_RFP", "_DAPI"],
 
         max_subjects=max_subjects,
     )
-    if debug:
-        print(f"[x] Found {len(pairs)} paired subjects and {len(unmatched)} unmatched images.\n")
 
-    if debug:
-        print("[ ] Creating Dask bags for image processing...")
+
     image_bags = {}
-    # for key, paths in :
-    #     print(f"Found {len(paths)} images for key '{key}'")
-    #     image_bags[key] = db.from_sequence(paths).map(imread).map(da.squeeze)
+  
     seperate_channels_bag = db.from_sequence(pairs).map(
         lambda x:dict(
             paths=x,
@@ -403,7 +401,7 @@ def main(
             )
         ).map(
             lambda x: x | dict(
-                summary_df=summarize_crypt_fluorescence(
+                summary_image=summarize_crypt_fluorescence(
                     normalized_rfp=x["normalized_rfp"],
                     crypt_labels=x["crypt_labels"],
                     microns_per_px=x["scale_um_per_px"],
@@ -417,6 +415,7 @@ def main(
             )
         )
 
+    # end region build graph
 
 
 
@@ -424,8 +423,7 @@ def main(
 
 
 
-
-
+# endregion main function
    
 
 
