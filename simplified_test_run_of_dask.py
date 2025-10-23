@@ -216,11 +216,11 @@ def save_overlay_image(
             return value[0]
         return value
 
-    subject_path = Path(_as_single(subject_path, "subject_path"))
-    rfp_np = _to_numpy(_as_single(rfp_image, "rfp_image"))
-    dapi_np = _to_numpy(_as_single(dapi_image, "dapi_image"))
-    labels_np = _to_numpy(_as_single(crypt_labels, "crypt_labels"))
-    source = _as_single(image_source_type, "image_source_type") if image_source_type is not None else "unknown"
+    subject_path = subject_path
+    rfp_np = rfp_image
+    dapi_np = dapi_image
+    labels_np = crypt_labels
+    source = image_source_type
 
     overlay_dir = output_dir / "renderings"
     overlay_dir.mkdir(parents=True, exist_ok=True)
