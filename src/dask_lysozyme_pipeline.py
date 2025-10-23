@@ -15,19 +15,40 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from dask_image.imread import imread
 
-from src.scientific_image_finder.finder import find_subject_image_sets
-from src.lysozyme_stain_quantification.segment_crypts import segment_crypts
-from src.lysozyme_stain_quantification.normalize_rfp import compute_normalized_rfp
-from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary import (
-    summarize_crypt_fluorescence,
-    summarize_crypt_fluorescence_per_crypt,
-    SUMMARY_FIELD_ORDER,
-    PER_CRYPT_FIELD_ORDER,
-)
-from src.lysozyme_stain_quantification.utils.setup_tools import setup_results_dir, plot_all_crypts
-from src.lysozyme_stain_quantification.utils.remove_artifacts import (
-    remove_rectangular_artifacts,
-)
+
+try:
+    from src.scientific_image_finder.finder import find_subject_image_sets
+    from src.lysozyme_stain_quantification.segment_crypts import segment_crypts
+    from src.lysozyme_stain_quantification.normalize_rfp import compute_normalized_rfp
+    from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary import (
+        summarize_crypt_fluorescence,
+        summarize_crypt_fluorescence_per_crypt,
+        SUMMARY_FIELD_ORDER,
+        PER_CRYPT_FIELD_ORDER,
+    )
+    from src.lysozyme_stain_quantification.utils.setup_tools import setup_results_dir, plot_all_crypts
+    from src.lysozyme_stain_quantification.utils.remove_artifacts import (
+        remove_rectangular_artifacts,
+    )
+except ImportError:
+    try:
+        from scientific_image_finder.finder import find_subject_image_sets
+        from lysozyme_stain_quantification.segment_crypts import segment_crypts
+        from lysozyme_stain_quantification.normalize_rfp import compute_normalized_rfp
+        from lysozyme_stain_quantification.quantify.crypt_fluorescence_summary import (
+            summarize_crypt_fluorescence,
+            summarize_crypt_fluorescence_per_crypt,
+            SUMMARY_FIELD_ORDER,
+            PER_CRYPT_FIELD_ORDER,
+        )
+        from lysozyme_stain_quantification.utils.setup_tools import setup_results_dir, plot_all_crypts
+        from lysozyme_stain_quantification.utils.remove_artifacts import (
+            remove_rectangular_artifacts,
+        )
+    except ImportError as e:
+        print(f"ERROR: Failed to import required modules: {e}")
+        print("  Ensure that 'scientific_image_finder' and 'lysozyme_stain_quantification' are installed and accessible.")
+        raise e
 # Add src to path
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
@@ -43,8 +64,11 @@ except ImportError:
     CLUSTER_AVAILABLE = False
 # endregion 
 import logging
-
-logging.getLogger("src.lysozyme_stain_quantification.normalize_rfp").setLevel(logging.ERROR)
+try:
+    logging.getLogger("src.lysozyme_stain_quantification.normalize_rfp").setLevel(logging.ERROR)
+except Exception:
+    logging.getLogger("lysozyme_stain_quantification.normalize_rfp").setLevel(logging.ERROR)
+    
 
 # region configuration
 # =============================================================================
