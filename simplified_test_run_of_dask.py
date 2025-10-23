@@ -1,6 +1,7 @@
 # region imports
 from __future__ import annotations
 import argparse
+import logging
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
@@ -209,6 +210,7 @@ def main(
     debug: bool = DEBUG,
     max_subjects: Optional[int] = MAX_SUBJECTS,
     blob_size_um: float = BLOB_SIZE_UM,
+    connect_to_existing_cluster: bool = False,
 ) -> None:
     # Suppress the "large graph" warning - we handle this with client.scatter()
     import warnings
@@ -240,7 +242,7 @@ def main(
                 
                 if desired_n_workers is None:
                     # Default: balanced strategy (half cores as workers, 2 threads each)
-                    desired_n_workers = max(1, n_cpus // 2)
+                    desired_n_workers = max(1, n_cpus // 2 - 2)
                 
                 if desired_threads_per_worker is None:
                     # Calculate threads to use all CPUs
@@ -317,6 +319,7 @@ def main(
                         threads_per_worker=desired_threads_per_worker,
                         memory_limit=memory_per_worker,
                         dashboard_address=":8787",
+                        silence_logs=logging.ERROR if not debug else logging.INFO,  
                     )
                     client = cluster.get_client()
                     cluster_context = cluster  # Store for cleanup
