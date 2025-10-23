@@ -374,7 +374,12 @@ def _moveaxis_like(arr: Union[np.ndarray, da.Array], source: int, dest: int):
 
 
 def _squeeze_like(arr: Union[np.ndarray, da.Array]):
-    return arr.squeeze()
+    if isinstance(arr, da.Array):
+        return da.squeeze(arr)
+    if isinstance(arr, np.ndarray):
+        return arr.squeeze()
+    else:
+        return arr.squeeze()
 
 
 def _to_2d_channel(arr: Union[np.ndarray, da.Array], preferred_index: int = 0) -> Union[np.ndarray, da.Array]:
