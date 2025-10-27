@@ -631,7 +631,15 @@ def main(
                 scale_values=[0.2253],
             )
 
-        )).map(lambda x: x |dict(
+        ))
+    # Keep light-weight image size so we can compute % Area later without holding arrays
+    full_bag = full_bag.map(
+        lambda x: x | dict(
+            image_pixel_count=int(x["rfp"].shape[0]) * int(x["rfp"].shape[1])
+        )
+    )
+
+    full_bag = full_bag.map(lambda x: x |dict(
             crypt_labels= segment_crypts(
                 channels=(x["rfp"], x["dapi"] ),
                 microns_per_px=x["scale_um_per_px"],
@@ -692,6 +700,7 @@ def main(
             "subject_name": x["subject_name"],
             "source_type": x["source_type"],
             "microns_per_px": x["scale_um_per_px"],
+            "image_pixel_count": x.get("image_pixel_count", None),
             "summary_image": x["summary_image"],
             "per_crypt": x["per_crypt_df"],
             "overlay_paths": x.get("overlay_paths", []),
@@ -726,18 +735,59 @@ def main(
         name = str(item.get("subject_name", ""))
         source_type = str(item.get("source_type", "unknown"))
         scale = item.get("microns_per_px", None)
+        pixel_count = item.get("image_pixel_count", None)
         summary = item.get("summary_image", {})
         per_crypt = item.get("per_crypt", {})
 
-        # Image-level record
+        # Image-level record (renamed to match manual ImageJ summary columns)
         row: Dict[str, object] = {
-            "subject_name": name,
+            # Identification
+            "subject name": name,
             "image_source_type": source_type,
-            "microns_per_px": scale,
         }
+
         if isinstance(summary, dict):
-            for field in SUMMARY_FIELD_ORDER:
-                row[field] = summary.get(field, float("nan"))
+            # Pull required values from our summary
+            crypt_count = summary.get("crypt_count", float("nan"))
+            area_sum_um2 = summary.get("crypt_area_um2_sum", float("nan"))
+            area_mean_um2 = summary.get("crypt_area_um2_mean", float("nan"))
+            mean_intensity = summary.get("rfp_intensity_mean", float("nan"))
+
+            # Compute % Area relative to full image area (μm²)
+            percent_area = float("nan")
+            if scale is not None and pixel_count is not None:
+                try:
+                    image_area_um2 = float(scale) * float(scale) * float(pixel_count)
+                    if image_area_um2 > 0:
+                        percent_area = (float(area_sum_um2) / image_area_um2) * 100.0
+                except Exception:
+                    percent_area = float("nan")
+
+            # Optional extra columns requested
+            effective_full_mean_um2 = summary.get("effective_full_intensity_um2_mean", float("nan"))
+            # RFP intensity standardized by area (μm²) for cross-image comparison
+            rfp_sum_total = summary.get("rfp_sum_total", float("nan"))
+            rfp_intensity_um2_sum = float("nan")
+            if scale is not None and isinstance(rfp_sum_total, (int, float)):
+                try:
+                    rfp_intensity_um2_sum = float(rfp_sum_total) * float(scale) * float(scale)
+                except Exception:
+                    rfp_intensity_um2_sum = float("nan")
+
+            # Map to manual-like column names
+            row.update(
+                {
+                    "Count": crypt_count,
+                    "Total Area": area_sum_um2,
+                    "Average Size": area_mean_um2,
+                    "% Area": percent_area,
+                    "Mean": mean_intensity,
+                    # extras for investigation
+                    "effective_full_intensity_um2_mean": effective_full_mean_um2,
+                    "rfp_intensity_um2_sum": rfp_intensity_um2_sum,
+                }
+            )
+
         image_summary_records.append(row)
 
         # Per-crypt records
@@ -755,7 +805,18 @@ def main(
     # Build DataFrames and save
     image_summary_df = pd.DataFrame(image_summary_records)
     if not image_summary_df.empty:
-        cols = ["subject_name", "image_source_type", "microns_per_px"] + list(SUMMARY_FIELD_ORDER)
+        # Finalize column order to match manual expectations + requested extras
+        cols = [
+            "subject name",
+            "image_source_type",
+            "Count",
+            "Total Area",
+            "Average Size",
+            "% Area",
+            "Mean",
+            "effective_full_intensity_um2_mean",
+            "rfp_intensity_um2_sum",
+        ]
         image_summary_df = image_summary_df.reindex(columns=[c for c in cols if c in image_summary_df.columns])
 
     per_crypt_df = pd.DataFrame(per_crypt_records)
