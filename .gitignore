@@ -18,3 +18,10 @@ karen_detect_crypts.py
 .gitignore
 run.ipynb
 lysozyme.code-workspace
+results/
+*.png
+*.ipynb
+#TODO: its prob super slow bc microns_per_px is not chuncked, need to improve handeling  of run to ensuer everyting passed is chunked
+
+=3.1.0
+test_*

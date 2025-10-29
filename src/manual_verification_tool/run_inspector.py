@@ -15,7 +15,7 @@ from visual_inspector import VisualInspector
 def main():
     """Main entry point."""
     # Default results directory
-    default_results = Path(r"/home/phillip/documents/lysozyme/results/karen")
+    default_results = Path(r"/home/phillip/documents/lysozyme/results/simple_dask")
     default_metadata = default_results / "karen_detect_crypts.csv"
     
     print("=== Lysozyme Stain Visual Inspector ===")

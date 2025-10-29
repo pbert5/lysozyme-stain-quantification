@@ -86,7 +86,7 @@ N_WORKERS = None                # Number of workers (None = auto-detect: CPU_COU
 THREADS_PER_WORKER = None       # Threads per worker (None = auto: CPU_COUNT/N_WORKERS)
 SAVE_IMAGES = True              # Generate overlay visualizations and plots
 DEBUG = True                    # Show detailed progress information
-MAX_SUBJECTS = None           # Limit number of subjects (None = process all)
+MAX_SUBJECTS = 10           # Limit number of subjects (None = process all)
 USE_TIMESTAMPS = False
 
 # Advanced settings
@@ -95,6 +95,15 @@ MEMORY_PER_WORKER = "4GB"      # Memory limit per worker
 # pathing
 IMAGE_BASE_DIR = Path("lysozyme images")
 BLOB_SIZE_UM = 50.0 * 0.4476
+EXP_NAME = "oversegmentation_investigation"
+MAX_REGIONS_PER_IMAGE = 10
+SCORING_WEIGHTS = {
+        "circularity": 0.15,  # Most important - want circular regions
+        "area": 0.25,  # Second - want consistent sizes
+        "line_fit": 0.35,  # Moderate - want aligned regions
+        "red_intensity": 0.85,  # Moderate - want bright regions
+        "com_consistency": 0.050,  # Least - center consistency
+    }
 # =============================================================================
 # endregion configuration
 
@@ -570,7 +579,7 @@ def main(
     # region build bag graph
     # Setup results directory (after cluster connection)
 
-    results_dir: Path = setup_results_dir(SCRIPT_DIR, exp_name="simple_dask")
+    results_dir: Path = setup_results_dir(SCRIPT_DIR, exp_name=EXP_NAME)
     print(f"[x] Results will be saved to: {results_dir.resolve()}\n")
     # Find subject image sets
 
@@ -645,7 +654,8 @@ def main(
                 microns_per_px=x["scale_um_per_px"],
                 blob_size_um=blob_size_um,
                 debug=False,
-                max_regions=5)
+                max_regions=MAX_REGIONS_PER_IMAGE,
+                scoring_weights=SCORING_WEIGHTS)
         )).map(
             lambda x: x |dict(
                 normalized_rfp=compute_normalized_rfp(
@@ -661,6 +671,15 @@ def main(
                     crypt_labels=x["crypt_labels"],
                     microns_per_px=x["scale_um_per_px"],
                 ))
+        ).map(
+            # Also compute a summary using the raw (non-normalized) RFP image
+            lambda x: x | dict(
+                summary_image_raw=summarize_crypt_fluorescence(
+                    normalized_rfp=x["rfp"],
+                    crypt_labels=x["crypt_labels"],
+                    microns_per_px=x["scale_um_per_px"],
+                )
+            )
         ).map(
         lambda x: x | dict(
             per_crypt_df=summarize_crypt_fluorescence_per_crypt(
@@ -702,6 +721,7 @@ def main(
             "microns_per_px": x["scale_um_per_px"],
             "image_pixel_count": x.get("image_pixel_count", None),
             "summary_image": x["summary_image"],
+            "summary_image_raw": x.get("summary_image_raw", {}),
             "per_crypt": x["per_crypt_df"],
             "overlay_paths": x.get("overlay_paths", []),
         }
@@ -727,8 +747,9 @@ def main(
     cluster_context.close() if cluster_context is not None else None
     # region save stats
 
-    # Collate lightweight results into two CSVs
-    image_summary_records: List[Dict[str, object]] = []
+    # Collate lightweight results into CSVs
+    image_summary_records: List[Dict[str, object]] = []           # manual-style summary
+    detailed_image_summary_records: List[Dict[str, object]] = []   # original detailed summary
     per_crypt_records: List[Dict[str, object]] = []
 
     for item in results:
@@ -737,6 +758,7 @@ def main(
         scale = item.get("microns_per_px", None)
         pixel_count = item.get("image_pixel_count", None)
         summary = item.get("summary_image", {})
+        summary_raw = item.get("summary_image_raw", {})
         per_crypt = item.get("per_crypt", {})
 
         # Image-level record (renamed to match manual ImageJ summary columns)
@@ -751,7 +773,14 @@ def main(
             crypt_count = summary.get("crypt_count", float("nan"))
             area_sum_um2 = summary.get("crypt_area_um2_sum", float("nan"))
             area_mean_um2 = summary.get("crypt_area_um2_mean", float("nan"))
-            mean_intensity = summary.get("rfp_intensity_mean", float("nan"))
+            # Use integrated intensity metric: per-crypt intensity sum mean scaled by μm/px
+            rfp_sum_mean = summary.get("rfp_sum_mean", float("nan"))
+            mean_intensity = float("nan")
+            if scale is not None and isinstance(rfp_sum_mean, (int, float)):
+                try:
+                    mean_intensity = float(rfp_sum_mean) * float(scale)
+                except Exception:
+                    mean_intensity = float("nan")
 
             # Compute % Area relative to full image area (μm²)
             percent_area = float("nan")
@@ -790,6 +819,35 @@ def main(
 
         image_summary_records.append(row)
 
+        # Detailed image-level record (original columns retained)
+        detailed_row: Dict[str, object] = {
+            "subject_name": name,
+            "image_source_type": source_type,
+            "microns_per_px": scale,
+        }
+        if isinstance(summary, dict):
+            for field in SUMMARY_FIELD_ORDER:
+                detailed_row[field] = summary.get(field, float("nan"))
+        # If raw summary present, append raw intensity metrics with a prefix
+        if isinstance(summary_raw, dict) and summary_raw:
+            raw_intensity_fields = [
+                "rfp_sum_total",
+                "rfp_sum_mean",
+                "rfp_sum_std",
+                "rfp_intensity_mean",
+                "rfp_intensity_std",
+                "rfp_intensity_min",
+                "rfp_intensity_max",
+                "rfp_max_intensity_mean",
+                "rfp_max_intensity_std",
+                "effective_full_intensity_um2_sum",
+                "effective_full_intensity_um2_mean",
+                "effective_full_intensity_um2_std",
+            ]
+            for f in raw_intensity_fields:
+                detailed_row[f"raw_{f}"] = summary_raw.get(f, float("nan"))
+        detailed_image_summary_records.append(detailed_row)
+
         # Per-crypt records
         if isinstance(per_crypt, dict):
             records = per_crypt.get("records", [])
@@ -819,6 +877,27 @@ def main(
         ]
         image_summary_df = image_summary_df.reindex(columns=[c for c in cols if c in image_summary_df.columns])
 
+    detailed_image_summary_df = pd.DataFrame(detailed_image_summary_records)
+    if not detailed_image_summary_df.empty:
+        det_cols = ["subject_name", "image_source_type", "microns_per_px"] + list(SUMMARY_FIELD_ORDER)
+        # Add raw-prefixed intensity fields to the column order if present
+        raw_cols = [
+            "raw_rfp_sum_total",
+            "raw_rfp_sum_mean",
+            "raw_rfp_sum_std",
+            "raw_rfp_intensity_mean",
+            "raw_rfp_intensity_std",
+            "raw_rfp_intensity_min",
+            "raw_rfp_intensity_max",
+            "raw_rfp_max_intensity_mean",
+            "raw_rfp_max_intensity_std",
+            "raw_effective_full_intensity_um2_sum",
+            "raw_effective_full_intensity_um2_mean",
+            "raw_effective_full_intensity_um2_std",
+        ]
+        det_cols = [c for c in det_cols if c in detailed_image_summary_df.columns] + [c for c in raw_cols if c in detailed_image_summary_df.columns]
+        detailed_image_summary_df = detailed_image_summary_df.reindex(columns=[c for c in det_cols if c in detailed_image_summary_df.columns])
+
     per_crypt_df = pd.DataFrame(per_crypt_records)
     if not per_crypt_df.empty:
         cols_pc = list(PER_CRYPT_FIELD_ORDER)
@@ -828,6 +907,7 @@ def main(
 
     print("\n[Saving] Writing aggregated CSVs...")
     img_csv = results_dir / "simple_dask_image_summary.csv"
+    img_csv_detailed = results_dir / "simple_dask_image_summary_detailed.csv"
     pc_csv = results_dir / "simple_dask_per_crypt.csv"
     if not image_summary_df.empty:
         image_summary_df.to_csv(img_csv, index=False)
@@ -836,6 +916,14 @@ def main(
     else:
         if debug:
             print("  No image summary rows to save.")
+
+    if not detailed_image_summary_df.empty:
+        detailed_image_summary_df.to_csv(img_csv_detailed, index=False)
+        if debug:
+            print(f"  Saved: {img_csv_detailed}")
+    else:
+        if debug:
+            print("  No detailed image summary rows to save.")
 
     if not per_crypt_df.empty:
         per_crypt_df.to_csv(pc_csv, index=False)
