@@ -75,3 +75,14 @@ write_csv(stats, out_csv)
 print(stats)
 cat("\nSaved stats to ", out_csv, " and plots to ", plot_dir, "\n")
 
+# Eva subset (auto subject names containing 'Eva') -------------------------
+eva_df <- df %>% filter(str_detect(auto_subject_name, regex("Eva", ignore_case = TRUE)))
+eva_stats <- analyze(eva_df, label = "Eva")
+if (!is.null(eva_stats) && nrow(eva_stats)) {
+  eva_csv <- file.path(out_dir, "correlation_eva.csv")
+  write_csv(eva_stats, eva_csv)
+  print(eva_stats)
+  cat("Saved Eva subset stats to ", eva_csv, "\n")
+} else {
+  cat("Eva subset: not enough rows for correlation (n < 3).\n")
+}
