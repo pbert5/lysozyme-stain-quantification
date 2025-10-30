@@ -76,6 +76,9 @@ print(stats)
 cat("\nSaved stats to ", out_csv, " and plots to ", plot_dir, "\n")
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> eb75b8e (tested Eva group for high R)
 # Eva subset (auto subject names containing 'Eva') -------------------------
 eva_df <- df %>% filter(str_detect(auto_subject_name, regex("Eva", ignore_case = TRUE)))
 eva_stats <- analyze(eva_df, label = "Eva")
@@ -87,5 +90,8 @@ if (!is.null(eva_stats) && nrow(eva_stats)) {
 } else {
   cat("Eva subset: not enough rows for correlation (n < 3).\n")
 }
+<<<<<<< HEAD
 =======
 >>>>>>> 29b622c (stats start)
+=======
+>>>>>>> eb75b8e (tested Eva group for high R)
