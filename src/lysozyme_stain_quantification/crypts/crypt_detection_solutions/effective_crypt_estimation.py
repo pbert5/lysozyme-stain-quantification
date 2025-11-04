@@ -20,9 +20,21 @@ from skimage.color import label2rgb
 try:
     # Local import (when running inside this repo)
     from ..scoring_selector_mod import scoring_selector
+    from ..identify_potential_crypts_ import identify_potential_crypts
+    from ..remove_edge_touching_regions_mod import remove_edge_touching_regions_sk
+    from .crypt_identification_methodologies import (
+        MorphologyParams,
+        DEFAULT_MORPHOLOGY_PARAMS,
+    )
 except Exception:  # pragma: no cover - fallback path
     # Package import name
     from lysozyme_stain_quantification.crypts.scoring_selector_mod import scoring_selector
+    from lysozyme_stain_quantification.crypts.identify_potential_crypts_ import identify_potential_crypts
+    from lysozyme_stain_quantification.crypts.remove_edge_touching_regions_mod import remove_edge_touching_regions_sk
+    from lysozyme_stain_quantification.crypts.crypt_detection_solutions.crypt_identification_methodologies import (
+        MorphologyParams,
+        DEFAULT_MORPHOLOGY_PARAMS,
+    )
 
 
 # ----------------------------- helpers ----------------------------- #
@@ -68,6 +80,58 @@ def caps(image: np.ndarray, small_r: int, big_r: int) -> tuple[np.ndarray, np.nd
     clean = image1 - np.minimum(image1, hats)
     troughs = np.maximum(image1, hats) - image1
     return hats, clean, troughs
+
+
+def _clip_line_to_bounds(width: int, height: int, x0: float, y0: float, vx: float, vy: float) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """Return two endpoints of the infinite line clipped to image bounds or None.
+
+    The line passes through (x0, y0) with direction (vx, vy). Bounds are
+    [0, width-1] x [0, height-1].
+    """
+    eps = 1e-12
+    xs: list[float] = []
+    ys: list[float] = []
+
+    # Intersect with x = 0 and x = W-1
+    if abs(vx) > eps:
+        for x_edge in (0.0, float(width - 1)):
+            t = (x_edge - x0) / vx
+            y = y0 + t * vy
+            if 0.0 <= y <= float(height - 1):
+                xs.append(x_edge)
+                ys.append(y)
+
+    # Intersect with y = 0 and y = H-1
+    if abs(vy) > eps:
+        for y_edge in (0.0, float(height - 1)):
+            t = (y_edge - y0) / vy
+            x = x0 + t * vx
+            if 0.0 <= x <= float(width - 1):
+                xs.append(x)
+                ys.append(y_edge)
+
+    # Deduplicate close points
+    pts: list[tuple[float, float]] = []
+    for x, y in zip(xs, ys):
+        if not pts or (abs(pts[-1][0] - x) > 1e-6 or abs(pts[-1][1] - y) > 1e-6):
+            pts.append((x, y))
+
+    if len(pts) < 2:
+        return None
+    if len(pts) == 2:
+        return pts[0], pts[1]
+    # Pick farthest two points
+    max_d = -1.0
+    best_pair = (pts[0], pts[1])
+    for i in range(len(pts)):
+        for j in range(i + 1, len(pts)):
+            dx = pts[i][0] - pts[j][0]
+            dy = pts[i][1] - pts[j][1]
+            d2 = dx * dx + dy * dy
+            if d2 > max_d:
+                max_d = d2
+                best_pair = (pts[i], pts[j])
+    return best_pair
 
 
 # ------------------------ effective counts ------------------------- #
@@ -274,12 +338,17 @@ class EffectiveCryptEstimation:
 def estimate_effective_selected_crypt_count(
     *,
     best_crypts: Any,
+    base_labels: Any | None = None,
     rfp_image: Any,
     dapi_image: Any | None = None,
+    blob_size_um: float | None = None,
+    microns_per_px: float | None = None,
+    blob_size_px: int | None = None,
     subject_name: str | Path | None = None,
     output_dir: str | Path | None = None,
     scoring_weights: Optional[Dict[str, float]] = None,
     save_debug: bool = False,
+    expansion_scale: float = 0.25,
 ) -> EffectiveCryptEstimation:
     """
     Estimate the effective number of selected crypts using template matching
@@ -311,8 +380,42 @@ def estimate_effective_selected_crypt_count(
     )
     properties_df = debug_info.get("properties_df")
 
-    # Build match stack across crypt selections
-    match_stack, _slcs = create_match_stack(labels, rfp)
+    # Build a broader medium set strictly by re-scoring the candidate labels
+    # with a larger max_regions (no expansion). If base_labels is not provided,
+    # fall back to using the best set itself.
+    base = labels if base_labels is None else _to_numpy(base_labels).astype(np.int32)
+    properties_df_med = properties_df
+    selected_order_med = None
+    try:
+        scores = effective_label_count_by_values(
+            labels=base,
+            values=rfp,
+            region_mask=base > 0,
+            value_agg="sum_positive",
+        )
+        medium_target = int(max(1, round(scores.get("Neff_simpson", 0) or 0)))
+        medium_crypts, med_debug = scoring_selector(
+            base,
+            rfp,
+            debug=False,
+            max_regions=medium_target,
+            weights=scoring_weights or {
+                "circularity": 0.15,
+                "area": 0.25,
+                "line_fit": 0.20,
+                "red_intensity": 0.55,
+            },
+            return_details=True,
+        )
+        properties_df_med = med_debug.get("properties_df", properties_df)
+        selected_order_med = med_debug.get("selected_labels")
+    except Exception:
+        medium_crypts = labels
+        properties_df_med = properties_df
+        selected_order_med = None
+
+    # Build match stack across medium selections
+    match_stack, _slcs = create_match_stack(medium_crypts, rfp)
     if len(match_stack) == 0:
         return EffectiveCryptEstimation(
             neff_simpson=0.0,
@@ -324,33 +427,88 @@ def estimate_effective_selected_crypt_count(
         )
 
     result_array = np.asarray(match_stack)
-    # Use quality_score as weights per shared code (lower is better; no inversion)
-    if properties_df is not None and len(properties_df) >= result_array.shape[0]:
-        weights_array = np.asarray(properties_df["quality_score"], dtype=np.float64)[: result_array.shape[0]]
+    # Emphasize better quality (lower quality_score => higher weight)
+    if properties_df_med is not None and len(properties_df_med) > 0:
+        if selected_order_med is not None:
+            pdf = properties_df_med.set_index("label_id")
+            scores_arr = []
+            for old_id in selected_order_med:
+                if old_id in pdf.index:
+                    scores_arr.append(float(pdf.loc[old_id]["quality_score"]))
+            s = np.asarray(scores_arr, dtype=np.float64)
+        else:
+            s = np.asarray(properties_df_med["quality_score"], dtype=np.float64)
+        if s.size >= result_array.shape[0] and np.all(np.isfinite(s)):
+            s = s[: result_array.shape[0]]
+            s_min = float(np.min(s))
+            s_max = float(np.max(s))
+            eps_w = 1e-9
+            weights_array = (s_max - s) + eps_w if s_max > s_min else np.ones_like(s)
+        else:
+            weights_array = np.ones((result_array.shape[0],), dtype=np.float64)
     else:
         weights_array = np.ones((result_array.shape[0],), dtype=np.float64)
 
+    # Normalize weights and compute weighted geometric mean
+    ws = float(np.sum(weights_array))
+    if ws <= 0:
+        weights_array = np.ones_like(weights_array)
+        ws = float(np.sum(weights_array))
+    weights_array = weights_array / ws
     log_results = np.log(np.maximum(result_array, 1))  # avoid log(0)
     weighted_log_sum = np.sum(weights_array[:, np.newaxis, np.newaxis] * log_results, axis=0)
-    weight_sum = float(np.sum(weights_array)) if float(np.sum(weights_array)) > 0 else float(result_array.shape[0])
-    collapsed_results = np.exp(weighted_log_sum / weight_sum).astype(np.uint16)
+    collapsed_results = np.exp(weighted_log_sum).astype(np.uint16)
 
     # Morphological cleanup and Otsu selection
-    _hats, clean, _troughs = caps(collapsed_results, 2, 20)
+    # Derive cap radii from blob size, scaled by expansion_scale.
+    def _resolve_blob_size_px(
+        blob_size_px: int | None,
+        blob_size_um: float | None,
+        microns_per_px: float | None,
+        fallback_labels: np.ndarray,
+    ) -> int:
+        if blob_size_px is not None and blob_size_px > 0:
+            return int(blob_size_px)
+        if blob_size_um is not None and microns_per_px is not None and microns_per_px > 0:
+            return max(1, int(round(float(blob_size_um) / float(microns_per_px))))
+        # Heuristic from labels: median equivalent diameter
+        lbl = np.asarray(fallback_labels)
+        if np.any(lbl > 0):
+            max_lab = int(lbl.max())
+            counts = np.bincount(lbl.ravel(), minlength=max_lab + 1)[1:]
+            counts = counts[counts > 0]
+            if counts.size > 0:
+                eq_radius = np.sqrt(counts / np.pi)
+                eq_diam = 2.0 * eq_radius
+                return int(max(1, round(float(np.median(eq_diam)))))
+        return 40  # safe default
+
+    eff_blob_px = _resolve_blob_size_px(blob_size_px, blob_size_um, microns_per_px, base)
+    scaled_blob = max(1, int(round(eff_blob_px * float(expansion_scale))))
+    # Empirical fractions: small ≈ 0.1×, big ≈ 0.5× of diameter
+    small_r = max(1, int(round(0.10 * scaled_blob)))
+    big_r = max(small_r + 1, int(round(0.50 * scaled_blob)))
+
+    _hats, clean, _troughs = caps(collapsed_results, small_r, big_r)
     try:
         otsu_thresh = threshold_otsu(clean)
     except Exception:
         otsu_thresh = float(np.nanmedian(clean))
     binary_clean = clean > otsu_thresh
-    labeled_binary_clean, _ = ndi.label(binary_clean)
+    _output = ndi.label(binary_clean)
+    if isinstance(_output, tuple) and len(_output) == 2:
+            labeled_binary_clean, _ = _output
+    else:
+        labeled_binary_clean, _ = [np.zeros_like(clean, dtype=np.int32), 0]
     labeled_overlap = np.where(labels > 0, labeled_binary_clean, 0)
 
-    # Extract the set of labels inside the crypt selections
+    # Extract peaks that overlap best crypts, then restrict to medium crypt region for counts
     unique_labels = np.unique(labeled_overlap)
     selected_labels_mask = np.isin(labeled_binary_clean, unique_labels)
     selected_labels = np.where(selected_labels_mask, labeled_binary_clean, 0)
+    selected_intersection = np.where(medium_crypts > 0, selected_labels, 0)
 
-    K, Neff_simpson, Neff_shannon, ratio_simpson = effective_label_count(selected_labels)
+    K, Neff_simpson, Neff_shannon, ratio_simpson = effective_label_count(selected_intersection)
 
     debug_path: Optional[Path] = None
     if save_debug and output_dir is not None:
@@ -366,34 +524,64 @@ def estimate_effective_selected_crypt_count(
             if hi > lo:
                 base_rgb = (base_rgb - lo) / (hi - lo)
 
-        medium_crypts = labels  # We only have the final set; use it for boundaries
-        best_crypts = labels
+        best_crypts_local = labels
+        best_bounds = find_boundaries(best_crypts_local)
         medium_bounds = find_boundaries(medium_crypts)
-        best_bounds = find_boundaries(best_crypts)
 
         fig, axs = plt.subplots(3, 2, figsize=(20, 25))
         axs[0, 0].imshow(base_rgb)
         axs[0, 0].set_title("Original Image")
         axs[0, 0].axis("off")
-        axs[0, 0].contour(medium_bounds, colors="g", linewidths=1.5)
-        axs[0, 0].contour(best_bounds, colors="b", linewidths=1)
+        # Draw medium (red, thicker) first, then best (blue, thinner)
+        axs[0, 0].contour(medium_bounds, colors="r", linewidths=2.5)
+        axs[0, 0].contour(best_bounds, colors="b", linewidths=1.2)
+        # Draw intensity-weighted principal axis through global RFP COM within best crypts
+        try:
+            mask = best_crypts_local > 0
+            if np.any(mask):
+                yy, xx = np.nonzero(mask)
+                vals = rfp[mask].astype(np.float64)
+                # Guard against zero weights
+                vals = np.maximum(vals, 1e-9)
+                wsum = float(np.sum(vals))
+                x_mean = float(np.sum(xx * vals) / wsum)
+                y_mean = float(np.sum(yy * vals) / wsum)
+                # Weighted covariance for principal direction
+                x_c = xx - x_mean
+                y_c = yy - y_mean
+                cov_xx = float(np.sum(vals * x_c * x_c) / wsum)
+                cov_xy = float(np.sum(vals * x_c * y_c) / wsum)
+                cov_yy = float(np.sum(vals * y_c * y_c) / wsum)
+                cov = np.array([[cov_xx, cov_xy], [cov_xy, cov_yy]], dtype=np.float64)
+                eigvals, eigvecs = np.linalg.eigh(cov)
+                v = eigvecs[:, np.argmax(eigvals)]  # principal axis
+                # Clip the infinite line to the image bounds
+                seg = _clip_line_to_bounds(
+                    width=base_rgb.shape[1], height=base_rgb.shape[0], x0=x_mean, y0=y_mean, vx=float(v[0]), vy=float(v[1])
+                )
+                if seg is not None:
+                    (x1, y1), (x2, y2) = seg
+                    axs[0, 0].plot([x1, x2], [y1, y2], color="y", linestyle="--", linewidth=2.0)
+        except Exception:
+            pass
 
         axs[0, 1].imshow(collapsed_results, cmap="gray")
         axs[0, 1].set_title("Identified Crypt Regions (collapsed)")
         axs[0, 1].axis("off")
-        axs[0, 1].contour(medium_bounds, colors="r", linewidths=2)
-        axs[0, 1].contour(best_bounds, colors="g", linewidths=1)
+        axs[0, 1].contour(medium_bounds, colors="r", linewidths=2.5)
+        axs[0, 1].contour(best_bounds, colors="b", linewidths=1.2)
 
         axs[1, 0].imshow(label2rgb(labeled_binary_clean), cmap="nipy_spectral")
         axs[1, 0].set_title("Cleaned Peaks (all)")
         axs[1, 0].axis("off")
-        axs[1, 0].contour(medium_bounds, colors="r", linewidths=1)
-        axs[1, 0].contour(best_bounds, colors="g", linewidths=1)
+        axs[1, 0].contour(medium_bounds, colors="r", linewidths=2.5)
+        axs[1, 0].contour(best_bounds, colors="b", linewidths=1.2)
 
         axs[1, 1].imshow(label2rgb(selected_labels), cmap="nipy_spectral")
-        axs[1, 1].set_title("Selected Peaks (within crypts)")
+        axs[1, 1].set_title("Selected Peaks (overlapping best)")
         axs[1, 1].axis("off")
-        axs[1, 1].contour(best_bounds, colors="g", linewidths=1)
+        axs[1, 1].contour(medium_bounds, colors="r", linewidths=2.5)
+        axs[1, 1].contour(best_bounds, colors="b", linewidths=1.2)
 
         # Text summary
         axs[2, 0].axis("off")
@@ -421,7 +609,7 @@ def estimate_effective_selected_crypt_count(
         neff_shannon=float(Neff_shannon),
         k_raw=int(K),
         evenness=float(ratio_simpson) if np.isfinite(ratio_simpson) else float("nan"),
-        selected_labels_k=int(np.max(selected_labels)) if np.any(selected_labels) else 0,
+        selected_labels_k=int(np.max(selected_intersection)) if np.any(selected_intersection) else 0,
         debug_render_path=debug_path,
     )
 
@@ -434,4 +622,3 @@ __all__ = [
     "estimate_effective_selected_crypt_count",
     "EffectiveCryptEstimation",
 ]
-
