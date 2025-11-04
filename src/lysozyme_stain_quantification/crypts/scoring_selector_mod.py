@@ -101,6 +101,11 @@ def scoring_selector(
         return pd.DataFrame(properties)
 
     def _calculate_line_fit_deviation(properties_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute distance from an intensity-weighted principal axis line.
+        - Centers weighted by total_red_intensity (fallback=1)
+        - Distances normalized by sqrt(area/2) as before
+        """
         if len(properties_df) < 2:
             properties_df = properties_df.copy()
             properties_df["distance_from_line"] = 0.0
@@ -108,16 +113,37 @@ def scoring_selector(
             return properties_df
 
         centers = np.array(list(properties_df["physical_com"]))
-        X = centers[:, 1].reshape(-1, 1)
-        y = centers[:, 0]
+        x_coords = centers[:, 1].astype(float)
+        y_coords = centers[:, 0].astype(float)
 
-        reg = LinearRegression().fit(X, y)
-        m = float(reg.coef_[0])
-        b = float(reg.intercept_)
+        weights = properties_df.get("total_red_intensity")
+        if weights is None:
+            w = np.ones(len(centers), dtype=float)
+        else:
+            w = np.asarray(weights, dtype=float)
+            w = np.where(np.isfinite(w) & (w > 0), w, 1.0)
 
-        x_coords = centers[:, 1]
-        y_coords = centers[:, 0]
-        distances = np.abs(m * x_coords - y_coords + b) / np.sqrt(m**2 + 1)
+        wsum = float(np.sum(w))
+        if not np.isfinite(wsum) or wsum <= 0:
+            w = np.ones_like(w)
+            wsum = float(np.sum(w))
+
+        x_mean = float(np.sum(w * x_coords) / wsum)
+        y_mean = float(np.sum(w * y_coords) / wsum)
+        x_c = x_coords - x_mean
+        y_c = y_coords - y_mean
+        cov_xx = float(np.sum(w * x_c * x_c) / wsum)
+        cov_xy = float(np.sum(w * x_c * y_c) / wsum)
+        cov_yy = float(np.sum(w * y_c * y_c) / wsum)
+        cov = np.array([[cov_xx, cov_xy], [cov_xy, cov_yy]], dtype=float)
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        vx, vy = float(eigvecs[0, np.argmax(eigvals)]), float(eigvecs[1, np.argmax(eigvals)])
+        denom = np.sqrt(vx * vx + vy * vy)
+        if denom <= 0:
+            denom = 1.0
+
+        # Perpendicular distance to line through (x_mean, y_mean) with direction (vx, vy)
+        distances = np.abs(vy * (x_coords - x_mean) - vx * (y_coords - y_mean)) / denom
 
         areas = properties_df["area"].to_numpy(dtype=float)
         radius_approx = np.sqrt(areas / 2.0)
