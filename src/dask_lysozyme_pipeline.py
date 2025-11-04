@@ -673,12 +673,16 @@ def main(
             lambda x: x | dict(
                 effective_crypt_estimation=estimate_effective_selected_crypt_count(
                     best_crypts=x["crypt_labels"],
+                    base_labels=x.get("base_labels", x["crypt_labels"]),
                     rfp_image=x["rfp"],
                     dapi_image=x["dapi"],
+                    blob_size_um=blob_size_um,
+                    microns_per_px=x["scale_um_per_px"],
                     subject_name=x.get("subject_name", Path(x["paths"][0]).stem),
                     output_dir=results_dir / "renderings",
                     scoring_weights=SCORING_WEIGHTS,
                     save_debug=save_images,
+                    expansion_scale=0.5, # increase if you are getting oversegmentation
                 )
             )
         ).map(
