@@ -103,6 +103,73 @@ def segment_crypts(
     return shaped
 
 
+def segment_crypts_dual(
+    channels: Sequence[np.ndarray],
+    blob_size_px: int | None = 15,
+    *,
+    blob_size_um: float | None = None,
+    debug: bool = False,
+    scoring_weights: dict[str, float] | None = None,
+    masks: Sequence[np.ndarray] | None = None,
+    max_regions_best: int = 5,
+    microns_per_px: float | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return both the candidate (cleaned) labels and the final best selection.
+    This mirrors segment_crypts() but exposes the base labels so callers can
+    perform alternative selections (e.g., larger max_regions for a medium set).
+    """
+    if len(channels) < 2:
+        raise ValueError("segment_crypts_dual requires at least two channels (RFP and DAPI).")
+
+    scoring_weights = scoring_weights if scoring_weights is not None else {
+        "circularity": 0.35,
+        "area": 0.25,
+        "line_fit": 0.15,
+        "red_intensity": 0.15,
+        "com_consistency": 0.10,
+    }
+
+    crypt_img, crypt_shape = _as_image(channels[0])
+    tissue_image, _ = _as_image(channels[1])
+    if crypt_img.shape != tissue_image.shape:
+        raise ValueError(f"Shape mismatch: red {crypt_img.shape} vs blue {tissue_image.shape}")
+
+    if len(channels) >= 3:
+        microns_per_px = _to_float(channels[2])
+    elif microns_per_px is not None:
+        microns_per_px = float(microns_per_px)
+
+    if blob_size_um is not None:
+        if microns_per_px is None:
+            raise ValueError("Microns-per-pixel value is required when blob_size_um is provided.")
+        if microns_per_px <= 0:
+            raise ValueError("Microns-per-pixel value must be positive.")
+        effective_blob_size_px = max(1, int(round(blob_size_um / microns_per_px)))
+    else:
+        if blob_size_px is None:
+            raise ValueError("blob_size_px cannot be None when blob_size_um is not given.")
+        effective_blob_size_px = int(blob_size_px)
+
+    potential_crypts = identify_potential_crypts(crypt_img, tissue_image, effective_blob_size_px, debug)
+    cleaned_crypts = remove_edge_touching_regions_sk(potential_crypts)
+
+    best_crypts, _ = scoring_selector(
+        cleaned_crypts,
+        crypt_img,
+        debug=debug,
+        max_regions=max_regions_best,
+        weights=scoring_weights,
+        return_details=True,
+    )
+
+    # Ensure 2D return for best only; base is already 2D
+    shaped_best = best_crypts.reshape(crypt_shape)
+    if shaped_best.ndim != 2:
+        shaped_best = np.squeeze(shaped_best)
+    return cleaned_crypts, shaped_best
+
+
 def estimate_effective_count_from_segmented(
     best_crypts: np.ndarray,
     rfp_image: np.ndarray,
