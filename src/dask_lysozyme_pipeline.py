@@ -94,7 +94,7 @@ N_WORKERS = None                # Number of workers (None = auto-detect: CPU_COU
 THREADS_PER_WORKER = None       # Threads per worker (None = auto: CPU_COUNT/N_WORKERS)
 SAVE_IMAGES = True              # Generate overlay visualizations and plots
 DEBUG = True                    # Show detailed progress information
-MAX_SUBJECTS = 90           # Limit number of subjects (None = process all)
+MAX_SUBJECTS = 30           # Limit number of subjects (None = process all)
 USE_TIMESTAMPS = False
 
 # Advanced settings
