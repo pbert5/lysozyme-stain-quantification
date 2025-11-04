@@ -19,7 +19,7 @@ from dask_image.imread import imread
 
 try:
     from src.scientific_image_finder.finder import find_subject_image_sets
-    from src.lysozyme_stain_quantification.segment_crypts import segment_crypts
+    from src.lysozyme_stain_quantification.segment_crypts import segment_crypts, segment_crypts_dual
     from src.lysozyme_stain_quantification.normalize_rfp import compute_normalized_rfp
     from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary import (
         summarize_crypt_fluorescence,
@@ -38,7 +38,7 @@ try:
 except ImportError:
     try:
         from scientific_image_finder.finder import find_subject_image_sets
-        from lysozyme_stain_quantification.segment_crypts import segment_crypts
+        from lysozyme_stain_quantification.segment_crypts import segment_crypts, segment_crypts_dual
         from lysozyme_stain_quantification.normalize_rfp import compute_normalized_rfp
         from lysozyme_stain_quantification.quantify.crypt_fluorescence_summary import (
             summarize_crypt_fluorescence,
