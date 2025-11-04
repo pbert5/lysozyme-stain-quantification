@@ -656,15 +656,19 @@ def main(
         )
     )
 
-    full_bag = full_bag.map(lambda x: x |dict(
-            crypt_labels= segment_crypts(
-                channels=(x["rfp"], x["dapi"] ),
-                microns_per_px=x["scale_um_per_px"],
-                blob_size_um=blob_size_um,
-                debug=False,
-                max_regions=MAX_REGIONS_PER_IMAGE,
-                scoring_weights=SCORING_WEIGHTS)
-        )).map(
+    def _segment_both(rfp, dapi, mpp):
+        base, best = segment_crypts_dual(
+            channels=(rfp, dapi),
+            microns_per_px=mpp,
+            blob_size_um=blob_size_um,
+            debug=False,
+            max_regions_best=MAX_REGIONS_PER_IMAGE,
+            scoring_weights=SCORING_WEIGHTS,
+        )
+        return {"base_labels": base, "crypt_labels": best}
+
+    full_bag = full_bag.map(lambda x: x | _segment_both(x["rfp"], x["dapi"], x["scale_um_per_px"]))\
+        .map(
             # Estimate effective crypt count (Simpson) and optional debug render
             lambda x: x | dict(
                 effective_crypt_estimation=estimate_effective_selected_crypt_count(
