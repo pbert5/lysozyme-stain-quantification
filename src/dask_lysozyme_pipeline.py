@@ -28,6 +28,10 @@ try:
         PER_CRYPT_FIELD_ORDER,
     )
     from src.lysozyme_stain_quantification.utils.setup_tools import setup_results_dir, plot_all_crypts
+    from src.lysozyme_stain_quantification.crypts.crypt_detection_solutions.effective_crypt_estimation import (
+        estimate_effective_selected_crypt_count,
+        EffectiveCryptEstimation,
+    )
     from src.lysozyme_stain_quantification.utils.remove_artifacts import (
         remove_rectangular_artifacts,
     )
@@ -43,6 +47,10 @@ except ImportError:
             PER_CRYPT_FIELD_ORDER,
         )
         from lysozyme_stain_quantification.utils.setup_tools import setup_results_dir, plot_all_crypts
+        from lysozyme_stain_quantification.crypts.crypt_detection_solutions.effective_crypt_estimation import (
+            estimate_effective_selected_crypt_count,
+            EffectiveCryptEstimation,
+        )
         from lysozyme_stain_quantification.utils.remove_artifacts import (
             remove_rectangular_artifacts,
         )
@@ -86,7 +94,7 @@ N_WORKERS = None                # Number of workers (None = auto-detect: CPU_COU
 THREADS_PER_WORKER = None       # Threads per worker (None = auto: CPU_COUNT/N_WORKERS)
 SAVE_IMAGES = True              # Generate overlay visualizations and plots
 DEBUG = True                    # Show detailed progress information
-MAX_SUBJECTS = 30           # Limit number of subjects (None = process all)
+MAX_SUBJECTS = 90           # Limit number of subjects (None = process all)
 USE_TIMESTAMPS = False
 
 # Advanced settings
@@ -657,6 +665,19 @@ def main(
                 max_regions=MAX_REGIONS_PER_IMAGE,
                 scoring_weights=SCORING_WEIGHTS)
         )).map(
+            # Estimate effective crypt count (Simpson) and optional debug render
+            lambda x: x | dict(
+                effective_crypt_estimation=estimate_effective_selected_crypt_count(
+                    best_crypts=x["crypt_labels"],
+                    rfp_image=x["rfp"],
+                    dapi_image=x["dapi"],
+                    subject_name=x.get("subject_name", Path(x["paths"][0]).stem),
+                    output_dir=results_dir / "renderings",
+                    scoring_weights=SCORING_WEIGHTS,
+                    save_debug=save_images,
+                )
+            )
+        ).map(
             lambda x: x |dict(
                 normalized_rfp=compute_normalized_rfp(
                     rfp_image=x["rfp"],
@@ -723,6 +744,7 @@ def main(
             "summary_image": x["summary_image"],
             "summary_image_raw": x.get("summary_image_raw", {}),
             "per_crypt": x["per_crypt_df"],
+            "effective_crypt_estimation": x.get("effective_crypt_estimation", None),
             "overlay_paths": x.get("overlay_paths", []),
         }
 
@@ -750,6 +772,9 @@ def main(
     # Collate lightweight results into CSVs
     image_summary_records: List[Dict[str, object]] = []           # manual-style summary
     detailed_image_summary_records: List[Dict[str, object]] = []   # original detailed summary
+    # Simpson-adjusted variant summaries
+    image_summary_simpson_records: List[Dict[str, object]] = []
+    detailed_image_summary_simpson_records: List[Dict[str, object]] = []
     per_crypt_records: List[Dict[str, object]] = []
 
     for item in results:
@@ -819,6 +844,50 @@ def main(
 
         image_summary_records.append(row)
 
+        # Simpson-adjusted variant row (use Neff_simpson as effective n for means)
+        eff: Optional[EffectiveCryptEstimation] = item.get("effective_crypt_estimation")  # type: ignore[assignment]
+        if isinstance(eff, EffectiveCryptEstimation) and isinstance(summary, dict):
+            simpson_n = float(eff.neff_simpson)
+            # Fallback to original count if invalid
+            if not np.isfinite(simpson_n) or simpson_n <= 0:
+                simpson_n = float(summary.get("crypt_count", float("nan")))
+
+            # Base quantities
+            area_sum_um2 = float(summary.get("crypt_area_um2_sum", float("nan")))
+            rfp_sum_total = float(summary.get("rfp_sum_total", float("nan")))
+            eff_full_sum = float(summary.get("effective_full_intensity_um2_sum", float("nan")))
+
+            # Simpson-adjusted means (sum / Neff)
+            area_mean_um2_simpson = float("nan")
+            rfp_sum_mean_simpson = float("nan")
+            eff_full_mean_um2_simpson = float("nan")
+            if np.isfinite(simpson_n) and simpson_n > 0:
+                area_mean_um2_simpson = area_sum_um2 / simpson_n if np.isfinite(area_sum_um2) else float("nan")
+                rfp_sum_mean_simpson = rfp_sum_total / simpson_n if np.isfinite(rfp_sum_total) else float("nan")
+                eff_full_mean_um2_simpson = (
+                    eff_full_sum / simpson_n if np.isfinite(eff_full_sum) else float("nan")
+                )
+
+            mean_intensity_simpson = float("nan")
+            if scale is not None and np.isfinite(rfp_sum_mean_simpson):
+                try:
+                    mean_intensity_simpson = float(rfp_sum_mean_simpson) * float(scale)
+                except Exception:
+                    mean_intensity_simpson = float("nan")
+
+            row_simpson: Dict[str, object] = {
+                "subject name": name,
+                "image_source_type": source_type,
+                "Effective Count": simpson_n,
+                "Total Area": area_sum_um2,
+                "Average Size (Simpson)": area_mean_um2_simpson,
+                "% Area": row.get("% Area", float("nan")),
+                "Mean (Simpson)": mean_intensity_simpson,
+                "effective_full_intensity_um2_mean (Simpson)": eff_full_mean_um2_simpson,
+                "rfp_intensity_um2_sum": row.get("rfp_intensity_um2_sum", float("nan")),
+            }
+            image_summary_simpson_records.append(row_simpson)
+
         # Detailed image-level record (original columns retained)
         detailed_row: Dict[str, object] = {
             "subject_name": name,
@@ -847,6 +916,42 @@ def main(
             for f in raw_intensity_fields:
                 detailed_row[f"raw_{f}"] = summary_raw.get(f, float("nan"))
         detailed_image_summary_records.append(detailed_row)
+
+        # Detailed Simpson variant row with extra fields
+        if isinstance(eff, EffectiveCryptEstimation) and isinstance(summary, dict):
+            detailed_row_simpson: Dict[str, object] = {
+                "subject_name": name,
+                "image_source_type": source_type,
+                "microns_per_px": scale,
+                "simpson_effective_count": float(eff.neff_simpson),
+                "simpson_k_raw": int(eff.k_raw),
+                "simpson_evenness": float(eff.evenness),
+                "simpson_selected_labels_k": int(eff.selected_labels_k),
+            }
+            # Duplicate originals and add Simpson-adjusted means with suffix
+            for field in SUMMARY_FIELD_ORDER:
+                detailed_row_simpson[field] = summary.get(field, float("nan"))
+
+            # Add computed simpson-adjusted counterparts for sum-based means
+            detailed_row_simpson["crypt_area_um2_mean_simpson"] = (
+                float(summary.get("crypt_area_um2_sum", float("nan")))
+                / float(eff.neff_simpson)
+                if float(eff.neff_simpson) > 0
+                else float("nan")
+            )
+            detailed_row_simpson["rfp_sum_mean_simpson"] = (
+                float(summary.get("rfp_sum_total", float("nan")))
+                / float(eff.neff_simpson)
+                if float(eff.neff_simpson) > 0
+                else float("nan")
+            )
+            detailed_row_simpson["effective_full_intensity_um2_mean_simpson"] = (
+                float(summary.get("effective_full_intensity_um2_sum", float("nan")))
+                / float(eff.neff_simpson)
+                if float(eff.neff_simpson) > 0
+                else float("nan")
+            )
+            detailed_image_summary_simpson_records.append(detailed_row_simpson)
 
         # Per-crypt records
         if isinstance(per_crypt, dict):
@@ -908,6 +1013,8 @@ def main(
     print("\n[Saving] Writing aggregated CSVs...")
     img_csv = results_dir / "simple_dask_image_summary.csv"
     img_csv_detailed = results_dir / "simple_dask_image_summary_detailed.csv"
+    img_csv_simpson = results_dir / "simple_dask_image_summary_simpson.csv"
+    img_csv_detailed_simpson = results_dir / "simple_dask_image_summary_detailed_simpson.csv"
     pc_csv = results_dir / "simple_dask_per_crypt.csv"
     if not image_summary_df.empty:
         image_summary_df.to_csv(img_csv, index=False)
@@ -932,6 +1039,37 @@ def main(
     else:
         if debug:
             print("  No per-crypt rows to save.")
+    # Simpson-adjusted variants
+    image_summary_simpson_df = pd.DataFrame(image_summary_simpson_records)
+    if not image_summary_simpson_df.empty:
+        # Align column order with manual-style variant
+        sim_cols = [
+            "subject name",
+            "image_source_type",
+            "Effective Count",
+            "Total Area",
+            "Average Size (Simpson)",
+            "% Area",
+            "Mean (Simpson)",
+            "effective_full_intensity_um2_mean (Simpson)",
+            "rfp_intensity_um2_sum",
+        ]
+        image_summary_simpson_df = image_summary_simpson_df.reindex(columns=[c for c in sim_cols if c in image_summary_simpson_df.columns])
+        image_summary_simpson_df.to_csv(img_csv_simpson, index=False)
+        if debug:
+            print(f"  Saved: {img_csv_simpson}")
+    else:
+        if debug:
+            print("  No Simpson-adjusted image summary rows to save.")
+
+    detailed_image_summary_simpson_df = pd.DataFrame(detailed_image_summary_simpson_records)
+    if not detailed_image_summary_simpson_df.empty:
+        detailed_image_summary_simpson_df.to_csv(img_csv_detailed_simpson, index=False)
+        if debug:
+            print(f"  Saved: {img_csv_detailed_simpson}")
+    else:
+        if debug:
+            print("  No detailed Simpson-adjusted image summary rows to save.")
     # endregion save stats
 
 

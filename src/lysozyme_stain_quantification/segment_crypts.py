@@ -11,6 +11,10 @@ import xarray as xr
 from .crypts.identify_potential_crypts_ import identify_potential_crypts
 from .crypts.remove_edge_touching_regions_mod import remove_edge_touching_regions_sk
 from .crypts.scoring_selector_mod import scoring_selector
+from .crypts.crypt_detection_solutions.effective_crypt_estimation import (
+    estimate_effective_selected_crypt_count as _estimate_effective_selected_crypt_count,
+    EffectiveCryptEstimation,
+)
 
 
 def _to_float(value: np.ndarray | float | int) -> float:
@@ -97,3 +101,28 @@ def segment_crypts(
     if shaped.ndim != 2:
         shaped = np.squeeze(shaped)
     return shaped
+
+
+def estimate_effective_count_from_segmented(
+    best_crypts: np.ndarray,
+    rfp_image: np.ndarray,
+    dapi_image: np.ndarray | None = None,
+    *,
+    subject_name: str | None = None,
+    output_dir: str | None = None,
+    scoring_weights: dict[str, float] | None = None,
+    save_debug: bool = False,
+) -> EffectiveCryptEstimation:
+    """Convenience wrapper to estimate the effective crypt count for a label image.
+
+    See crypts/crypt_detection_solutions/effective_crypt_estimation.py for details.
+    """
+    return _estimate_effective_selected_crypt_count(
+        best_crypts=best_crypts,
+        rfp_image=rfp_image,
+        dapi_image=dapi_image,
+        subject_name=subject_name,
+        output_dir=output_dir,
+        scoring_weights=scoring_weights,
+        save_debug=save_debug,
+    )
