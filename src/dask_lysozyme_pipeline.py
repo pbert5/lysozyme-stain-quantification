@@ -104,7 +104,7 @@ MEMORY_PER_WORKER = "4GB"      # Memory limit per worker
 IMAGE_BASE_DIR = Path("lysozyme images")
 BLOB_SIZE_UM = 50.0 * 0.4476
 EXP_NAME = "oversegmentation_investigation"
-MAX_REGIONS_PER_IMAGE = 10
+MAX_REGIONS_PER_IMAGE = 5
 SCORING_WEIGHTS = {
         "circularity": 0.15,  # Most important - want circular regions
         "area": 0.25,  # Second - want consistent sizes
