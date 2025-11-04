@@ -108,10 +108,13 @@ def estimate_effective_count_from_segmented(
     rfp_image: np.ndarray,
     dapi_image: np.ndarray | None = None,
     *,
+    blob_size_um: float | None = None,
+    microns_per_px: float | None = None,
     subject_name: str | None = None,
     output_dir: str | None = None,
     scoring_weights: dict[str, float] | None = None,
     save_debug: bool = False,
+    expansion_scale: float = 0.7,
 ) -> EffectiveCryptEstimation:
     """Convenience wrapper to estimate the effective crypt count for a label image.
 
@@ -121,8 +124,11 @@ def estimate_effective_count_from_segmented(
         best_crypts=best_crypts,
         rfp_image=rfp_image,
         dapi_image=dapi_image,
+        blob_size_um=blob_size_um,
+        microns_per_px=microns_per_px,
         subject_name=subject_name,
         output_dir=output_dir,
         scoring_weights=scoring_weights,
         save_debug=save_debug,
+        expansion_scale=expansion_scale,
     )
