@@ -1,0 +1,11 @@
+so first off contours redered in the original imae should be green to contrast with the red and blue image, also is there any way to render in the line that we use for the line fit
+
+then, yes assuming that higher scores are treated as better in the rest of the pipeline, i wanted crypt templates with greater scores to have a greater impact on the collapsed similarity map
+and the goal with medium vrs best crypts:
+assuming the imapact of crypts on the similiarity map is weighted by their score we can increase the scope of the similairty map without comprimising on quality by building it using a larger number of detecitons, a number i had been estimating using effective_label_count_by_values, then in the end we focus in by returning peaks that at least partialy overlap with our best 5 detections
+
+tho their are a couple edge cases that we do need to address for the Neff simpson, 
+1. when a crypt is close to the edge and the majority of its area was in a detection that had been removed for touching a crypt,  it can significantly skew the count by reporting a much larger area then we should be permitting, we can address this by only using within medium_crypts>0 detected regions
+
+2. 
+
