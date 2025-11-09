@@ -96,14 +96,14 @@ N_WORKERS = None                # Number of workers (None = auto-detect: CPU_COU
 THREADS_PER_WORKER = None       # Threads per worker (None = auto: CPU_COUNT/N_WORKERS)
 SAVE_IMAGES = True              # Generate overlay visualizations and plots
 DEBUG = True                    # Show detailed progress information
-MAX_SUBJECTS = 30           # Limit number of subjects (None = process all)
+MAX_SUBJECTS = 2           # Limit number of subjects (None = process all)
 USE_TIMESTAMPS = False
 
 # Advanced settings
 BLOB_SIZE_UM = 50.0            # Expected crypt size in microns
 MEMORY_PER_WORKER = "4GB"      # Memory limit per worker
 # pathing
-IMAGE_BASE_DIR = Path("lysozyme images")
+IMAGE_BASE_DIR = Path("/home/phillip/documents/experimental_data/inputs/karen/lysozyme")
 BLOB_SIZE_UM = 50.0 * 0.4476
 EXP_NAME = "oversegmentation_investigation"
 MAX_REGIONS_PER_IMAGE = 5
