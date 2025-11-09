@@ -35,6 +35,7 @@ try:
     from src.lysozyme_stain_quantification.utils.remove_artifacts import (
         remove_rectangular_artifacts,
     )
+    from src.lysozyme_stain_quantification.utils.overlays import render_label_overlay
 except ImportError:
     try:
         from scientific_image_finder.finder import find_subject_image_sets
@@ -54,6 +55,7 @@ except ImportError:
         from lysozyme_stain_quantification.utils.remove_artifacts import (
             remove_rectangular_artifacts,
         )
+        from lysozyme_stain_quantification.utils.overlays import render_label_overlay
     except ImportError as e:
         print(f"ERROR: Failed to import required modules: {e}")
         print("  Ensure that 'scientific_image_finder' and 'lysozyme_stain_quantification' are installed and accessible.")
@@ -62,8 +64,8 @@ except ImportError:
 SCRIPT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 # Import image-ops-framework for proper overlay rendering
-sys.path.insert(0, str(Path.home() / "documents" / "image-ops-framework" / "src"))
-from image_ops_framework.helpers.overlays import render_label_overlay
+#sys.path.insert(0, str(Path.home() / "documents" / "image-ops-framework" / "src"))
+#from image_ops_framework.helpers.overlays import render_label_overlay
 
 # Try to import cluster support
 try:
