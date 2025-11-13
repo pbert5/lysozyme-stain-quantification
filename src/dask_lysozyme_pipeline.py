@@ -36,6 +36,10 @@ try:
         remove_rectangular_artifacts,
     )
     from src.lysozyme_stain_quantification.utils.overlays import render_label_overlay
+    from src.lysozyme_stain_quantification.utils.debug_image_saver import (
+        DebugImageManager,
+        DEFAULT_DEBUG_STAGE_WHITELIST,
+    )
 except ImportError:
     try:
         from scientific_image_finder.finder import find_subject_image_sets
@@ -56,6 +60,10 @@ except ImportError:
             remove_rectangular_artifacts,
         )
         from lysozyme_stain_quantification.utils.overlays import render_label_overlay
+        from lysozyme_stain_quantification.utils.debug_image_saver import (
+            DebugImageManager,
+            DEFAULT_DEBUG_STAGE_WHITELIST,
+        )
     except ImportError as e:
         print(f"ERROR: Failed to import required modules: {e}")
         print("  Ensure that 'scientific_image_finder' and 'lysozyme_stain_quantification' are installed and accessible.")
@@ -98,6 +106,9 @@ SAVE_IMAGES = True              # Generate overlay visualizations and plots
 DEBUG = True                    # Show detailed progress information
 MAX_SUBJECTS = 2           # Limit number of subjects (None = process all)
 USE_TIMESTAMPS = False
+CAPTURE_DEBUG_IMAGES = True    # Persist intermediate masks/images for animation-ready debugging
+DEBUG_STAGE_WHITELIST = DEFAULT_DEBUG_STAGE_WHITELIST
+DEBUG_SUBJECT_WHITELIST: tuple[str, ...] = tuple()
 
 # Advanced settings
 BLOB_SIZE_UM = 50.0            # Expected crypt size in microns
@@ -105,7 +116,7 @@ MEMORY_PER_WORKER = "4GB"      # Memory limit per worker
 # pathing
 IMAGE_BASE_DIR = Path("/home/phillip/documents/experimental_data/inputs/karen/lysozyme")
 BLOB_SIZE_UM = 50.0 * 0.4476
-EXP_NAME = "oversegmentation_investigation"
+EXP_NAME = "rendering_test_run"
 MAX_REGIONS_PER_IMAGE = 5
 SCORING_WEIGHTS = {
         "circularity": 0.15,  # Most important - want circular regions
@@ -462,6 +473,9 @@ def main(
     blob_size_um: float = BLOB_SIZE_UM,
     connect_to_existing_cluster: bool = False,
     use_timestamps: Optional[bool] = USE_TIMESTAMPS,
+    debug_image_capture: bool = CAPTURE_DEBUG_IMAGES,
+    debug_image_whitelist: Optional[Sequence[str]] = None,
+    debug_subject_whitelist: Optional[Sequence[str]] = DEBUG_SUBJECT_WHITELIST,
 ) -> None:
     # Suppress the "large graph" warning - we handle this with client.scatter()
     import warnings
@@ -591,6 +605,15 @@ def main(
 
     results_dir: Path = setup_results_dir(SCRIPT_DIR, exp_name=EXP_NAME)
     print(f"[x] Results will be saved to: {results_dir.resolve()}\n")
+
+    debug_manager: Optional[DebugImageManager] = None
+    if debug_image_capture:
+        whitelist = list(debug_image_whitelist) if debug_image_whitelist is not None else list(DEBUG_STAGE_WHITELIST)
+        debug_dir = results_dir / "debug_intermediates"
+        debug_manager = DebugImageManager(root_dir=debug_dir, whitelist=whitelist, enabled=True)
+        if debug:
+            print(f"[x] Debug intermediate capture enabled for {len(whitelist)} stages.")
+            print(f"    Output directory: {debug_dir.resolve()}\n")
     # Find subject image sets
 
     unmatched, pairs, paired_subject_names, unmatched_subject_names = find_tif_images_by_keys(
@@ -600,6 +623,31 @@ def main(
         max_subjects=max_subjects,
         use_timestamps=use_timestamps
     )
+
+    total_subjects = len(unmatched_subject_names) + len(paired_subject_names)
+    normalized_subject_whitelist: Optional[set[str]] = None
+    if debug_subject_whitelist:
+        normalized_subject_whitelist = {
+            str(subject).strip().lower() for subject in debug_subject_whitelist if subject and str(subject).strip()
+        }
+
+    if debug_image_capture and debug:
+        if normalized_subject_whitelist:
+            print(f"[x] Debug capture limited to {len(normalized_subject_whitelist)} subject(s).")
+        elif total_subjects <= 5:
+            print(f"[x] Debug capture enabled for all {total_subjects} subjects (<= 5).")
+        else:
+            print(
+                f"[x] Debug capture request skipped automatically because total subjects = {total_subjects} (> 5).\n"
+                "    Use --debug-subject <name> to capture specific subjects during large runs."
+            )
+
+    def _should_capture_subject(name: str) -> bool:
+        if not debug_image_capture:
+            return False
+        if normalized_subject_whitelist is not None:
+            return str(name).strip().lower() in normalized_subject_whitelist
+        return total_subjects <= 5
 
 
     image_bags = {}
@@ -636,6 +684,25 @@ def main(
     # Filter out any subjects that did not yield 2D RFP/DAPI (no early compute)
     full_bag = full_bag.filter(lambda x: _is_2d(x["rfp"]) and _is_2d(x["dapi"]))
 
+    if debug_manager is not None:
+        full_bag = full_bag.map(
+            lambda x: x
+            | dict(
+                debug_session=(
+                    debug_manager.create_session(
+                        subject_name=Path(x["paths"][0]).stem,
+                        source_paths=x["paths"],
+                        metadata={
+                            "source_type": x["source_type"],
+                            "subject_name": x["subject_name"],
+                        },
+                    )
+                    if _should_capture_subject(x["subject_name"])
+                    else None
+                )
+            )
+        )
+
     # endregion build bags
     # region map ops
 
@@ -658,7 +725,7 @@ def main(
         )
     )
 
-    def _segment_both(rfp, dapi, mpp):
+    def _segment_both(rfp, dapi, mpp, debug_session=None):
         base, best = segment_crypts_dual(
             channels=(rfp, dapi),
             microns_per_px=mpp,
@@ -666,10 +733,19 @@ def main(
             debug=False,
             max_regions_best=MAX_REGIONS_PER_IMAGE,
             scoring_weights=SCORING_WEIGHTS,
+            debug_recorder=debug_session,
         )
         return {"base_labels": base, "crypt_labels": best}
 
-    full_bag = full_bag.map(lambda x: x | _segment_both(x["rfp"], x["dapi"], x["scale_um_per_px"]))\
+    full_bag = full_bag.map(
+        lambda x: x
+        | _segment_both(
+            x["rfp"],
+            x["dapi"],
+            x["scale_um_per_px"],
+            x.get("debug_session"),
+        )
+    )\
         .map(
             # Estimate effective crypt count (Simpson) and optional debug render
             lambda x: x | dict(
@@ -685,6 +761,7 @@ def main(
                     scoring_weights=SCORING_WEIGHTS,
                     save_debug=save_images,
                     expansion_scale=0.5, # increase if you are getting oversegmentation
+                    debug_recorder=x.get("debug_session"),
                 )
             )
         ).map(
@@ -743,6 +820,17 @@ def main(
     else:
         full_bag = full_bag.map(lambda x: x | dict(overlay_paths=[]))
     # endregion map overlay saves
+
+    if debug_manager is not None:
+        def _finalize_debug_session(x: Dict[str, object]) -> Dict[str, object]:
+            session = x.get("debug_session")
+            summary = session.to_summary() if session is not None else {}
+            new_x = dict(x)
+            new_x.pop("debug_session", None)
+            new_x["debug_records"] = summary
+            return new_x
+
+        full_bag = full_bag.map(_finalize_debug_session)
     # region prune heavy
     # Prune heavy arrays before returning to the driver; keep only lightweight results
     def _prune_heavy(x: Dict[str, object]) -> Dict[str, object]:
@@ -756,6 +844,7 @@ def main(
             "per_crypt": x["per_crypt_df"],
             "effective_crypt_estimation": x.get("effective_crypt_estimation", None),
             "overlay_paths": x.get("overlay_paths", []),
+            "debug_records": x.get("debug_records", {}),
         }
 
     full_bag = full_bag.map(_prune_heavy)
@@ -1087,9 +1176,46 @@ def main(
 
 # endregion main function
    
-
-
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Dask-based Lysozyme crypt detection pipeline.")
+    parser.add_argument(
+        "--capture-debug-images",
+        action="store_true",
+        help="Persist whitelisted intermediate images for animation/debugging.",
+    )
+    parser.add_argument(
+        "--debug-stage",
+        dest="debug_stage",
+        action="append",
+        default=None,
+        help="Add a stage to the debug whitelist (can be provided multiple times).",
+    )
+    parser.add_argument(
+        "--max-subjects",
+        dest="max_subjects",
+        type=int,
+        default=None,
+        help="Override MAX_SUBJECTS for this run.",
+    )
+    parser.add_argument(
+        "--debug-subject",
+        dest="debug_subject",
+        action="append",
+        default=None,
+        help="Limit intermediate image capture to specific subject names (repeat for multiple).",
+    )
+    return parser
 
 
 if __name__ == "__main__":
-    main()
+    args = _build_arg_parser().parse_args()
+    whitelist = None
+    if args.debug_stage:
+        whitelist = list(DEFAULT_DEBUG_STAGE_WHITELIST)
+        whitelist.extend(args.debug_stage)
+    main(
+        max_subjects=args.max_subjects if args.max_subjects is not None else MAX_SUBJECTS,
+        debug_image_capture=args.capture_debug_images,
+        debug_image_whitelist=whitelist,
+        debug_subject_whitelist=args.debug_subject if args.debug_subject is not None else None,
+    )
