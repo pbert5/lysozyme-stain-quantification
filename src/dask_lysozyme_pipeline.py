@@ -104,11 +104,11 @@ N_WORKERS = None                # Number of workers (None = auto-detect: CPU_COU
 THREADS_PER_WORKER = None       # Threads per worker (None = auto: CPU_COUNT/N_WORKERS)
 SAVE_IMAGES = True              # Generate overlay visualizations and plots
 DEBUG = True                    # Show detailed progress information
-MAX_SUBJECTS = 2           # Limit number of subjects (None = process all)
+MAX_SUBJECTS = 20           # Limit number of subjects (None = process all)
 USE_TIMESTAMPS = False
 CAPTURE_DEBUG_IMAGES = True    # Persist intermediate masks/images for animation-ready debugging
 DEBUG_STAGE_WHITELIST = DEFAULT_DEBUG_STAGE_WHITELIST
-DEBUG_SUBJECT_WHITELIST: tuple[str, ...] = tuple()
+DEBUG_SUBJECT_CAPTURE_LIMIT: Optional[int] = 20
 
 # Advanced settings
 BLOB_SIZE_UM = 50.0            # Expected crypt size in microns
@@ -475,7 +475,8 @@ def main(
     use_timestamps: Optional[bool] = USE_TIMESTAMPS,
     debug_image_capture: bool = CAPTURE_DEBUG_IMAGES,
     debug_image_whitelist: Optional[Sequence[str]] = None,
-    debug_subject_whitelist: Optional[Sequence[str]] = DEBUG_SUBJECT_WHITELIST,
+    debug_subject_limit: Optional[int] = DEBUG_SUBJECT_CAPTURE_LIMIT,
+    debug_subject_whitelist: Optional[Sequence[str]] = None,
 ) -> None:
     # Suppress the "large graph" warning - we handle this with client.scatter()
     import warnings
@@ -631,23 +632,54 @@ def main(
             str(subject).strip().lower() for subject in debug_subject_whitelist if subject and str(subject).strip()
         }
 
+    small_run_limit = max_subjects if max_subjects is not None else MAX_SUBJECTS
+    auto_capture_all = (
+        normalized_subject_whitelist is None
+        and (
+            (small_run_limit is not None and small_run_limit <= 5)
+            or total_subjects <= 5
+        )
+    )
+
+    auto_limit_names: Optional[set[str]] = None
+    if (
+        normalized_subject_whitelist is None
+        and not auto_capture_all
+        and debug_subject_limit is not None
+        and debug_subject_limit > 0
+    ):
+        ordered_subject_names = list(paired_subject_names) + list(unmatched_subject_names)
+        auto_limit_names = {
+            str(name).strip().lower()
+            for name in ordered_subject_names[: min(debug_subject_limit, len(ordered_subject_names))]
+        }
+        if not auto_limit_names:
+            auto_limit_names = None
+
     if debug_image_capture and debug:
         if normalized_subject_whitelist:
             print(f"[x] Debug capture limited to {len(normalized_subject_whitelist)} subject(s).")
-        elif total_subjects <= 5:
-            print(f"[x] Debug capture enabled for all {total_subjects} subjects (<= 5).")
+        elif auto_capture_all:
+            print(f"[x] Debug capture enabled for all subjects (<=5).")
+        elif auto_limit_names is not None:
+            print(f"[x] Debug capture enabled for first {len(auto_limit_names)} subject(s) (limit={debug_subject_limit}).")
         else:
             print(
-                f"[x] Debug capture request skipped automatically because total subjects = {total_subjects} (> 5).\n"
-                "    Use --debug-subject <name> to capture specific subjects during large runs."
+                f"[x] Debug capture skipped automatically (total subjects={total_subjects}). "
+                "Use --debug-subject-count or --debug-subject for more control."
             )
 
     def _should_capture_subject(name: str) -> bool:
         if not debug_image_capture:
             return False
+        key = str(name).strip().lower()
         if normalized_subject_whitelist is not None:
-            return str(name).strip().lower() in normalized_subject_whitelist
-        return total_subjects <= 5
+            return key in normalized_subject_whitelist
+        if auto_capture_all:
+            return True
+        if auto_limit_names is not None:
+            return key in auto_limit_names
+        return False
 
 
     image_bags = {}
@@ -1180,8 +1212,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Dask-based Lysozyme crypt detection pipeline.")
     parser.add_argument(
         "--capture-debug-images",
+        dest="capture_debug_images",
         action="store_true",
         help="Persist whitelisted intermediate images for animation/debugging.",
+    )
+    parser.add_argument(
+        "--no-capture-debug-images",
+        dest="capture_debug_images",
+        action="store_false",
+        help="Disable intermediate image capture even if globally enabled.",
     )
     parser.add_argument(
         "--debug-stage",
@@ -1191,10 +1230,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Add a stage to the debug whitelist (can be provided multiple times).",
     )
     parser.add_argument(
+        "--debug-subject-count",
+        dest="debug_subject_count",
+        type=int,
+        default=DEBUG_SUBJECT_CAPTURE_LIMIT,
+        help="Capture debug intermediates for the first N subjects when no names are specified (default: 20).",
+    )
+    parser.add_argument(
         "--max-subjects",
         dest="max_subjects",
         type=int,
-        default=None,
+        default=MAX_SUBJECTS,
         help="Override MAX_SUBJECTS for this run.",
     )
     parser.add_argument(
@@ -1204,6 +1250,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Limit intermediate image capture to specific subject names (repeat for multiple).",
     )
+    parser.set_defaults(capture_debug_images=CAPTURE_DEBUG_IMAGES)
     return parser
 
 
@@ -1217,5 +1264,6 @@ if __name__ == "__main__":
         max_subjects=args.max_subjects if args.max_subjects is not None else MAX_SUBJECTS,
         debug_image_capture=args.capture_debug_images,
         debug_image_whitelist=whitelist,
+        debug_subject_limit=args.debug_subject_count,
         debug_subject_whitelist=args.debug_subject if args.debug_subject is not None else None,
     )

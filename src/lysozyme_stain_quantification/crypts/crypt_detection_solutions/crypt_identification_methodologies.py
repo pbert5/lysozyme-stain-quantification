@@ -33,6 +33,8 @@ except ImportError:
 
 from ..scoring_selector_mod import scoring_selector
 
+from ...utils.debug_image_saver import DebugImageSession
+
 
 # ---------------------------- utilities ---------------------------- #
 
@@ -130,13 +132,20 @@ def preprocess_for_caps(image: np.ndarray, salt_and_pepper_noise_size: Optional[
 # ---------------------------- morphology helpers ---------------------------- #
 
 
-def _caps_preprocess(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.ndarray, np.ndarray]:
+def _caps_preprocess(
+    image: np.ndarray,
+    small_r: int,
+    big_r: int,
+    *,
+    return_details: bool = False,
+) -> Tuple[np.ndarray, np.ndarray] | Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Shared preprocessing for cap-style morphology computations."""
     image = to_float01(image)
-    #image = equalize_adapthist(image, clip_limit=0.01)
-
-    hats = dilation(image, disk(big_r)) - dilation(image, disk(small_r))
-    hats = minmax(hats)
+    big_dilation = dilation(image, disk(big_r))
+    small_dilation = dilation(image, disk(small_r))
+    hats = minmax(big_dilation - small_dilation)
+    if return_details:
+        return image, hats, big_dilation, small_dilation
     return image, hats
 
 
@@ -175,6 +184,40 @@ def caps_clean_troughs(image: np.ndarray, small_r: int, big_r: int) -> Tuple[np.
 
     troughs = np.maximum(image_eq, hats) - image_eq
     troughs = minmax(troughs)
+    return clean, troughs
+
+
+def _caps_clean_troughs_debug(
+    image: np.ndarray,
+    small_r: int,
+    big_r: int,
+    *,
+    stage_prefix: str,
+    source: str,
+    debug_recorder: DebugImageSession | None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Variant of caps_clean_troughs that records intermediate components when requested."""
+    if debug_recorder is None:
+        return caps_clean_troughs(image, small_r, big_r)
+
+    image_eq, hats, big_dilation, small_dilation = _caps_preprocess(
+        image,
+        small_r,
+        big_r,
+        return_details=True,
+    )
+    clean = image_eq - np.minimum(image_eq, hats)
+    clean = minmax(clean)
+    troughs = np.maximum(image_eq, hats) - image_eq
+    troughs = minmax(troughs)
+
+    debug_recorder.save_image(image_eq, f"{stage_prefix}_caps_input", source=source)
+    debug_recorder.save_image(big_dilation, f"{stage_prefix}_big_dilation", source=source)
+    debug_recorder.save_image(small_dilation, f"{stage_prefix}_small_dilation", source=source)
+    debug_recorder.save_image(hats, f"{stage_prefix}_caps_hats", source=source)
+    debug_recorder.save_image(clean, f"{stage_prefix}_caps_clean", source=source)
+    debug_recorder.save_image(troughs, f"{stage_prefix}_caps_troughs", source=source)
+
     return clean, troughs
 
 
@@ -241,6 +284,7 @@ def identify_crypt_seeds_new(
     tissue_image: np.ndarray,
     *,
     params: Optional[MorphologyParams] = None,
+    debug_recorder: DebugImageSession | None = None,
 ) -> np.ndarray:
     """Newer seed logic that prefers solid crypts."""
     params = params or DEFAULT_MORPHOLOGY_PARAMS
@@ -248,22 +292,65 @@ def identify_crypt_seeds_new(
     crypt_img = preprocess_for_caps(crypt_img, params.salt_and_pepper_noise_size)
     tissue_image = preprocess_for_caps(equalize_adapthist(tissue_image), params.salt_and_pepper_noise_size)
 
+    def _capture(image: np.ndarray, stage: str) -> None:
+        if debug_recorder is not None:
+            debug_recorder.save_image(image, stage, source="identify_crypt_seeds_new")
+
+    _capture(crypt_img, "crypt_preprocessed")
+    _capture(tissue_image, "tissue_preprocessed")
+
     max_expansion = max(1, int(round(params.crypt_radius_px)))
-    tissue_clean, tissue_troughs = caps_clean_troughs(tissue_image, 1, max_expansion)
-    crypt_clean, crypt_troughs = caps_clean_troughs(crypt_img, 2, max_expansion)
+    tissue_clean, tissue_troughs = _caps_clean_troughs_debug(
+        tissue_image,
+        1,
+        max_expansion,
+        stage_prefix="tissue",
+        source="identify_crypt_seeds_new",
+        debug_recorder=debug_recorder,
+    )
+    crypt_clean, crypt_troughs = _caps_clean_troughs_debug(
+        crypt_img,
+        2,
+        max_expansion,
+        stage_prefix="crypt",
+        source="identify_crypt_seeds_new",
+        debug_recorder=debug_recorder,
+    )
+
+    _capture(tissue_clean, "tissue_clean")
+    _capture(tissue_troughs, "tissue_troughs")
+    _capture(crypt_clean, "crypt_clean")
+    _capture(crypt_troughs, "crypt_troughs")
 
     thinned_crypts = np.maximum(crypt_clean - tissue_clean, 0)
     split_crypts = np.maximum(crypt_clean - tissue_troughs, 0)
+    _capture(thinned_crypts, "thinned_crypts")
+    _capture(split_crypts, "split_crypts")
 
-    good_crypts = minmax(opening(split_crypts * thinned_crypts, footprint=disk(5)) ** 0.5)
+    combined = split_crypts * thinned_crypts
+    _capture(combined, "split_times_thinned")
+
+    opened = opening(combined, footprint=disk(5))
+    _capture(opened, "opened_split_times_thinned")
+
+    good_crypts = minmax(opened ** 0.5)
+    _capture(good_crypts, "good_crypts")
     if params.peak_smoothing_sigma and params.peak_smoothing_sigma > 0:
         good_crypts = gaussian_filter(good_crypts, params.peak_smoothing_sigma)
         good_crypts = minmax(good_crypts)
+        _capture(good_crypts, "good_crypts_smoothed")
 
     distance = tissue_troughs - good_crypts
     maxi = local_maxima(good_crypts)
-    seeds = watershed(distance, markers=maxi, mask=tissue_troughs < good_crypts)
+    _capture(distance, "distance_image")
+    _capture(maxi.astype(np.float32), "local_maxima_mask")
+
+    watershed_mask = tissue_troughs < good_crypts
+    _capture(watershed_mask.astype(np.float32), "watershed_mask")
+    seeds = watershed(distance, markers=maxi, mask=watershed_mask)
+    _capture(seeds, "watershed_labels")
     labeled: np.ndarray = sk_label(seeds > 0)  # type: ignore
+    _capture(labeled, "seed_labels")
     return labeled
 
 
@@ -273,6 +360,7 @@ def identify_potential_crypts_old_like(
     blob_size_px: Optional[int] = None,
     external_crypt_seeds: Optional[np.ndarray] = None,
     params: Optional[MorphologyParams] = None,
+    debug_recorder: DebugImageSession | None = None,
 ) -> np.ndarray:
     """Original watershed skeleton with optional external seeds."""
     crypt_img = to_float01(crypt_img)
@@ -314,12 +402,16 @@ def identify_potential_crypts_old_like(
     combined_labels = np.zeros_like(labeled_diff_r, dtype=int)
     combined_labels[tissue_eroded] = 2
     combined_labels[labeled_diff_r > 0] = 1
+    if debug_recorder is not None:
+        debug_recorder.save_image(combined_labels, "old_like_combined_labels", source="identify_potential_crypts_old_like")
 
     if params.intervilli_distance_px:
         expand_distance = max(1, int(round(params.intervilli_distance_px)))
     else:
         expand_distance = max(1, int(round(effective_blob * 2.5)))
     expanded_labels = expand_labels(combined_labels, distance=expand_distance)
+    if debug_recorder is not None:
+        debug_recorder.save_image(expanded_labels, "old_like_expanded_labels", source="identify_potential_crypts_old_like")
 
     reworked = np.zeros_like(expanded_labels, dtype=np.int32)
     reworked[expanded_labels == 2] = 1
@@ -335,7 +427,10 @@ def identify_potential_crypts_old_like(
     ws_labels = watershed(elevation, markers=reworked, mask=mask_ws).copy()
     ws_labels[ws_labels == 1] = 0
     ws_labels[ws_labels > 1] -= 1
-    return ws_labels.astype(np.int32)
+    ws_labels = ws_labels.astype(np.int32)
+    if debug_recorder is not None:
+        debug_recorder.save_image(ws_labels, "old_like_watershed", source="identify_potential_crypts_old_like")
+    return ws_labels
 
 
 def _seed_health_metrics(seed_labels: np.ndarray) -> Dict[str, Any]:
@@ -416,6 +511,7 @@ def identify_potential_crypts_hybrid(
     min_coverage: float = 0.002,
     debug: bool = False,
     params: Optional[MorphologyParams] = None,
+    debug_recorder: DebugImageSession | None = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
     Hybrid pipeline that evaluates both seed strategies and keeps the better result.
@@ -432,7 +528,11 @@ def identify_potential_crypts_hybrid(
 
     dbg: Dict[str, Any] = {}
 
-    new_seeds = identify_crypt_seeds_new(crypt_img, tissue_image, params=params) if use_new_seeds else None
+    new_seeds = (
+        identify_crypt_seeds_new(crypt_img, tissue_image, params=params, debug_recorder=debug_recorder)
+        if use_new_seeds
+        else None
+    )
     new_metrics = _seed_health_metrics(
         new_seeds if new_seeds is not None else np.zeros_like(crypt_img, dtype=np.int32)
     )
@@ -451,6 +551,7 @@ def identify_potential_crypts_hybrid(
             blob_size_px=blob_size_px,
             external_crypt_seeds=new_seeds,
             params=params,
+            debug_recorder=debug_recorder,
         )
 
     candidate_labels["legacy_seeded"] = identify_potential_crypts_old_like(
@@ -459,7 +560,18 @@ def identify_potential_crypts_hybrid(
         blob_size_px=blob_size_px,
         external_crypt_seeds=None,
         params=params,
+        debug_recorder=debug_recorder,
     )
+
+    if debug_recorder is not None:
+        if "legacy_seeded" in candidate_labels:
+            debug_recorder.save_image(
+                candidate_labels["legacy_seeded"], "legacy_seed_labels", source="identify_potential_crypts_hybrid"
+            )
+        if "new_seeded" in candidate_labels:
+            debug_recorder.save_image(
+                candidate_labels["new_seeded"], "new_seed_labels", source="identify_potential_crypts_hybrid"
+            )
 
     selected_key = "legacy_seeded"
     best_score = float("-inf")
@@ -487,6 +599,8 @@ def identify_potential_crypts_hybrid(
         best_score = float("nan")
 
     labels = candidate_labels[selected_key]
+    if debug_recorder is not None:
+        debug_recorder.save_image(labels, "selected_label_set", source="identify_potential_crypts_hybrid")
 
     dbg["selected_candidate"] = selected_key
     dbg["candidate_summaries"] = candidate_summaries

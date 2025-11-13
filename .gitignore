@@ -26,3 +26,4 @@ results/
 =3.1.0
 test_*
 run_output.log
+src/lysozyme_stain_quantification.egg-info/*

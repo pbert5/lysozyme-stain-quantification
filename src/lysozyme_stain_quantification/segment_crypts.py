@@ -15,6 +15,7 @@ from .crypts.crypt_detection_solutions.effective_crypt_estimation import (
     estimate_effective_selected_crypt_count as _estimate_effective_selected_crypt_count,
     EffectiveCryptEstimation,
 )
+from .utils.debug_image_saver import DebugImageSession
 
 
 def _to_float(value: np.ndarray | float | int) -> float:
@@ -42,6 +43,7 @@ def segment_crypts(
     masks: Sequence[np.ndarray] | None = None,
     max_regions: int = 5,
     microns_per_px: float | None = None,
+    debug_recorder: DebugImageSession | None = None,
 ) -> np.ndarray:
     """Segment crypts in the given image.
 
@@ -84,9 +86,19 @@ def segment_crypts(
             raise ValueError("blob_size_px cannot be None when blob_size_um is not given.")
         effective_blob_size_px = int(blob_size_px)
 
-    potential_crypts = identify_potential_crypts(crypt_img, tissue_image, effective_blob_size_px, debug)
+    potential_crypts = identify_potential_crypts(
+        crypt_img,
+        tissue_image,
+        effective_blob_size_px,
+        debug,
+        debug_recorder=debug_recorder,
+    )
+    if debug_recorder is not None:
+        debug_recorder.save_image(potential_crypts, "potential_crypts", source="segment_crypts")
 
     cleaned_crypts = remove_edge_touching_regions_sk(potential_crypts)
+    if debug_recorder is not None:
+        debug_recorder.save_image(cleaned_crypts, "cleaned_crypts", source="segment_crypts")
 
     best_crypts, crypt_scores = scoring_selector(
         cleaned_crypts,
@@ -112,7 +124,8 @@ def segment_crypts_dual(
     scoring_weights: dict[str, float] | None = None,
     masks: Sequence[np.ndarray] | None = None,
     max_regions_best: int = 5,
-    microns_per_px: float | None = None,
+        microns_per_px: float | None = None,
+        debug_recorder: DebugImageSession | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Return both the candidate (cleaned) labels and the final best selection.
@@ -151,10 +164,24 @@ def segment_crypts_dual(
             raise ValueError("blob_size_px cannot be None when blob_size_um is not given.")
         effective_blob_size_px = int(blob_size_px)
 
-    potential_crypts = identify_potential_crypts(crypt_img, tissue_image, effective_blob_size_px, debug)
-    cleaned_crypts = remove_edge_touching_regions_sk(potential_crypts)
+    if debug_recorder is not None:
+        debug_recorder.save_image(crypt_img, "rfp_input", source="segment_crypts_dual")
+        debug_recorder.save_image(tissue_image, "dapi_input", source="segment_crypts_dual")
 
-    best_crypts, _ = scoring_selector(
+    potential_crypts = identify_potential_crypts(
+        crypt_img,
+        tissue_image,
+        effective_blob_size_px,
+        debug,
+        debug_recorder=debug_recorder,
+    )
+    if debug_recorder is not None:
+        debug_recorder.save_image(potential_crypts, "potential_crypts", source="segment_crypts_dual")
+    cleaned_crypts = remove_edge_touching_regions_sk(potential_crypts)
+    if debug_recorder is not None:
+        debug_recorder.save_image(cleaned_crypts, "cleaned_crypts", source="segment_crypts_dual")
+
+    best_crypts, scoring_debug = scoring_selector(
         cleaned_crypts,
         crypt_img,
         debug=debug,
@@ -162,11 +189,22 @@ def segment_crypts_dual(
         weights=scoring_weights,
         return_details=True,
     )
+    if debug_recorder is not None:
+        debug_recorder.save_image(best_crypts, "best_crypts_candidate", source="segment_crypts_dual")
+        if isinstance(scoring_debug, dict):
+            rank_img = scoring_debug.get("score_map")
+            if rank_img is not None:
+                debug_recorder.save_image(rank_img, "scoring_score_map", source="segment_crypts_dual")
 
     # Ensure 2D return for best only; base is already 2D
     shaped_best = best_crypts.reshape(crypt_shape)
     if shaped_best.ndim != 2:
         shaped_best = np.squeeze(shaped_best)
+
+    if debug_recorder is not None:
+        debug_recorder.save_image(cleaned_crypts, "base_labels", source="segment_crypts_dual")
+        debug_recorder.save_image(shaped_best, "final_crypt_labels", source="segment_crypts_dual")
+
     return cleaned_crypts, shaped_best
 
 
@@ -182,6 +220,7 @@ def estimate_effective_count_from_segmented(
     scoring_weights: dict[str, float] | None = None,
     save_debug: bool = False,
     expansion_scale: float = 0.7,
+    debug_recorder: DebugImageSession | None = None,
 ) -> EffectiveCryptEstimation:
     """Convenience wrapper to estimate the effective crypt count for a label image.
 
@@ -198,4 +237,5 @@ def estimate_effective_count_from_segmented(
         scoring_weights=scoring_weights,
         save_debug=save_debug,
         expansion_scale=expansion_scale,
+        debug_recorder=debug_recorder,
     )

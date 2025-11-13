@@ -26,6 +26,7 @@ try:
         MorphologyParams,
         DEFAULT_MORPHOLOGY_PARAMS,
     )
+    from ..utils.debug_image_saver import DebugImageSession
 except Exception:  # pragma: no cover - fallback path
     # Package import name
     from lysozyme_stain_quantification.crypts.scoring_selector_mod import scoring_selector
@@ -35,6 +36,7 @@ except Exception:  # pragma: no cover - fallback path
         MorphologyParams,
         DEFAULT_MORPHOLOGY_PARAMS,
     )
+    from lysozyme_stain_quantification.utils.debug_image_saver import DebugImageSession
 
 
 # ----------------------------- helpers ----------------------------- #
@@ -349,6 +351,7 @@ def estimate_effective_selected_crypt_count(
     scoring_weights: Optional[Dict[str, float]] = None,
     save_debug: bool = False,
     expansion_scale: float = 0.25,
+    debug_recorder: DebugImageSession | None = None,
 ) -> EffectiveCryptEstimation:
     """
     Estimate the effective number of selected crypts using template matching
@@ -363,6 +366,15 @@ def estimate_effective_selected_crypt_count(
         dapi = _to_numpy(dapi_image).astype(np.float32)
     else:
         dapi = None
+
+    def _capture(image: Any, stage: str, *, description: str | None = None) -> None:
+        if debug_recorder is not None:
+            debug_recorder.save_image(image, stage, source="effective_crypt_estimation", description=description)
+
+    _capture(rfp, "rfp_input")
+    if dapi is not None:
+        _capture(dapi, "dapi_input")
+    _capture(labels, "best_crypts_labels")
 
     # Score current selections to obtain quality weights (debug metadata)
     _filtered, debug_info = scoring_selector(
@@ -414,8 +426,13 @@ def estimate_effective_selected_crypt_count(
         properties_df_med = properties_df
         selected_order_med = None
 
+    _capture(medium_crypts, "medium_crypts_labels")
+
     # Build match stack across medium selections
     match_stack, _slcs = create_match_stack(medium_crypts, rfp)
+    if debug_recorder is not None:
+        for idx, match_img in enumerate(match_stack):
+            _capture(match_img, f"match_stack_{idx:03d}")
     if len(match_stack) == 0:
         return EffectiveCryptEstimation(
             neff_simpson=0.0,
@@ -427,6 +444,9 @@ def estimate_effective_selected_crypt_count(
         )
 
     result_array = np.asarray(match_stack)
+    if result_array.ndim == 3:
+        _capture(np.max(result_array, axis=0), "match_stack_max_projection")
+        _capture(np.mean(result_array, axis=0), "match_stack_mean_projection")
     # Emphasize better quality (lower quality_score => higher weight)
     if properties_df_med is not None and len(properties_df_med) > 0:
         if selected_order_med is not None:
@@ -455,9 +475,13 @@ def estimate_effective_selected_crypt_count(
         weights_array = np.ones_like(weights_array)
         ws = float(np.sum(weights_array))
     weights_array = weights_array / ws
+    if weights_array.size > 0:
+        weights_vis = np.tile(weights_array[np.newaxis, :], (max(1, min(50, weights_array.size)), 1))
+        _capture(weights_vis, "match_stack_weights")
     log_results = np.log(np.maximum(result_array, 1))  # avoid log(0)
     weighted_log_sum = np.sum(weights_array[:, np.newaxis, np.newaxis] * log_results, axis=0)
     collapsed_results = np.exp(weighted_log_sum).astype(np.uint16)
+    _capture(collapsed_results, "collapsed_results")
 
     # Morphological cleanup and Otsu selection
     # Derive cap radii from blob size, scaled by expansion_scale.
@@ -495,18 +519,29 @@ def estimate_effective_selected_crypt_count(
     except Exception:
         otsu_thresh = float(np.nanmedian(clean))
     binary_clean = clean > otsu_thresh
+    _capture(clean, "collapsed_caps_clean", description=f"otsu_threshold={otsu_thresh:.3f}")
+    _capture(binary_clean.astype(np.float32), "otsu_binary_mask")
     _output = ndi.label(binary_clean)
     if isinstance(_output, tuple) and len(_output) == 2:
             labeled_binary_clean, _ = _output
     else:
         labeled_binary_clean, _ = [np.zeros_like(clean, dtype=np.int32), 0]
     labeled_overlap = np.where(labels > 0, labeled_binary_clean, 0)
+    _capture(labeled_binary_clean, "labeled_binary_clean")
 
     # Extract peaks that overlap best crypts, then restrict to medium crypt region for counts
     unique_labels = np.unique(labeled_overlap)
     selected_labels_mask = np.isin(labeled_binary_clean, unique_labels)
     selected_labels = np.where(selected_labels_mask, labeled_binary_clean, 0)
     selected_intersection = np.where(medium_crypts > 0, selected_labels, 0)
+    _capture(selected_labels_mask.astype(np.float32), "selected_labels_mask")
+    _capture(selected_labels, "selected_labels")
+    _capture(selected_intersection, "selected_labels_intersection")
+
+    best_bounds = find_boundaries(labels)
+    medium_bounds = find_boundaries(medium_crypts)
+    _capture(best_bounds.astype(np.float32), "best_crypt_bounds")
+    _capture(medium_bounds.astype(np.float32), "medium_crypt_bounds")
 
     K, Neff_simpson, Neff_shannon, ratio_simpson = effective_label_count(selected_intersection)
 
@@ -525,8 +560,6 @@ def estimate_effective_selected_crypt_count(
                 base_rgb = (base_rgb - lo) / (hi - lo)
 
         best_crypts_local = labels
-        best_bounds = find_boundaries(best_crypts_local)
-        medium_bounds = find_boundaries(medium_crypts)
 
         fig, axs = plt.subplots(3, 2, figsize=(20, 25))
         axs[0, 0].imshow(base_rgb)

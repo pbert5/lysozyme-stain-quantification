@@ -9,6 +9,7 @@ from .crypt_detection_solutions.crypt_identification_methodologies import (
     identify_potential_crypts_hybrid,
     identify_potential_crypts_old_like,
 )
+from ..utils.debug_image_saver import DebugImageSession
 
 
 MethodName = Literal["hybrid", "old", "old_like"]
@@ -58,6 +59,7 @@ def identify_potential_crypts(
     params: Optional[MorphologyParams] = None,
     hybrid_kwargs: Optional[Dict[str, Any]] = None,
     old_like_kwargs: Optional[Dict[str, Any]] = None,
+    debug_recorder: DebugImageSession | None = None,
 ) -> np.ndarray:
     """
     Identify potential crypt regions.
@@ -93,6 +95,7 @@ def identify_potential_crypts(
             crypt_img,
             tissue_image,
             debug=debug,
+            debug_recorder=debug_recorder,
             **hybrid_kwargs,
         )
     elif method_key in {"old", "old_like"}:
@@ -107,6 +110,7 @@ def identify_potential_crypts(
             crypt_img,
             tissue_image,
             **old_like_kwargs,
+            debug_recorder=debug_recorder,
         )
         method_debug = {"mode": "old_like"}
     else:
