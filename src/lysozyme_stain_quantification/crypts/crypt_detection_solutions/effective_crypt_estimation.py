@@ -26,7 +26,7 @@ try:
         MorphologyParams,
         DEFAULT_MORPHOLOGY_PARAMS,
     )
-    from ..utils.debug_image_saver import DebugImageSession
+    from ...utils.debug_image_saver import DebugImageSession
 except Exception:  # pragma: no cover - fallback path
     # Package import name
     from lysozyme_stain_quantification.crypts.scoring_selector_mod import scoring_selector
