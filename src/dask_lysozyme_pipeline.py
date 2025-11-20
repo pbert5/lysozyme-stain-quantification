@@ -25,6 +25,12 @@ KAREN_DATASET = DatasetConfig(
         "red_intensity": 0.85,
         "com_consistency": 0.050,
     },
+    effective_count_scoring_weights={
+        "circularity": 0.35,
+        "area": 0.15,
+        "line_fit": 0.45,
+        "red_intensity": 0.25,
+    },
     scale_lookup=ScaleLookup(
         default_value=0.4476,
         keys=("40x",),
@@ -48,7 +54,7 @@ def main() -> None:
         threads_per_worker=None,
         save_images=True,
         debug=False,
-        max_subjects=args.max_subjects,
+        max_subjects=200,#args.max_subjects,
         connect_to_existing_cluster=False,
         use_timestamps=False,
         debug_image_capture=args.capture_debug_images,

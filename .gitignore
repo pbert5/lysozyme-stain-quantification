@@ -30,3 +30,7 @@ src/lysozyme_stain_quantification.egg-info/*
 *.mp4
 *.pdf
 *.gif
+docs/figures/animation_tools/__init__.py
+docs/figures/animation_tools/frame_generation.py
+docs/figures/animation_tools/gif_utils.py
+docs/figures/animation_tools/image_loader.py

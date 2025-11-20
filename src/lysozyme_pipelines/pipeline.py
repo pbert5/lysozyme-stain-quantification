@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
 import time
 from dataclasses import dataclass, field
@@ -122,6 +123,7 @@ class DatasetConfig:
     max_regions_per_image: int
     scoring_weights: Dict[str, float]
     scale_lookup: ScaleLookup
+    effective_count_scoring_weights: Optional[Dict[str, float]] = None
     channel_keys: Sequence[str] = field(default_factory=lambda: ("_RFP", "_DAPI"))
     include_unmatched_combined: bool = True
     rfp_channel_index: int = 0
@@ -794,7 +796,11 @@ def run_dask_pipeline(
                     microns_per_px=x["scale_um_per_px"],
                     subject_name=x.get("subject_name", Path(x["paths"][0]).stem),
                     output_dir=results_dir / "renderings",
-                    scoring_weights=dataset_cfg.scoring_weights,
+                    scoring_weights=(
+                        dataset_cfg.effective_count_scoring_weights
+                        if dataset_cfg.effective_count_scoring_weights is not None
+                        else dataset_cfg.scoring_weights
+                    ),
                     save_debug=save_images,
                     expansion_scale=0.5, # increase if you are getting oversegmentation
                     debug_recorder=x.get("debug_session"),
@@ -870,6 +876,18 @@ def run_dask_pipeline(
     # region prune heavy
     # Prune heavy arrays before returning to the driver; keep only lightweight results
     def _prune_heavy(x: Dict[str, object]) -> Dict[str, object]:
+        labels = x.get("crypt_labels")
+        initial_detected_count: Optional[int] = None
+        if labels is not None:
+            try:
+                unique_labels = np.unique(labels)
+                positive = unique_labels[unique_labels > 0]
+                if positive.size > 0:
+                    initial_detected_count = int(positive.size)
+                else:
+                    initial_detected_count = 0
+            except Exception:
+                initial_detected_count = None
         return {
             "subject_name": x["subject_name"],
             "source_type": x["source_type"],
@@ -881,6 +899,7 @@ def run_dask_pipeline(
             "effective_crypt_estimation": x.get("effective_crypt_estimation", None),
             "overlay_paths": x.get("overlay_paths", []),
             "debug_records": x.get("debug_records", {}),
+            "initial_detected_count": initial_detected_count,
         }
 
     full_bag = full_bag.map(_prune_heavy)
@@ -912,6 +931,31 @@ def run_dask_pipeline(
     detailed_image_summary_simpson_records: List[Dict[str, object]] = []
     per_crypt_records: List[Dict[str, object]] = []
 
+    special_case_root = results_dir / "special_case"
+    special_case_dirs: Dict[str, Path] = {}
+
+    def _copy_special_case_artifacts(paths: Sequence[Path | str], classification: str) -> None:
+        if not paths:
+            return
+        existing_paths: list[Path] = []
+        for artifact in paths:
+            try:
+                path_obj = Path(artifact)
+            except TypeError:
+                continue
+            if path_obj.exists():
+                existing_paths.append(path_obj)
+        if not existing_paths:
+            return
+        target_dir = special_case_dirs.get(classification)
+        if target_dir is None:
+            target_dir = special_case_root / classification
+            target_dir.mkdir(parents=True, exist_ok=True)
+            special_case_dirs[classification] = target_dir
+        for path_obj in existing_paths:
+            target_name = f"{path_obj.stem}_{classification}{path_obj.suffix}"
+            shutil.copy2(path_obj, target_dir / target_name)
+
     for item in results:
         name = str(item.get("subject_name", ""))
         source_type = str(item.get("source_type", "unknown"))
@@ -920,6 +964,31 @@ def run_dask_pipeline(
         summary = item.get("summary_image", {})
         summary_raw = item.get("summary_image_raw", {})
         per_crypt = item.get("per_crypt", {})
+        overlays = list(item.get("overlay_paths", []))
+        initial_detected_count = item.get("initial_detected_count")
+
+        eff: Optional[EffectiveCryptEstimation] = item.get("effective_crypt_estimation")  # type: ignore[assignment]
+        classification: Optional[str] = None
+        if (
+            isinstance(eff, EffectiveCryptEstimation)
+            and initial_detected_count is not None
+            and np.isfinite(eff.neff_simpson)
+        ):
+            simpson_n = float(eff.neff_simpson)
+            baseline = float(initial_detected_count)
+            abs_diff = abs(simpson_n - baseline)
+            rel_diff = abs_diff / baseline if baseline > 0 else float("inf")
+            if abs_diff >= 1.0 or rel_diff >= 0.10:
+                if simpson_n < baseline:
+                    classification = "oversegmentation"
+                elif simpson_n > baseline:
+                    classification = "undersegmentation"
+        if classification:
+            special_artifacts = overlays.copy()
+            debug_path = getattr(eff, "debug_render_path", None) if eff is not None else None
+            if debug_path is not None:
+                special_artifacts.append(debug_path)
+            _copy_special_case_artifacts(special_artifacts, classification)
 
         # Image-level record (renamed to match manual ImageJ summary columns)
         row: Dict[str, object] = {
@@ -980,7 +1049,6 @@ def run_dask_pipeline(
         image_summary_records.append(row)
 
         # Simpson-adjusted variant row (use Neff_simpson as effective n for means)
-        eff: Optional[EffectiveCryptEstimation] = item.get("effective_crypt_estimation")  # type: ignore[assignment]
         if isinstance(eff, EffectiveCryptEstimation) and isinstance(summary, dict):
             simpson_n = float(eff.neff_simpson)
             # Fallback to original count if invalid

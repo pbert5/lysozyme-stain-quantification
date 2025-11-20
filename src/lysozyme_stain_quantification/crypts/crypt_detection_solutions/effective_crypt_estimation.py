@@ -14,7 +14,6 @@ from skimage.filters import threshold_otsu
 from skimage.morphology import local_maxima, dilation, white_tophat, disk
 from skimage.segmentation import find_boundaries
 from skimage.feature import match_template
-from skimage.restoration import inpaint
 from skimage.color import label2rgb
 
 try:
@@ -62,6 +61,24 @@ def minmax256(arr: np.ndarray) -> np.ndarray:
         return np.zeros_like(arr, dtype=np.uint8)
     arr = 255.0 * (arr - lo) / (hi - lo)
     return arr.astype(np.uint8)
+
+
+def label_and_neighbors_mask(labels: np.ndarray, label_id: int, connectivity: int = 1) -> np.ndarray:
+    """Return True for the label and any labels that touch it (per connectivity)."""
+    labels = np.asarray(labels)
+    center = labels == label_id
+    if not np.any(center):
+        return np.zeros_like(labels, dtype=bool)
+
+    selem = ndi.generate_binary_structure(labels.ndim, connectivity)
+    border_zone = ndi.binary_dilation(center, structure=selem)
+    touched = labels[border_zone]
+    neighbor_labels = np.unique(touched[(touched != 0) & (touched != label_id)])
+
+    out = center.copy()
+    if neighbor_labels.size:
+        out |= np.isin(labels, neighbor_labels)
+    return out
 
 
 def opencv_dilate_disk(img: np.ndarray, r: int) -> np.ndarray:
@@ -288,7 +305,7 @@ def quantify_matches(
     matching_image: np.ndarray,
     *,
     pad_input: bool = True,
-) -> tuple[np.ndarray, np.ndarray, tuple[slice, ...]]:
+) -> tuple[np.ndarray, np.ndarray, tuple[slice, ...], np.ndarray]:
     """
     Build a per-crypt template from the masked region and run match_template.
     Returns (result, template, slice) for the given label index.
@@ -304,24 +321,30 @@ def quantify_matches(
     template = template[slc]
 
     result = match_template(matching_image, template, pad_input=pad_input)
-    # Fill undefined areas near the template footprint
-    result = inpaint.inpaint_biharmonic(result, detections == index, channel_axis=None)
+
+    use_mask = ~label_and_neighbors_mask(detections, index)
+    result = result * use_mask
     result = np.maximum(result, 0)
     result = minmax256(result)
-    return result.astype(np.uint16), template, slc
+    return result.astype(np.uint16), template, slc, use_mask
 
 
-def create_match_stack(best_crypts: np.ndarray, matching_image: np.ndarray) -> tuple[list[np.ndarray], list[tuple[slice, ...]]]:
+def create_match_stack(
+    best_crypts: np.ndarray,
+    matching_image: np.ndarray,
+) -> tuple[list[np.ndarray], list[tuple[slice, ...]], list[np.ndarray]]:
     match_arrays: list[np.ndarray] = []
     slcs: list[tuple[slice, ...]] = []
+    use_masks: list[np.ndarray] = []
     max_label = int(np.max(best_crypts))
     for label_id in range(1, max_label + 1):
         if not np.any(best_crypts == label_id):
             continue
-        result, _template, slc = quantify_matches(best_crypts, label_id, matching_image, pad_input=True)
+        result, _template, slc, use_mask = quantify_matches(best_crypts, label_id, matching_image, pad_input=True)
         match_arrays.append(result)
         slcs.append(slc)
-    return match_arrays, slcs
+        use_masks.append(use_mask)
+    return match_arrays, slcs, use_masks
 
 
 # ---------------------------- main API ----------------------------- #
@@ -405,7 +428,7 @@ def estimate_effective_selected_crypt_count(
             region_mask=base > 0,
             value_agg="sum_positive",
         )
-        medium_target = int(max(1, round(scores.get("Neff_simpson", 0) or 0)))
+        medium_target = int(max(5, round(scores.get("Neff_simpson", 0) or 0)))
         medium_crypts, med_debug = scoring_selector(
             base,
             rfp,
@@ -429,7 +452,7 @@ def estimate_effective_selected_crypt_count(
     _capture(medium_crypts, "medium_crypts_labels")
 
     # Build match stack across medium selections
-    match_stack, _slcs = create_match_stack(medium_crypts, rfp)
+    match_stack, _slcs, use_masks = create_match_stack(medium_crypts, rfp)
     if debug_recorder is not None:
         for idx, match_img in enumerate(match_stack):
             _capture(match_img, f"match_stack_{idx:03d}")
@@ -444,6 +467,7 @@ def estimate_effective_selected_crypt_count(
         )
 
     result_array = np.asarray(match_stack)
+    use_masks_array = np.asarray(use_masks, dtype=bool)
     if result_array.ndim == 3:
         _capture(np.max(result_array, axis=0), "match_stack_max_projection")
         _capture(np.mean(result_array, axis=0), "match_stack_mean_projection")
@@ -479,8 +503,18 @@ def estimate_effective_selected_crypt_count(
         weights_vis = np.tile(weights_array[np.newaxis, :], (max(1, min(50, weights_array.size)), 1))
         _capture(weights_vis, "match_stack_weights")
     log_results = np.log(np.maximum(result_array, 1))  # avoid log(0)
-    weighted_log_sum = np.sum(weights_array[:, np.newaxis, np.newaxis] * log_results, axis=0)
-    collapsed_results = np.exp(weighted_log_sum).astype(np.uint16)
+    weight_stack = weights_array[:, np.newaxis, np.newaxis] * use_masks_array
+    weighted_log_sum = np.sum(weight_stack * log_results, axis=0)
+    weight_sum = np.sum(weight_stack, axis=0)
+    eps = 1e-12
+    collapsed_log = np.zeros_like(weighted_log_sum, dtype=np.float32)
+    np.divide(
+        weighted_log_sum,
+        np.maximum(weight_sum, eps),
+        out=collapsed_log,
+        where=weight_sum > 0,
+    )
+    collapsed_results = np.exp(collapsed_log).astype(np.uint16)
     _capture(collapsed_results, "collapsed_results")
 
     # Morphological cleanup and Otsu selection
