@@ -235,10 +235,9 @@ def find_tif_images_by_keys(
     if not tif_paths:
         return [], [] , [], []
     
-    # Organize images by key and base name
-    matched_by_key: Dict[str, Dict[str, Path]] = {key: {} for key in keys}
+    # Organize images by key and base name (including parent dir to handle duplicates)
+    matched_by_key: Dict[str, Dict[tuple[str, str], Path]] = {key: {} for key in keys}
     unmatched: List[Path] = []
-    subjects = 0
     for path in tif_paths:
         matched = False
         
@@ -248,23 +247,26 @@ def find_tif_images_by_keys(
                 # Extract base name by removing the key
                 base_name = _extract_base_name(path.name, key)
                 if base_name:
-                    matched_by_key[key][base_name] = path
+                    # Use (parent_dir, base_name) as key to handle same filenames in different dirs
+                    try:
+                        parent_rel = str(path.parent.relative_to(root_dir))
+                    except Exception:
+                        parent_rel = str(path.parent)
+                    unique_key = (parent_rel, base_name)
+                    matched_by_key[key][unique_key] = path
                     matched = True
                     break
         
         if not matched:
             if include_unmatched:
                 unmatched.append(path)
-                subjects += 1
-                if max_subjects is not None and subjects >= max_subjects:
-                    break
             continue
     
     # Find common base names across all keys
     if not keys:
         return unmatched, [], [], []
     
-    # Get base names that exist for all keys
+    # Get base names (with parent dirs) that exist for all keys
     common_bases = set(matched_by_key[keys[0]].keys())
     for key in keys[1:]:
         common_bases &= set(matched_by_key[key].keys())
@@ -273,29 +275,29 @@ def find_tif_images_by_keys(
     paired: List[Tuple[Path, ...]] = []
     paired_subject_names: List[str] = []
     used_labels: set[str] = set()
-    for base_name in sorted(common_bases):
-        pair = tuple(matched_by_key[key][base_name] for key in keys)
+    
+    # Apply max_subjects limit: count total subjects (paired + unmatched)
+    total_subjects_available = len(common_bases) + len(unmatched)
+    effective_max = max_subjects if max_subjects is not None else total_subjects_available
+    
+    # Prioritize paired images first, then unmatched
+    max_paired = min(len(common_bases), effective_max)
+    
+    for unique_key in sorted(common_bases)[:max_paired]:
+        parent_rel, base_name = unique_key
+        pair = tuple(matched_by_key[key][unique_key] for key in keys)
         paired.append(pair)
-        # Prefer subdir relative to root if both in same folder; else choose first's
-        rel_dirs = []
-        for p in pair:
-            try:
-                rel_dirs.append(str(p.parent.relative_to(root_dir)))
-            except Exception:
-                rel_dirs.append("")
-        # pick most common non-empty or empty
-        subdir_label = ""
-        non_empty = [d for d in rel_dirs if d]
-        if non_empty:
-            # if both equal, take it; else pick lexicographically for determinism
-            subdir_label = sorted(non_empty)[0] if len(set(non_empty)) > 1 else non_empty[0]
+        # Use the parent_rel we already extracted
+        subdir_label = parent_rel if parent_rel else ""
         paired_subject_names.append(
             _make_subject_label(base_name, subdir_label, list(pair), used_labels, use_timestamps=use_timestamps)
         )
         used_labels.add(paired_subject_names[-1])
-        subjects += 1
-        if max_subjects is not None and subjects >= max_subjects:
-            break
+    
+    # Trim unmatched list if we need to respect max_subjects
+    remaining_slots = effective_max - len(paired)
+    if remaining_slots < len(unmatched):
+        unmatched = unmatched[:remaining_slots]
         
         
     
