@@ -44,3 +44,6 @@ method_development/stats/psuedocode.md
 src/cell_detection/cellpose.ipynb
 src/cell_detection/stardist.ipynb
 src/cell_detection/.vscode/settings.json
+simple_practice.ipynb
+simple_tissue_id.ipynb
+FIXES_NEEDED.md

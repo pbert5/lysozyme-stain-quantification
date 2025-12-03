@@ -147,6 +147,11 @@ auto_summary <- readr::read_csv(AUTO_SUMMARY_PATH, show_col_types = FALSE)
 auto_detailed <- readr::read_csv(AUTO_DETAILED_PATH, show_col_types = FALSE)
 ratings <- if (file.exists(RATINGS_PATH)) readr::read_csv(RATINGS_PATH, show_col_types = FALSE) else tibble()
 
+# Ensure raw (non-normalized) intensity column exists for downstream joins
+if (!"raw_rfp_sum_mean" %in% names(auto_detailed)) {
+  auto_detailed$raw_rfp_sum_mean <- NA_real_
+}
+
 auto <- auto_summary |>
   mutate(
     subject_base = str_trim(str_replace(`subject name`, "\\s*\\[.*$", ""))
@@ -158,6 +163,7 @@ auto_det_small <- auto_detailed |>
   transmute(
     `subject name` = subject_name,
     auto_rfp_sum_mean = rfp_sum_mean,
+    auto_rfp_sum_mean_raw = raw_rfp_sum_mean,
     auto_crypt_count = crypt_count
   )
 
@@ -210,6 +216,7 @@ consolidated <- mapping |>
     auto_subject_name = `subject name`,
     auto_source_type = image_source_type,
     auto_rfp_sum_mean,
+    auto_rfp_sum_mean_raw,
     auto_crypt_count,
     rating_bool = rating_bool %||% NA,
     rating_text = rating_text %||% NA
