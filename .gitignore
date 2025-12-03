@@ -34,3 +34,13 @@ docs/figures/animation_tools/__init__.py
 docs/figures/animation_tools/frame_generation.py
 docs/figures/animation_tools/gif_utils.py
 docs/figures/animation_tools/image_loader.py
+docs/abstract/joe_updates.txt
+docs/abstract/nate_updates.txt
+docs/figures/experiment.ipynb
+docs/figures/experiment2.ipynb
+method_development/figure_rendering.ipynb
+method_development/lysozyme_pipeline
+method_development/stats/psuedocode.md
+src/cell_detection/cellpose.ipynb
+src/cell_detection/stardist.ipynb
+src/cell_detection/.vscode/settings.json
