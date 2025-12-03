@@ -113,7 +113,7 @@ You can monitor progress, memory use, and task graphs by opening the printed Das
 At a high level, the Dask pipeline:
 
 - Discovers and pairs RFP (lysozyme) and DAPI images from a dataset directory.
-- Applies a watershed-based segmentation pipeline to identify candidate crypts.
+- Applies a molphological operation-based segmentation pipeline to identify candidate crypts.
 - Scores regions using morphology and intensity features (circularity, area, alignment, lysozyme intensity, etc.).
 - Selects the best crypt candidates per image.
 - Normalizes lysozyme signal relative to DAPI to enable cross-image comparisons.
