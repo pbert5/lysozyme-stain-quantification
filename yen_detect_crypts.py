@@ -42,10 +42,10 @@ YEN_DATASET = DatasetConfig(
         keys=("40x",),
         values=(0.2253,),
     ),
-    channel_keys=("c2", "c3"),
+    channel_keys=("c2", "c1"), # lysozyme, DAPI
     include_unmatched_combined=False,
-    rfp_channel_index=1,
-    dapi_channel_index=0,
+    rfp_channel_index=1,#TODO: this should be specifying the lysozyme not rfp
+    dapi_channel_index=2, # this should be made so much more straightforward
 )
 
 
@@ -63,7 +63,7 @@ def main() -> None:
         threads_per_worker=None,
         save_images=True,
         debug=True,
-        max_subjects=args.max_subjects,
+        max_subjects= None,#args.max_subjects,
         connect_to_existing_cluster=False,
         use_timestamps=False,
         debug_image_capture=args.capture_debug_images,
