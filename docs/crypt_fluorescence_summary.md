@@ -58,3 +58,8 @@ This quantity highlights how much area would need to glow at the reference inten
 2. Use `SUMMARY_FIELD_ORDER` as column headers when building a dataframe or spreadsheet.
 3. If multiple images share the same microns-per-pixel scale, pass it as a scalar array or reuse the `subject_scale_lookup.subject_scale_from_name` helper to populate `channels[2]`.
 4. For downstream tuning, compare `effective_full_intensity_um2_*` metrics against the raw area statistics to understand how tightly the ROIs capture high-intensity regions.
+
+## Raw Intensity Variant for Manual Comparisons
+
+- The pipeline also runs `summarize_crypt_fluorescence` on the unnormalized RFP image. Those values are stored with a `raw_` prefix in `results/simple_dask/simple_dask_image_summary_detailed.csv` and are propagated into `src/statistical_validation/outputs/final/consolidated_for_external_analysis.csv` as `auto_rfp_sum_mean_raw`.
+- Use the `raw_` columns when you need apples-to-apples comparisons with ImageJ tables that report 0–255 pixel intensities; use the normalized columns when you want cross-slide invariance based on the red/blue ratio.

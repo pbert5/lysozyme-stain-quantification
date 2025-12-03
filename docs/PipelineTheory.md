@@ -146,3 +146,27 @@ To account for slide-to-slide variability in staining and imaging conditions, RF
 
 math notes: 
 flourescense = red_sum_pixels/area_pixels*area_um2
+
+## Output Values and Units
+
+- Image-level outputs live in `results/simple_dask/simple_dask_image_summary.csv` (manual-style columns) and `simple_dask_image_summary_detailed.csv` (all metrics). `Count` is the number of crypt labels; `Total Area`/`Average Size` are reported in µm² (converted from pixel area with microns-per-pixel); `% Area` is relative to the full image; `Mean` is the normalized per-crypt integrated intensity scaled by microns-per-pixel.
+- The detailed file also stores the raw, non-normalized sums with a `raw_` prefix (e.g., `raw_rfp_sum_mean`, `raw_rfp_intensity_mean`) that are direct sums/means of the original RFP pixel values.
+- Manual ImageJ tables in `src/statistical_validation/manual_stats_results` (`image_j_quantification_eva_04222025(Adam).csv` and `...Eva).csv`) use 8-bit pixel intensities: `Total Area` is pixel count, and `Mean` is the average raw pixel intensity. Integrated intensity in the R scripts is `Total Area × Mean`, optionally scaled by (µm/px)² to match area units.
+
+## Why Automated Numbers Look Different From ImageJ
+
+- Automated normalization uses the ratio `red/blue`, subtracts the average background-tissue ratio, and divides by the average crypt ratio:
+  ```
+  normalized = (red/blue - background_tissue_intensity) / average_crypt_intensity
+  ```
+  Background pixels are driven toward 0 and the average crypt signal is ~1, so the dynamic range is compressed and can include negatives where red < blue. In contrast, ImageJ’s `Mean` column is an 8-bit raw intensity (0–255) with no background centering.
+- `rfp_sum_*` in the detailed summary are sums of these normalized values, so they are orders of magnitude smaller than the raw ImageJ sums. To compare on the same scale, use the `raw_` fields (or the new `auto_rfp_sum_mean_raw` in the consolidated validation CSV) and, if needed, multiply by (µm/px)² for area-normalized units.
+
+## Statistical Validation Workflow
+
+- `src/statistical_validation/final_build_consolidated.R` ingests the manual ImageJ tables, resolves microns-per-pixel from slice names (0.4476 default, 0.2253 for “40x”), computes per-crypt integrated fluorescence, and joins to automated outputs. The consolidated file now includes both `auto_rfp_sum_mean` (normalized) and `auto_rfp_sum_mean_raw` (direct raw sums).
+- `src/statistical_validation/run_final_correlation.R` now runs correlations for both metrics:
+  - Normalized: `src/statistical_validation/outputs/final/correlation_by_set_originals_retakes.csv` (Retake r=0.15, originals r=0.12, Eva subset r=0.82).
+  - Raw (non-normalized): `src/statistical_validation/outputs/final/correlation_by_set_originals_retakes_raw.csv` (Retake r=0.95, originals r=0.47, Eva subset r=0.85).
+  - Scatter plots for each are written to `src/statistical_validation/outputs/final/plots/` with `scatter_correlation_*.png` (normalized) and `scatter_correlation_raw_*.png`.
+- The raw comparisons align with the ImageJ tables because they use the same underlying pixel values instead of the background-centered red/blue ratios. Use the raw columns when you want magnitude comparability with the manual measurements and the normalized columns when you want cross-slide contrast invariance.
