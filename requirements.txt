@@ -1,0 +1,31 @@
+# Core scientific computing
+numpy>=1.23
+pandas>=1.5
+scipy>=1.9
+
+# Image processing
+scikit-image>=0.19
+opencv-python-headless>=4.7
+tifffile>=2022.8.12
+
+# Machine learning
+scikit-learn>=1.2
+
+# Visualization
+matplotlib>=3.6
+
+# Parallel computing and lazy evaluation
+dask>=2023.1
+dask-image>=2022.9.0
+xarray>=2023.1
+
+# External framework dependency
+image-ops-framework>=0.1.0
+
+# Development and testing
+pytest>=7.0
+pytest-cov>=4.0
+
+# Optional: For Jupyter notebook support
+jupyter>=1.0
+ipykernel>=6.0
