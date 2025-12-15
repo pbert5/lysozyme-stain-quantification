@@ -37,6 +37,12 @@ After this, you should be able to import the library (e.g. `import lysozyme_stai
 
 If your images live somewhere else or use different naming, adapt the `DatasetConfig` in the relevant entry script.
 
+## Demo Run (notebook + sample images)
+
+- A self-contained demo notebook lives at [demo/demo_run.ipynb](demo/demo_run.ipynb).
+- Demo inputs are copied into [demo/images](demo/images) with one Yen pair (`c2`/`c1`) and two Karen pairs (`_RFP`/`_DAPI`).
+- Running the notebook produces overlays and CSVs under `results/demo_yen_single` and `results/demo_karen_batch`.
+
 ## Running the Dask Pipeline (Karen Dataset)
 
 The shared Dask pipeline is configured for the “Karen” dataset in `src/dask_lysozyme_pipeline.py`.
