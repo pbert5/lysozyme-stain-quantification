@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -14,8 +15,8 @@ from src.lysozyme_stain_quantification.utils.debug_image_saver import (
 )
 
 KAREN_DATASET = DatasetConfig(
-    image_base_dir=Path("/home/phillip/documents/experimental_data/inputs/karen/lysozyme"),
-    exp_name="rendering_test_run",
+    image_base_dir=Path("/home/ash/documents/data/inputs/karen/lysozyme"), #TODO: raise error if not found
+    exp_name="normal_out",
     blob_size_um=50.0 * 0.4476,
     max_regions_per_image=5,
     scoring_weights={
@@ -45,8 +46,9 @@ def main() -> None:
     args = parser.parse_args()
     whitelist = compute_debug_whitelist(args.debug_stage, base_whitelist=DEFAULT_DEBUG_STAGE_WHITELIST)
 
+    dataset_cfg = replace(KAREN_DATASET, rfp_gt_threshold=int(args.rfp_gt_threshold))
     run_dask_pipeline(
-        dataset_cfg=KAREN_DATASET,
+        dataset_cfg=dataset_cfg,
         results_root=REPO_ROOT,
         use_cluster=True,
         force_respawn_cluster=False,
@@ -54,7 +56,7 @@ def main() -> None:
         threads_per_worker=None,
         save_images=True,
         debug=False,
-        max_subjects=200,#args.max_subjects,
+        max_subjects=1000,#args.max_subjects,
         connect_to_existing_cluster=False,
         use_timestamps=False,
         debug_image_capture=args.capture_debug_images,

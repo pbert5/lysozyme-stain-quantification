@@ -128,6 +128,7 @@ class DatasetConfig:
     include_unmatched_combined: bool = True
     rfp_channel_index: int = 0
     dapi_channel_index: int = 2
+    rfp_gt_threshold: int = 71
 
 # region helper funcs
 def find_tif_images_by_keys(
@@ -613,6 +614,8 @@ def run_dask_pipeline(
                 print("  Falling back to threaded scheduler.")
                 use_cluster = False
     # endregion cluster setup
+    if not use_cluster or client is None:
+        dask.config.set(scheduler="threads")
 
     # region build bag graph
     # Setup results directory (after cluster connection)
@@ -842,6 +845,42 @@ def run_dask_pipeline(
             )
         )
     )
+
+    def _label_area_stats(labels: object) -> tuple[Optional[int], float, float]:
+        if labels is None:
+            return None, float("nan"), float("nan")
+        try:
+            arr = np.asarray(labels)
+        except Exception:
+            return None, float("nan"), float("nan")
+        if arr.size == 0:
+            return 0, 0.0, 0.0
+        try:
+            counts = np.bincount(arr.reshape(-1).astype(np.int64))
+        except Exception:
+            return None, float("nan"), float("nan")
+        if counts.size <= 1:
+            return 0, 0.0, 0.0
+        counts = counts[1:]
+        counts = counts[counts > 0]
+        if counts.size == 0:
+            return 0, 0.0, 0.0
+        return int(counts.size), float(counts.sum()), float(counts.std())
+
+    def _count_rfp_pixels_gt_threshold(*, rfp: object, labels: object, threshold: int) -> Optional[int]:
+        if rfp is None or labels is None:
+            return None
+        try:
+            rfp_arr = np.asarray(rfp)
+            labels_arr = np.asarray(labels)
+        except Exception:
+            return None
+        if rfp_arr.shape != labels_arr.shape:
+            return None
+        try:
+            return int(np.count_nonzero((labels_arr > 0) & (rfp_arr > threshold)))
+        except Exception:
+            return None
     
     # region map overlay saves
 
@@ -878,18 +917,20 @@ def run_dask_pipeline(
     # region prune heavy
     # Prune heavy arrays before returning to the driver; keep only lightweight results
     def _prune_heavy(x: Dict[str, object]) -> Dict[str, object]:
-        labels = x.get("crypt_labels")
-        initial_detected_count: Optional[int] = None
-        if labels is not None:
-            try:
-                unique_labels = np.unique(labels)
-                positive = unique_labels[unique_labels > 0]
-                if positive.size > 0:
-                    initial_detected_count = int(positive.size)
-                else:
-                    initial_detected_count = 0
-            except Exception:
-                initial_detected_count = None
+        selected_labels = x.get("crypt_labels")
+        detected_labels = x.get("base_labels", None)
+
+        initial_detected_count, _, _ = _label_area_stats(detected_labels)
+        selected_crypt_count, selected_area_px_sum, selected_area_px_std = _label_area_stats(selected_labels)
+        detected_crypt_count, detected_area_px_sum, detected_area_px_std = _label_area_stats(detected_labels)
+
+        threshold = int(dataset_cfg.rfp_gt_threshold)
+        selected_rfp_px_gt_threshold = _count_rfp_pixels_gt_threshold(
+            rfp=x.get("rfp", None), labels=selected_labels, threshold=threshold
+        )
+        detected_rfp_px_gt_threshold = _count_rfp_pixels_gt_threshold(
+            rfp=x.get("rfp", None), labels=detected_labels, threshold=threshold
+        )
         return {
             "subject_name": x["subject_name"],
             "source_type": x["source_type"],
@@ -902,6 +943,15 @@ def run_dask_pipeline(
             "overlay_paths": x.get("overlay_paths", []),
             "debug_records": x.get("debug_records", {}),
             "initial_detected_count": initial_detected_count,
+            "rfp_gt_threshold": threshold,
+            "selected_crypt_count": selected_crypt_count,
+            "selected_crypt_area_px_sum": selected_area_px_sum,
+            "selected_crypt_area_px_std": selected_area_px_std,
+            "detected_crypt_count": detected_crypt_count,
+            "detected_crypt_area_px_sum": detected_area_px_sum,
+            "detected_crypt_area_px_std": detected_area_px_std,
+            "selected_rfp_px_gt_threshold": selected_rfp_px_gt_threshold,
+            "detected_rfp_px_gt_threshold": detected_rfp_px_gt_threshold,
         }
 
     full_bag = full_bag.map(_prune_heavy)
@@ -968,6 +1018,13 @@ def run_dask_pipeline(
         per_crypt = item.get("per_crypt", {})
         overlays = list(item.get("overlay_paths", []))
         initial_detected_count = item.get("initial_detected_count")
+        rfp_gt_threshold = item.get("rfp_gt_threshold", None)
+        selected_area_px_sum = item.get("selected_crypt_area_px_sum", float("nan"))
+        selected_area_px_std = item.get("selected_crypt_area_px_std", float("nan"))
+        detected_area_px_sum = item.get("detected_crypt_area_px_sum", float("nan"))
+        detected_area_px_std = item.get("detected_crypt_area_px_std", float("nan"))
+        selected_rfp_px_gt_threshold = item.get("selected_rfp_px_gt_threshold", None)
+        detected_rfp_px_gt_threshold = item.get("detected_rfp_px_gt_threshold", None)
 
         eff: Optional[EffectiveCryptEstimation] = item.get("effective_crypt_estimation")  # type: ignore[assignment]
         classification: Optional[str] = None
@@ -1045,6 +1102,13 @@ def run_dask_pipeline(
                     # extras for investigation
                     "effective_full_intensity_um2_mean": effective_full_mean_um2,
                     "rfp_intensity_um2_sum": rfp_intensity_um2_sum,
+                    "selected_crypt_area_px_sum": selected_area_px_sum,
+                    "selected_crypt_area_px_std": selected_area_px_std,
+                    "detected_crypt_area_px_sum": detected_area_px_sum,
+                    "detected_crypt_area_px_std": detected_area_px_std,
+                    "rfp_gt_threshold": rfp_gt_threshold,
+                    "selected_rfp_px_gt_threshold": selected_rfp_px_gt_threshold,
+                    "detected_rfp_px_gt_threshold": detected_rfp_px_gt_threshold,
                 }
             )
 
@@ -1090,6 +1154,13 @@ def run_dask_pipeline(
                 "Mean (Simpson)": mean_intensity_simpson,
                 "effective_full_intensity_um2_mean (Simpson)": eff_full_mean_um2_simpson,
                 "rfp_intensity_um2_sum": row.get("rfp_intensity_um2_sum", float("nan")),
+                "selected_crypt_area_px_sum": selected_area_px_sum,
+                "selected_crypt_area_px_std": selected_area_px_std,
+                "detected_crypt_area_px_sum": detected_area_px_sum,
+                "detected_crypt_area_px_std": detected_area_px_std,
+                "rfp_gt_threshold": rfp_gt_threshold,
+                "selected_rfp_px_gt_threshold": selected_rfp_px_gt_threshold,
+                "detected_rfp_px_gt_threshold": detected_rfp_px_gt_threshold,
             }
             image_summary_simpson_records.append(row_simpson)
 
@@ -1098,6 +1169,13 @@ def run_dask_pipeline(
             "subject_name": name,
             "image_source_type": source_type,
             "microns_per_px": scale,
+            "selected_crypt_area_px_sum": selected_area_px_sum,
+            "selected_crypt_area_px_std": selected_area_px_std,
+            "detected_crypt_area_px_sum": detected_area_px_sum,
+            "detected_crypt_area_px_std": detected_area_px_std,
+            "rfp_gt_threshold": rfp_gt_threshold,
+            "selected_rfp_px_gt_threshold": selected_rfp_px_gt_threshold,
+            "detected_rfp_px_gt_threshold": detected_rfp_px_gt_threshold,
         }
         if isinstance(summary, dict):
             for field in SUMMARY_FIELD_ORDER:
@@ -1132,6 +1210,13 @@ def run_dask_pipeline(
                 "simpson_k_raw": int(eff.k_raw),
                 "simpson_evenness": float(eff.evenness),
                 "simpson_selected_labels_k": int(eff.selected_labels_k),
+                "selected_crypt_area_px_sum": selected_area_px_sum,
+                "selected_crypt_area_px_std": selected_area_px_std,
+                "detected_crypt_area_px_sum": detected_area_px_sum,
+                "detected_crypt_area_px_std": detected_area_px_std,
+                "rfp_gt_threshold": rfp_gt_threshold,
+                "selected_rfp_px_gt_threshold": selected_rfp_px_gt_threshold,
+                "detected_rfp_px_gt_threshold": detected_rfp_px_gt_threshold,
             }
             # Duplicate originals and add Simpson-adjusted means with suffix
             for field in SUMMARY_FIELD_ORDER:
@@ -1184,12 +1269,30 @@ def run_dask_pipeline(
             "Mean",
             "effective_full_intensity_um2_mean",
             "rfp_intensity_um2_sum",
+            "selected_crypt_area_px_sum",
+            "selected_crypt_area_px_std",
+            "detected_crypt_area_px_sum",
+            "detected_crypt_area_px_std",
+            "rfp_gt_threshold",
+            "selected_rfp_px_gt_threshold",
+            "detected_rfp_px_gt_threshold",
         ]
         image_summary_df = image_summary_df.reindex(columns=[c for c in cols if c in image_summary_df.columns])
 
     detailed_image_summary_df = pd.DataFrame(detailed_image_summary_records)
     if not detailed_image_summary_df.empty:
-        det_cols = ["subject_name", "image_source_type", "microns_per_px"] + list(SUMMARY_FIELD_ORDER)
+        det_cols = [
+            "subject_name",
+            "image_source_type",
+            "microns_per_px",
+            "selected_crypt_area_px_sum",
+            "selected_crypt_area_px_std",
+            "detected_crypt_area_px_sum",
+            "detected_crypt_area_px_std",
+            "rfp_gt_threshold",
+            "selected_rfp_px_gt_threshold",
+            "detected_rfp_px_gt_threshold",
+        ] + list(SUMMARY_FIELD_ORDER)
         # Add raw-prefixed intensity fields to the column order if present
         raw_cols = [
             "raw_rfp_sum_total",
@@ -1258,6 +1361,13 @@ def run_dask_pipeline(
             "Mean (Simpson)",
             "effective_full_intensity_um2_mean (Simpson)",
             "rfp_intensity_um2_sum",
+            "selected_crypt_area_px_sum",
+            "selected_crypt_area_px_std",
+            "detected_crypt_area_px_sum",
+            "detected_crypt_area_px_std",
+            "rfp_gt_threshold",
+            "selected_rfp_px_gt_threshold",
+            "detected_rfp_px_gt_threshold",
         ]
         image_summary_simpson_df = image_summary_simpson_df.reindex(columns=[c for c in sim_cols if c in image_summary_simpson_df.columns])
         image_summary_simpson_df.to_csv(img_csv_simpson, index=False)

@@ -52,6 +52,13 @@ def build_debug_parser(
         default=None,
         help="Limit intermediate image capture to specific subject names (repeat for multiple).",
     )
+    parser.add_argument(
+        "--rfp-gt-threshold",
+        dest="rfp_gt_threshold",
+        type=int,
+        default=71,
+        help="Pixel threshold (0-255) for counting RFP>threshold pixels within crypt masks.",
+    )
     parser.set_defaults(capture_debug_images=True)
     return parser
 
