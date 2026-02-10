@@ -15,8 +15,8 @@ from src.lysozyme_stain_quantification.utils.debug_image_saver import (
 )
 
 KAREN_DATASET = DatasetConfig(
-    image_base_dir=Path("/home/ash/documents/data/inputs/karen/lysozyme"), #TODO: raise error if not found
-    exp_name="normal_out",
+    image_base_dir=Path("/home/ash/documents/data/inputs/karen/lysozyme/new/Ileum Lysozyme - stt3 (Keyence)"), #TODO: raise error if not found
+    exp_name="higher_quality_images_karen",
     blob_size_um=50.0 * 0.4476,
     max_regions_per_image=5,
     scoring_weights={
@@ -37,7 +37,7 @@ KAREN_DATASET = DatasetConfig(
         keys=("40x",),
         values=(0.2253,),
     ),
-    channel_keys=("_RFP", "_DAPI"),
+    channel_keys=("_CH2", "_CH4"),
 )
 
 
@@ -56,7 +56,7 @@ def main() -> None:
         threads_per_worker=None,
         save_images=True,
         debug=False,
-        max_subjects=1000,#args.max_subjects,
+        max_subjects=100,#args.max_subjects,
         connect_to_existing_cluster=False,
         use_timestamps=False,
         debug_image_capture=args.capture_debug_images,

@@ -5,11 +5,24 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+from scipy import stats as sps
+
+
+@dataclass(frozen=True)
+class CriticalParams:
+    rfp_gt_threshold_cut: int = 71
+    acceptable_peak_px: int = 20_000
+    drop_auto_gt_px: int = 50_000
+
+
+CRIT = CriticalParams()
 
 
 @dataclass(frozen=True)
@@ -112,6 +125,69 @@ def _pivot_manual(manual_long: pd.DataFrame) -> pd.DataFrame:
     return manual_area.merge(manual_source, on="metadata_key", how="left")
 
 
+def _filter_xy(
+    df: pd.DataFrame,
+    *,
+    x_col: str,
+    y_col: str,
+    max_x: int | None = None,
+    max_y: int | None = None,
+) -> pd.DataFrame:
+    x = pd.to_numeric(df[x_col], errors="coerce")
+    y = pd.to_numeric(df[y_col], errors="coerce")
+    mask = x.notna() & y.notna()
+    if max_x is not None:
+        mask &= x.astype(float) <= float(max_x)
+    if max_y is not None:
+        mask &= y.astype(float) <= float(max_y)
+    return df.loc[mask].copy()
+
+
+def _assoc_stats(
+    df: pd.DataFrame,
+    *,
+    x_col: str,
+    y_col: str,
+    max_x: int | None = None,
+    max_y: int | None = None,
+) -> dict[str, float | int]:
+    df = _filter_xy(df, x_col=x_col, y_col=y_col, max_x=max_x, max_y=max_y)
+    x = pd.to_numeric(df[x_col], errors="coerce")
+    y = pd.to_numeric(df[y_col], errors="coerce")
+    x = x.astype(float)
+    y = y.astype(float)
+    n = int(len(df))
+    pearson_r = float("nan")
+    pearson_p = float("nan")
+    spearman_rho = float("nan")
+    spearman_p = float("nan")
+    brown_forsythe_stat = float("nan")
+    brown_forsythe_p = float("nan")
+    if n >= 2:
+        try:
+            pearson_r, pearson_p = sps.pearsonr(x, y)
+        except Exception:
+            pearson_r, pearson_p = float("nan"), float("nan")
+        try:
+            spearman_rho, spearman_p = sps.spearmanr(x, y)
+        except Exception:
+            spearman_rho, spearman_p = float("nan"), float("nan")
+        try:
+            brown_forsythe_stat, brown_forsythe_p = sps.levene(x, y, center="median")
+        except Exception:
+            brown_forsythe_stat, brown_forsythe_p = float("nan"), float("nan")
+
+    return {
+        "n": n,
+        "pearson_r": float(pearson_r),
+        "pearson_p": float(pearson_p),
+        "spearman_rho": float(spearman_rho),
+        "spearman_p": float(spearman_p),
+        "brown_forsythe_stat": float(brown_forsythe_stat),
+        "brown_forsythe_p": float(brown_forsythe_p),
+    }
+
+
 def _plot_relation(
     df: pd.DataFrame,
     *,
@@ -122,13 +198,16 @@ def _plot_relation(
     xlabel: str,
     ylabel: str,
     out_path: Path,
+    max_x: int | None = None,
+    max_y: int | None = None,
 ) -> None:
     df = df[df["image_source_type"] == image_source_type].copy()
-    df = df[df[y_col].notna() & df[x_col].notna()]
+    df = _filter_xy(df, x_col=x_col, y_col=y_col, max_x=max_x, max_y=max_y)
 
     if df.empty:
         return
 
+    stats = _assoc_stats(df, x_col=x_col, y_col=y_col, max_x=max_x, max_y=max_y)
     x = df[x_col].astype(float)
     y = df[y_col].astype(float)
 
@@ -139,12 +218,56 @@ def _plot_relation(
     hi = float(max(x.max(), y.max()))
     ax.plot([lo, hi], [lo, hi], linewidth=1, linestyle="--", color="black", alpha=0.7)
 
-    corr = float(x.corr(y)) if len(df) >= 2 else float("nan")
-    ax.set_title(f"{title} ({image_source_type}) | r={corr:.3f}")
+    title_text = textwrap.fill(f"{title} ({image_source_type})", width=54)
+    ax.set_title(f"{title_text}\n(n={stats['n']})", fontsize=12)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.25)
 
+    ax.text(
+        0.02,
+        0.98,
+        f"Pearson r={stats['pearson_r']:.3f}\nSpearman ρ={stats['spearman_rho']:.3f}",
+        transform=ax.transAxes,
+        va="top",
+        ha="left",
+        fontsize=10,
+        bbox=dict(facecolor="white", edgecolor="none", alpha=0.8, boxstyle="round,pad=0.3"),
+    )
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+
+    return
+
+
+def _plot_distribution(
+    df: pd.DataFrame,
+    *,
+    image_source_type: str,
+    col: str,
+    out_path: Path,
+    title: str,
+    xlabel: str,
+    max_x: int | None = None,
+) -> None:
+    series = pd.to_numeric(
+        df.loc[df["image_source_type"] == image_source_type, col],
+        errors="coerce",
+    ).dropna()
+    if max_x is not None:
+        series = series[series.astype(float) <= float(max_x)]
+    if series.empty:
+        return
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ax.hist(series.astype(float), bins=30, alpha=0.85, edgecolor="white", linewidth=0.6)
+    title_text = textwrap.fill(f"{title} ({image_source_type})", width=54)
+    ax.set_title(f"{title_text}\n(n={len(series)})", fontsize=12)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Count")
+    ax.grid(True, alpha=0.25)
     fig.tight_layout()
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
@@ -158,6 +281,24 @@ def main() -> int:
         "--auto-csv",
         default="results/normal_out/simple_dask_image_summary_detailed_simpson.csv",
         help="Auto summary CSV (detailed simpson; used for effective count).",
+    )
+    parser.add_argument(
+        "--rfp-gt-threshold-cut",
+        type=int,
+        default=CRIT.rfp_gt_threshold_cut,
+        help="Fallback RFP>threshold cut used when auto CSV lacks rfp_gt_threshold.",
+    )
+    parser.add_argument(
+        "--acceptable-peak-px",
+        type=int,
+        default=CRIT.acceptable_peak_px,
+        help="Reference value for distribution peak checks (written to CSV).",
+    )
+    parser.add_argument(
+        "--drop-auto-gt-px",
+        type=int,
+        default=CRIT.drop_auto_gt_px,
+        help="Drop rows where auto metrics exceed this pixel count (outlier filter).",
     )
     parser.add_argument(
         "--auto-per-crypt-csv",
@@ -183,6 +324,12 @@ def main() -> int:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    crit = CriticalParams(
+        rfp_gt_threshold_cut=int(args.rfp_gt_threshold_cut),
+        acceptable_peak_px=int(args.acceptable_peak_px),
+        drop_auto_gt_px=int(args.drop_auto_gt_px),
+    )
 
     auto = pd.read_csv(args.auto_csv)
     required_auto_cols = {
@@ -242,7 +389,7 @@ def main() -> int:
     if "auto_rfp_px_gt_threshold" not in auto.columns:
         auto["auto_rfp_px_gt_threshold"] = pd.NA
     if "rfp_gt_threshold" not in auto.columns:
-        auto["rfp_gt_threshold"] = pd.NA
+        auto["rfp_gt_threshold"] = int(crit.rfp_gt_threshold_cut)
 
     manual_sources = [
         ManualSource(reviewer="Adam", csv_path=args.manual_adam_csv),
@@ -269,6 +416,16 @@ def main() -> int:
         * 5.0
     )
 
+    # Drop extreme auto outliers globally (shareable CSV + stats sanity).
+    merged = merged[
+        pd.to_numeric(merged["auto_rfp_px_gt_threshold"], errors="coerce").le(float(crit.drop_auto_gt_px))
+        | pd.to_numeric(merged["auto_rfp_px_gt_threshold"], errors="coerce").isna()
+    ].copy()
+    merged = merged[
+        pd.to_numeric(merged["auto_rfp_px_gt_threshold_corrected_5"], errors="coerce").le(float(crit.drop_auto_gt_px))
+        | pd.to_numeric(merged["auto_rfp_px_gt_threshold_corrected_5"], errors="coerce").isna()
+    ].copy()
+
     out_cols = [
         "subject_name",
         "metadata_key",
@@ -293,47 +450,155 @@ def main() -> int:
         [{"reviewer": s.reviewer, "csv_path": s.csv_path} for s in manual_sources]
     ).to_csv(out_dir / "manual_sources.csv", index=False)
 
-    for image_source_type in ["separate_channels", "combined_channels"]:
-        _plot_relation(
-            merged,
-            image_source_type=image_source_type,
+    plot_specs = [
+        dict(
             x_col="auto_area_px",
             y_col="manual_area_mean",
-            title="Auto vs manual area (uncorrected)",
-            xlabel="Auto selected crypt area (px)",
+            title="Auto selected-crypt pixel area vs manual area (uncorrected)",
+            xlabel="Auto selected-crypt area (px)",
             ylabel="Manual mean area (px)",
-            out_path=out_dir / f"auto_vs_manual_area_uncorrected_{image_source_type}.png",
-        )
-        _plot_relation(
-            merged,
-            image_source_type=image_source_type,
+            stem="auto_vs_manual_area_uncorrected",
+        ),
+        dict(
             x_col="auto_area_px_corrected_5",
             y_col="manual_area_mean",
-            title="Auto vs manual area (corrected to 5 crypts)",
-            xlabel="Auto selected crypt area corrected to 5 crypts (px)",
+            title="Auto selected-crypt pixel area vs manual area (corrected to 5 crypts)",
+            xlabel="Auto selected-crypt area corrected to 5 crypts (px)",
             ylabel="Manual mean area (px)",
-            out_path=out_dir / f"auto_vs_manual_area_corrected_{image_source_type}.png",
-        )
-        _plot_relation(
-            merged,
-            image_source_type=image_source_type,
+            stem="auto_vs_manual_area_corrected",
+        ),
+        dict(
             x_col="auto_rfp_px_gt_threshold",
             y_col="manual_area_mean",
-            title="Auto RFP>threshold pixels vs manual area (uncorrected)",
+            title="Auto pixels in crypts with RFP>threshold vs manual area (uncorrected)",
             xlabel="Auto pixels in crypts with RFP>threshold (px)",
             ylabel="Manual mean area (px)",
-            out_path=out_dir / f"auto_gt_threshold_vs_manual_area_uncorrected_{image_source_type}.png",
-        )
-        _plot_relation(
-            merged,
-            image_source_type=image_source_type,
+            stem="auto_gt_threshold_vs_manual_area_uncorrected",
+            max_x=crit.drop_auto_gt_px,
+        ),
+        dict(
             x_col="auto_rfp_px_gt_threshold_corrected_5",
             y_col="manual_area_mean",
-            title="Auto RFP>threshold pixels vs manual area (corrected to 5 crypts)",
+            title="Auto pixels in crypts with RFP>threshold vs manual area (corrected to 5 crypts)",
             xlabel="Auto pixels in crypts with RFP>threshold corrected to 5 crypts (px)",
             ylabel="Manual mean area (px)",
-            out_path=out_dir / f"auto_gt_threshold_vs_manual_area_corrected_{image_source_type}.png",
-        )
+            stem="auto_gt_threshold_vs_manual_area_corrected",
+            max_x=crit.drop_auto_gt_px,
+        ),
+    ]
+
+    assoc_rows: list[dict[str, object]] = []
+    peak_rows: list[dict[str, object]] = []
+    for image_source_type in ["separate_channels", "combined_channels"]:
+        for spec in plot_specs:
+            stats = _assoc_stats(
+                merged.loc[merged["image_source_type"] == image_source_type],
+                x_col=spec["x_col"],
+                y_col=spec["y_col"],
+                max_x=spec.get("max_x", None),
+            )
+            assoc_rows.append(
+                {
+                    "image_source_type": image_source_type,
+                    "x_col": spec["x_col"],
+                    "y_col": spec["y_col"],
+                    "n": stats["n"],
+                    "pearson_r": stats["pearson_r"],
+                    "pearson_p": stats["pearson_p"],
+                    "spearman_rho": stats["spearman_rho"],
+                    "spearman_p": stats["spearman_p"],
+                    "brown_forsythe_stat": stats["brown_forsythe_stat"],
+                    "brown_forsythe_p": stats["brown_forsythe_p"],
+                    "max_x": spec.get("max_x", None),
+                }
+            )
+            _plot_relation(
+                merged,
+                image_source_type=image_source_type,
+                x_col=spec["x_col"],
+                y_col=spec["y_col"],
+                title=spec["title"],
+                xlabel=spec["xlabel"],
+                ylabel=spec["ylabel"],
+                out_path=out_dir / f"{spec['stem']}_{image_source_type}.png",
+                max_x=spec.get("max_x", None),
+            )
+
+        dist_cols = [
+            ("manual_area_mean", "Manual mean area distribution", "Manual mean area (px)"),
+            ("auto_area_px", "Auto selected-crypt area distribution", "Auto selected-crypt area (px)"),
+            (
+                "auto_area_px_corrected_5",
+                "Auto selected-crypt area distribution (corrected to 5 crypts)",
+                "Auto selected-crypt area corrected to 5 crypts (px)",
+            ),
+            (
+                "auto_rfp_px_gt_threshold",
+                "Auto RFP>threshold pixel-count distribution",
+                "Auto pixels in crypts with RFP>threshold (px)",
+            ),
+            (
+                "auto_rfp_px_gt_threshold_corrected_5",
+                "Auto RFP>threshold pixel-count distribution (corrected to 5 crypts)",
+                "Auto pixels in crypts with RFP>threshold corrected to 5 crypts (px)",
+            ),
+        ]
+        for col, dist_title, xlabel in dist_cols:
+            if col not in merged.columns:
+                continue
+            max_x = crit.drop_auto_gt_px if col.startswith("auto_rfp_px_gt_threshold") else None
+            _plot_distribution(
+                merged,
+                image_source_type=image_source_type,
+                col=col,
+                title=dist_title,
+                xlabel=xlabel,
+                out_path=out_dir / f"dist_{col}_{image_source_type}.png",
+                max_x=max_x,
+            )
+            s = pd.to_numeric(
+                merged.loc[merged["image_source_type"] == image_source_type, col],
+                errors="coerce",
+            ).dropna()
+            if max_x is not None:
+                s = s[s.astype(float) <= float(max_x)]
+            if not s.empty:
+                counts, edges = np.histogram(s.astype(float).to_numpy(), bins=30)
+                peak_bin = int(counts.argmax())
+                peak_center = float((edges[peak_bin] + edges[peak_bin + 1]) / 2.0)
+                peak_rows.append(
+                    {
+                        "image_source_type": image_source_type,
+                        "col": col,
+                        "n": int(len(s)),
+                        "peak_center_px": peak_center,
+                        "acceptable_peak_px": int(crit.acceptable_peak_px),
+                        "peak_le_acceptable": bool(peak_center <= float(crit.acceptable_peak_px)),
+                        "max_x_applied": max_x,
+                    }
+                )
+
+    pd.DataFrame(assoc_rows).to_csv(out_dir / "association_stats.csv", index=False)
+    if peak_rows:
+        pd.DataFrame(peak_rows).to_csv(out_dir / "distribution_peaks.csv", index=False)
+
+    sharable_cols = [
+        "subject_name",
+        "metadata_key",
+        "image_source_type",
+        "manual_area_Adam",
+        "manual_area_Hadley",
+        "manual_area_mean",
+        "manual_source_file_Adam",
+        "manual_source_file_Hadley",
+        "rfp_gt_threshold",
+        "auto_effective_count",
+        "auto_rfp_px_gt_threshold",
+        "auto_rfp_px_gt_threshold_corrected_5",
+    ]
+    merged[[c for c in sharable_cols if c in merged.columns]].sort_values(
+        ["subject_name", "image_source_type"]
+    ).to_csv(out_dir / "sharable_manual_vs_auto_gated.csv", index=False)
 
     return 0
 
