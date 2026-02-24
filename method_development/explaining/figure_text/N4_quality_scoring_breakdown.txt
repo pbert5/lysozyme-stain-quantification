@@ -1,0 +1,18 @@
+Subtitle
+Weighted scoring of candidate crypt regions with explicit feature weights.
+
+Large Text Box
+Candidate regions are scored by shape and signal properties, then ranked so lower total score indicates a better crypt match.
+
+Selection weights (from config):
+- circularity: 0.15
+- area: 0.25
+- line_fit: 0.35
+- red_intensity: 0.85
+- com_consistency: 0.05 (legacy compatibility term)
+
+Effective-count weights:
+- circularity: 0.35
+- area: 0.15
+- line_fit: 0.45
+- red_intensity: 0.25

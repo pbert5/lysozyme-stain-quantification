@@ -1,0 +1,7 @@
+Subtitle
+Morphology-guided crypt likelihood from multi-channel overlap, then seed-to-region progression.
+
+Large Text Box
+We combined information across multiple fluorescence channels and applied morphology based filtering to emphasize structures consistent with the expected crypt appearance. This produced a likelihood map where higher values indicate locations whose intensity and local spatial pattern best match the target profile, even when diffuse staining is present.
+
+In RFP, crypt-like signal is modeled as local peaks that are relatively large, locally stable in intensity, and approximately round, with strong transitions near borders. In DAPI, we estimate tissue boundaries and cavity-like spaces where crypt lumens are expected to have low signal. Overlap between these maps highlights high-likelihood crypt centers. We then extract seeds, grow base labels, and map final crypt labels back onto the original channel context.

@@ -1,0 +1,5 @@
+Subtitle
+End-to-end pipeline overview from paired fluorescence channels to final crypt-level outputs.
+
+Large Text Box
+Start with paired DAPI and RFP images, split and standardize each channel, then build morphology-driven maps that emphasize crypt-like patterns. Combine channel evidence into a likelihood/distance representation, derive seed labels, expand to base and final crypt labels, and apply weighted quality scoring to keep the strongest crypt regions for downstream quantification.

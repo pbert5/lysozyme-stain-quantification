@@ -97,7 +97,7 @@ except Exception as e:
     except Exception:  # pragma: no cover - fallback path
         raise e
 
-DEFAULT_MEMORY_PER_WORKER = "4GB"
+DEFAULT_MEMORY_PER_WORKER = "8GB"  # Fallback if psutil is unavailable
 
 
 @dataclass(frozen=True)
@@ -587,13 +587,20 @@ def run_dask_pipeline(
                 if needs_respawn or existing_client is None:
                     print(f"\nStarting new Dask cluster...")
                     
-                    # Memory per worker: total RAM / workers (with safety margin)
-                    # Assume 4GB per worker as safe default, can be increased
-                    memory_per_worker = DEFAULT_MEMORY_PER_WORKER
+                    # Memory per worker: derived dynamically from available RAM,
+                    # floored at 8 GB so image-heavy tasks don't OOM workers.
+                    try:
+                        import psutil
+                        available_gb = psutil.virtual_memory().available / (1024 ** 3)
+                        memory_per_worker_gb = max(8, int(available_gb * 0.85 / desired_n_workers))
+                        memory_per_worker = f"{memory_per_worker_gb}GB"
+                    except Exception:
+                        memory_per_worker = DEFAULT_MEMORY_PER_WORKER
                     
                     if debug:
                         print(f"  Detected {n_cpus} CPUs")
                         print(f"  Configuring: {desired_n_workers} workers × {desired_threads_per_worker} threads = {desired_n_workers * desired_threads_per_worker} total threads")
+                        print(f"  Memory per worker: {memory_per_worker} (dynamic from available RAM)")
                     
                     cluster = LocalCluster(
                         n_workers=desired_n_workers,
@@ -606,7 +613,7 @@ def run_dask_pipeline(
                     cluster_context = cluster  # Store for cleanup
                     print(f"  Scheduler: {cluster.scheduler_address}")
                     print(f"  Dashboard: {cluster.dashboard_link}")
-                    print(f"  Workers: {desired_n_workers} × {desired_threads_per_worker} threads = {desired_n_workers * desired_threads_per_worker} total")
+                    print(f"  Workers: {desired_n_workers} × {desired_threads_per_worker} threads = {desired_n_workers * desired_threads_per_worker} total ({memory_per_worker}/worker)")
                     print(f"\n  📊 MONITOR: {cluster.dashboard_link}")
                     print()
                     

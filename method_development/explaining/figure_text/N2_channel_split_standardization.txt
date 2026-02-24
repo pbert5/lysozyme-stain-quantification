@@ -1,0 +1,5 @@
+Subtitle
+What we start with: one field that branches into standardized DAPI and RFP channels.
+
+Large Text Box
+The input field is split into DAPI (tissue/cell context) and RFP anti-LYZ (lysozyme signal) channels. We standardize intensity per channel so both channels are on consistent contrast scales before morphology filtering. This makes downstream operations less sensitive to raw brightness variation across images.
