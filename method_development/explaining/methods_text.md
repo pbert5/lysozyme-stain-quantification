@@ -10,7 +10,7 @@ The pipeline starts from paired fluorescence channels, standardizes each channel
 In DAPI, we identify tissue borders and cavity-like structures; in RFP, we identify strong lysozyme-positive regions in expected size/shape ranges. These maps are combined into a distance/likelihood image where high values better match the target crypt profile.
 
 ## 3) Seed to region progression
-We extract seeds from continuous high-likelihood areas, grow these into base labels, and then derive final crypt labels for downstream measurements and overlays.
+For figure communication, we select a zoom window around the highest-quality candidate and show the morphology flow locally: channel overlap, seed labels over grayscale distance image, and base labels over grayscale zoomed context with explicit label boundaries.
 
 ## 4) Weighted quality scoring
-Candidate regions are scored using circularity, area, line-fit alignment, and red-intensity features. Lower weighted score means better match; highest-ranked regions are retained for final reporting.
+Candidate regions are scored using circularity, area, line-fit alignment, and red-intensity features. Each metric row uses a tissue overlay saturation map for that single metric, while a separate cumulative saturation map shows the weighted total quality.

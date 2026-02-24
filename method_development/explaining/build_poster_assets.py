@@ -47,6 +47,10 @@ LYSOZYME_ROOT = Path("/home/ash/documents/code/lysozyme")
 ORIGINAL_OVERLAY_PATH = Path(
     "/home/ash/documents/data/inputs/karen/lysozyme/new/Ileum Lysozyme - stt3 (Keyence)/G2/G2EL/G2EL_ileum_Overlay.jpg"
 )
+N3_CARD_WIDTH_IN = 4.2
+N3_CARD_HEIGHT_IN = 3.2
+N3_CARD_IMAGE_HEIGHT_FRAC = 0.82
+N3_CARD_IMAGE_ASPECT = N3_CARD_WIDTH_IN / (N3_CARD_HEIGHT_IN * N3_CARD_IMAGE_HEIGHT_FRAC)
 
 
 @dataclass(frozen=True)
@@ -241,7 +245,7 @@ def _overlay(base_rgb: np.ndarray, overlay_rgb: np.ndarray, mask: np.ndarray, al
 
 
 def _save_graphviz_card(image_rgb: np.ndarray, title: str, out_path: Path) -> None:
-    fig = plt.figure(figsize=(4.2, 3.2), dpi=240)
+    fig = plt.figure(figsize=(N3_CARD_WIDTH_IN, N3_CARD_HEIGHT_IN), dpi=240)
     gs = fig.add_gridspec(2, 1, height_ratios=(0.18, 0.82), hspace=0.0)
     ax_title = fig.add_subplot(gs[0, 0])
     ax_img = fig.add_subplot(gs[1, 0])
@@ -281,6 +285,86 @@ def _normalize_for_display(rgb: np.ndarray, quantile: float = 0.995) -> np.ndarr
         scale = 1.0
     scaled = np.clip(arr / scale, 0.0, 1.0)
     return np.power(scaled, 0.82)
+
+
+def _labels_from_color_components(
+    label_rgb: np.ndarray,
+    threshold: float = 0.08,
+) -> np.ndarray:
+    rgb_float = _to_float_rgb(label_rgb)
+    active_mask = np.max(rgb_float, axis=2) > threshold
+    rgb_u8 = np.round(rgb_float * 255.0).astype(np.uint8)
+    unique_colors = np.unique(rgb_u8.reshape(-1, 3), axis=0)
+
+    label_img = np.zeros(rgb_u8.shape[:2], dtype=np.int32)
+    next_id = 1
+    for color in unique_colors:
+        if np.all(color == 0):
+            continue
+        color_mask = np.all(rgb_u8 == color, axis=2) & active_mask
+        if not np.any(color_mask):
+            continue
+        comp, count = ndi.label(color_mask)
+        for comp_id in range(1, count + 1):
+            label_img[comp == comp_id] = next_id
+            next_id += 1
+    return label_img
+
+
+def _label_boundary_mask(label_img: np.ndarray) -> np.ndarray:
+    padded = np.pad(label_img.astype(np.int32), 1, mode="edge")
+    center = padded[1:-1, 1:-1]
+    positive = center > 0
+    edge_mask = positive & (
+        (center != padded[:-2, 1:-1])
+        | (center != padded[2:, 1:-1])
+        | (center != padded[1:-1, :-2])
+        | (center != padded[1:-1, 2:])
+    )
+    return edge_mask
+
+
+def _weighted_vertical_crop(
+    image_rgb: np.ndarray,
+    *,
+    target_aspect: float,
+    center_y: float,
+) -> np.ndarray:
+    h, w = image_rgb.shape[:2]
+    if h <= 1 or w <= 1 or not np.isfinite(target_aspect) or target_aspect <= 0.0:
+        return image_rgb
+    target_h = int(round(w / target_aspect))
+    target_h = max(1, min(h, target_h))
+    if target_h >= h:
+        return image_rgb
+
+    if not np.isfinite(center_y):
+        center_y = float(h) / 2.0
+    y0 = int(round(center_y - target_h / 2.0))
+    y0 = max(0, min(h - target_h, y0))
+    y1 = y0 + target_h
+    return image_rgb[y0:y1, :]
+
+
+def _horizontal_crop_within_bounds(
+    image_rgb: np.ndarray,
+    *,
+    target_aspect: float,
+    center_x: float,
+) -> np.ndarray:
+    h, w = image_rgb.shape[:2]
+    if h <= 1 or w <= 1 or not np.isfinite(target_aspect) or target_aspect <= 0.0:
+        return image_rgb
+    target_w = int(round(float(h) * float(target_aspect)))
+    target_w = max(1, min(w, target_w))
+    if target_w >= w:
+        return image_rgb
+    if not np.isfinite(center_x):
+        center_x = float(w) / 2.0
+    x0 = int(round(center_x - target_w / 2.0))
+    x0 = max(0, min(w - target_w, x0))
+    x1 = x0 + target_w
+    return image_rgb[:, x0:x1]
 
 
 def _score_label_regions(
@@ -384,6 +468,8 @@ def _score_label_regions(
 def _crop_box_from_top_region(
     scored_df: pd.DataFrame,
     image_shape: tuple[int, int],
+    *,
+    target_aspect: float = N3_CARD_IMAGE_ASPECT,
 ) -> tuple[int, int, int, int]:
     height, width = int(image_shape[0]), int(image_shape[1])
     if scored_df.empty:
@@ -403,8 +489,11 @@ def _crop_box_from_top_region(
 
     y0 = int(np.floor(center_y - 3.0 * crypt_length))
     y1 = int(np.ceil(center_y + 5.0 * crypt_length))
-    x0 = int(np.floor(center_x - 4.0 * crypt_length))
-    x1 = int(np.ceil(center_x + 4.0 * crypt_length))
+    target_height = max(1, y1 - y0)
+    target_width = int(round(float(target_aspect) * float(target_height)))
+    half_width = max(1, int(round(target_width / 2.0)))
+    x0 = int(np.floor(center_x)) - half_width
+    x1 = x0 + target_width
 
     y0 = max(0, y0)
     x0 = max(0, x0)
@@ -416,10 +505,18 @@ def _crop_box_from_top_region(
         pad = min_span - (y1 - y0)
         y0 = max(0, y0 - pad // 2)
         y1 = min(height, y1 + (pad - pad // 2))
-    if (x1 - x0) < min_span:
-        pad = min_span - (x1 - x0)
-        x0 = max(0, x0 - pad // 2)
-        x1 = min(width, x1 + (pad - pad // 2))
+    target_height = max(1, y1 - y0)
+    target_width = min(width, max(min_span, int(round(float(target_aspect) * float(target_height)))))
+    center_x_i = int(round(center_x))
+    x0 = center_x_i - target_width // 2
+    x1 = x0 + target_width
+    if x0 < 0:
+        x1 = min(width, x1 - x0)
+        x0 = 0
+    if x1 > width:
+        shift = x1 - width
+        x0 = max(0, x0 - shift)
+        x1 = width
 
     if y1 <= y0 or x1 <= x0:
         return (0, height, 0, width)
@@ -472,25 +569,42 @@ def _render_quality_overlay(
     label_img: np.ndarray,
     label_to_quality: dict[int, float],
     alpha: float = 0.72,
+    mode: str = "saturation",
 ) -> np.ndarray:
     out = context_rgb.copy()
-    cmap = plt.get_cmap("turbo")
     for label_id, quality in label_to_quality.items():
         mask = label_img == int(label_id)
         if not np.any(mask):
             continue
-        color = np.asarray(cmap(np.clip(quality, 0.0, 1.0))[:3], dtype=np.float32)
+        q = float(np.clip(quality, 0.0, 1.0))
+        if mode == "hue":
+            color = np.asarray(plt.get_cmap("turbo")(q)[:3], dtype=np.float32)
+        else:
+            # Linear saturation ramp (constant hue/value) for perceptually steady progression.
+            hue = 0.02
+            sat = 0.05 + 0.95 * q
+            val = 1.0
+            i = int(np.floor(hue * 6.0))
+            f = hue * 6.0 - i
+            p = val * (1.0 - sat)
+            qh = val * (1.0 - f * sat)
+            t = val * (1.0 - (1.0 - f) * sat)
+            i = i % 6
+            if i == 0:
+                color = np.array([val, t, p], dtype=np.float32)
+            elif i == 1:
+                color = np.array([qh, val, p], dtype=np.float32)
+            elif i == 2:
+                color = np.array([p, val, t], dtype=np.float32)
+            elif i == 3:
+                color = np.array([p, qh, val], dtype=np.float32)
+            elif i == 4:
+                color = np.array([t, p, val], dtype=np.float32)
+            else:
+                color = np.array([val, p, qh], dtype=np.float32)
         out[mask] = (1.0 - alpha) * out[mask] + alpha * color
 
-    positive = label_img > 0
-    edges = positive & (
-        ~(
-            np.roll(positive, 1, axis=0)
-            & np.roll(positive, -1, axis=0)
-            & np.roll(positive, 1, axis=1)
-            & np.roll(positive, -1, axis=1)
-        )
-    )
+    edges = _label_boundary_mask(label_img)
     edges = ndi.binary_dilation(edges, iterations=1)
     out[edges] = np.clip(0.20 * out[edges] + 0.80 * np.array([1.0, 1.0, 1.0]), 0.0, 1.0)
     return np.clip(out, 0.0, 1.0)
@@ -792,22 +906,28 @@ def _generate_n3_morphology_seed_flow(
     original_overlay = _load_rgb(cfg.paths_for_generation["paired_overlay_original"])
     dapi_std = _load_rgb(cfg.paths_for_generation["tissue_preprocessed"])
     rfp_std = _load_rgb(cfg.paths_for_generation["crypt_preprocessed"])
+    distance_img = _load_rgb(cfg.paths_for_generation["distance_image"])
     tissue_caps = _load_rgb(cfg.paths_for_generation["tissue_caps_troughs"])
     crypt_clean = _load_rgb(cfg.paths_for_generation["crypt_clean"])
     opened_split_times_thinned = _load_rgb(cfg.paths_for_generation["opened_split_times_thinned"])
     seed_labels = _load_rgb(cfg.paths_for_generation["seed_labels"])
     base_labels = _load_rgb(cfg.paths_for_generation["base_labels"])
     scoring_weights, _ = _load_scoring_weights(cfg.scoring_config_path)
+    roi_scoring_weights = dict(scoring_weights)
+    roi_scoring_weights.update({"circularity": 0.25, "area": 0.15, "line_fit": 0.35})
 
-    base_label_mask = _nonblack_mask(base_labels, threshold=0.08)
-    base_label_img, _ = ndi.label(base_label_mask)
+    base_label_img = _labels_from_color_components(base_labels, threshold=0.08)
     rfp_gray = _grayscale(rfp_std)
     scored_regions = _score_label_regions(
         label_img=base_label_img,
         intensity_gray=rfp_gray,
-        scoring_weights=scoring_weights,
+        scoring_weights=roi_scoring_weights,
     )
-    crop_box = _crop_box_from_top_region(scored_regions, image_shape=rfp_gray.shape)
+    crop_box = _crop_box_from_top_region(
+        scored_regions,
+        image_shape=rfp_gray.shape,
+        target_aspect=N3_CARD_IMAGE_ASPECT,
+    )
 
     original_display = _normalize_for_display(original_overlay)
     source_with_box = _draw_crop_box(original_display, crop_box)
@@ -823,26 +943,38 @@ def _generate_n3_morphology_seed_flow(
         axis=-1,
     )
 
+    distance_gray_rgb = np.repeat(_grayscale(distance_img)[..., None], 3, axis=2)
     crypt_clean_gray = np.repeat(_grayscale(crypt_clean)[..., None], 3, axis=2)
+    dapi_gray_rgb = np.repeat(dapi_gray[..., None], 3, axis=2)
+    rfp_gray_rgb = np.repeat(rfp_gray[..., None], 3, axis=2)
 
     tissue_mask = _nonblack_mask(tissue_caps, threshold=0.08)
     opened_mask = _nonblack_mask(opened_split_times_thinned, threshold=0.08)
     seed_mask = _nonblack_mask(seed_labels, threshold=0.08)
-    base_mask = _nonblack_mask(base_labels, threshold=0.08)
+    base_mask = base_label_img > 0
+    base_boundary = _label_boundary_mask(base_label_img)
 
-    dapi_morph = crypt_clean_gray * 0.30
+    dapi_morph = np.clip(0.60 * dapi_gray_rgb, 0.0, 1.0)
     dapi_morph[tissue_mask] = np.clip(dapi_morph[tissue_mask] + np.array([0.08, 0.28, 0.92]), 0.0, 1.0)
 
     opened_red = np.zeros_like(crypt_clean_gray)
     opened_red[..., 0] = 1.0
-    rfp_morph = _overlay(crypt_clean_gray, opened_red, opened_mask, alpha=0.90)
+    rfp_morph = np.clip(0.60 * rfp_gray_rgb, 0.0, 1.0)
+    rfp_morph = _overlay(rfp_morph, opened_red, opened_mask, alpha=0.96)
 
-    overlap = crypt_clean_gray * 0.30
-    overlap[tissue_mask] = np.clip(overlap[tissue_mask] + np.array([0.08, 0.28, 0.92]), 0.0, 1.0)
-    overlap[opened_mask] = np.clip(overlap[opened_mask] + np.array([0.92, 0.06, 0.06]), 0.0, 1.0)
+    overlap = dapi_morph.copy()
+    opened_top_mask = ndi.binary_dilation(opened_mask, iterations=1)
+    overlap = _overlay(overlap, opened_red, opened_top_mask, alpha=0.98)
 
-    seeds_on_gray = _overlay(crypt_clean_gray, seed_labels, seed_mask, alpha=0.92)
-    base_on_gray = _overlay(crypt_clean_gray, base_labels, base_mask, alpha=0.55)
+    seeds_on_distance = _overlay(distance_gray_rgb, seed_labels, seed_mask, alpha=1.0)
+
+    zoom_gray = _grayscale(zoom_source)
+    zoom_gray_rgb = np.repeat(zoom_gray[..., None], 3, axis=2)
+    base_crop_rgb = _crop_rgb(base_labels, crop_box)
+    base_mask_crop = _crop_rgb(base_mask[..., None].astype(np.float32), crop_box)[..., 0] > 0.5
+    base_boundary_crop = _crop_rgb(base_boundary[..., None].astype(np.float32), crop_box)[..., 0] > 0.5
+    base_on_zoom = _overlay(zoom_gray_rgb, base_crop_rgb, base_mask_crop, alpha=0.52)
+    base_on_zoom[base_boundary_crop] = 1.0
 
     node_images = {
         "original_with_box": (source_with_box, "Original field + zoom box"),
@@ -852,11 +984,11 @@ def _generate_n3_morphology_seed_flow(
         "dapi_morph": (_crop_rgb(dapi_morph, crop_box), "DAPI morphology"),
         "rfp_morph": (
             _crop_rgb(rfp_morph, crop_box),
-            "Crypt clean + opened split times thinned",
+            "RFP morphology",
         ),
         "overlap": (_crop_rgb(overlap, crop_box), "Channel overlap"),
-        "seed": (_crop_rgb(seeds_on_gray, crop_box), "Seed labels on grayscale"),
-        "base": (_crop_rgb(base_on_gray, crop_box), "Base labels on grayscale"),
+        "seed": (_crop_rgb(seeds_on_distance, crop_box), "Seed labels on grayscale distance"),
+        "base": (base_on_zoom, "Base labels on zoomed grayscale + boundaries"),
     }
 
     with tempfile.TemporaryDirectory(prefix="n3_graphviz_cards_") as temp_dir:
@@ -942,19 +1074,20 @@ def _generate_n4_quality_scoring_breakdown(
     base_labels = _load_rgb(cfg.paths_for_generation["base_labels"])
     source_display = _normalize_for_display(source_overlay)
 
-    label_mask = _nonblack_mask(base_labels, threshold=0.08)
-    label_img, _ = ndi.label(label_mask)
+    label_img = _labels_from_color_components(base_labels, threshold=0.08)
     scored_regions = _score_label_regions(
         label_img=label_img,
         intensity_gray=_grayscale(rfp_std),
         scoring_weights=scoring_weights,
     )
+    crop_box = _crop_box_from_top_region(scored_regions, image_shape=label_img.shape)
+    y0_max, y1_max, x0_max, x1_max = crop_box
 
     metric_descriptions = {
-        "circularity": "Hue ranks detections by circularity-based quality (better shape match is warmer).",
-        "area": "Hue ranks detections by area-based quality (better size match is warmer).",
-        "line_fit": "Hue ranks detections by axis-alignment quality (better alignment is warmer).",
-        "red_intensity": "Hue ranks detections by red-intensity quality (stronger signal is warmer).",
+        "circularity": "Saturation ranks detections by circularity quality (higher saturation is better).",
+        "area": "Saturation ranks detections by area quality (higher saturation is better).",
+        "line_fit": "Saturation ranks detections by axis-alignment quality (higher saturation is better).",
+        "red_intensity": "Saturation ranks detections by red-intensity quality (higher saturation is better).",
     }
     metric_to_score_col = {
         "circularity": "circularity_score",
@@ -973,7 +1106,7 @@ def _generate_n4_quality_scoring_breakdown(
                 (
                     metric,
                     _format_weight(scoring_weights.get(metric)),
-                    metric_descriptions.get(metric, "Hue ranks detections by this metric."),
+                    metric_descriptions.get(metric, "Saturation ranks detections by this metric."),
                     score_col,
                 )
             )
@@ -1006,13 +1139,17 @@ def _generate_n4_quality_scoring_breakdown(
         else:
             metric_overlays[metric] = source_display.copy()
 
+    max_crop_overlays: dict[str, np.ndarray] = {
+        metric: _crop_rgb(overlay, crop_box) for metric, overlay in metric_overlays.items()
+    }
+
     fig = plt.figure(figsize=(18, 9.6), dpi=320)
     gs = fig.add_gridspec(1, 2, width_ratios=(0.96, 1.50), wspace=0.06)
     ax_cumulative = fig.add_subplot(gs[0, 0])
     ax_tbl = fig.add_subplot(gs[0, 1])
 
     ax_cumulative.imshow(cumulative_overlay)
-    ax_cumulative.set_title("Cumulative Quality Hue Reference", fontsize=16, weight="bold")
+    ax_cumulative.set_title("Cumulative Quality Saturation Reference", fontsize=16, weight="bold")
     ax_cumulative.text(
         0.02,
         0.03,
@@ -1037,7 +1174,7 @@ def _generate_n4_quality_scoring_breakdown(
     rows_count = max(len(rows), 1)
     row_h = min(0.16, (header_top - 0.20 - header_h) / rows_count)
     table_bottom = header_top - header_h - rows_count * row_h
-    header_labels = ["Metric", "Weight", "Quality Hue Ref", "Interpretation"]
+    header_labels = ["Metric", "Weight", "Quality Saturation Ref", "Interpretation"]
 
     for idx, label in enumerate(header_labels):
         x0 = col_edges[idx]
@@ -1086,7 +1223,52 @@ def _generate_n4_quality_scoring_breakdown(
         hue_x1 = col_edges[3] - 0.020
         hue_y0 = y0 + row_h * 0.12
         hue_y1 = y1 - row_h * 0.12
-        ax_tbl.imshow(metric_overlays.get(metric, source_display), extent=[hue_x0, hue_x1, hue_y0, hue_y1], aspect="auto", zorder=2)
+        target_aspect = (hue_x1 - hue_x0) / max(hue_y1 - hue_y0, 1e-6)
+
+        row_overlay = max_crop_overlays.get(metric, _crop_rgb(source_display, crop_box))
+        if not scored_indexed.empty and metric in metric_overlays:
+            score_col = metric_to_score_col.get(metric)
+            if score_col and score_col in scored_indexed.columns:
+                metric_quality = _series_to_quality(scored_indexed[score_col])
+                in_window = (
+                    (scored_indexed["com_row"] >= y0_max)
+                    & (scored_indexed["com_row"] < y1_max)
+                    & (scored_indexed["com_col"] >= x0_max)
+                    & (scored_indexed["com_col"] < x1_max)
+                )
+                subset = scored_indexed.loc[in_window]
+                if not subset.empty:
+                    weights = np.asarray(
+                        [
+                            float(metric_quality.get(int(label_id), 0.0))
+                            for label_id in subset.index.to_numpy()
+                        ],
+                        dtype=np.float64,
+                    )
+                    coords = subset["com_col"].to_numpy(dtype=np.float64) - float(x0_max)
+                    weight_sum = float(np.sum(weights))
+                    if weight_sum > 1e-8:
+                        center_x = float(np.sum(coords * weights) / weight_sum)
+                    else:
+                        center_x = row_overlay.shape[1] * 0.5
+                else:
+                    center_x = row_overlay.shape[1] * 0.5
+            else:
+                center_x = row_overlay.shape[1] * 0.5
+        else:
+            center_x = row_overlay.shape[1] * 0.5
+
+        row_overlay = _horizontal_crop_within_bounds(
+            row_overlay,
+            target_aspect=target_aspect,
+            center_x=center_x,
+        )
+        ax_tbl.imshow(
+            row_overlay,
+            extent=[hue_x0, hue_x1, hue_y0, hue_y1],
+            aspect="auto",
+            zorder=2,
+        )
         ax_tbl.add_patch(
             FancyBboxPatch(
                 (hue_x0, hue_y0),
@@ -1179,10 +1361,10 @@ def _write_methods_text(dry_run: bool) -> None:
         In DAPI, we identify tissue borders and cavity-like structures; in RFP, we identify strong lysozyme-positive regions in expected size/shape ranges. These maps are combined into a distance/likelihood image where high values better match the target crypt profile.
 
         ## 3) Seed to region progression
-        We extract seeds from continuous high-likelihood areas, grow these into base labels, and then derive final crypt labels for downstream measurements and overlays.
+        For figure communication, we select a zoom window around the highest-quality candidate and show the morphology flow locally: channel overlap, seed labels over grayscale distance image, and base labels over grayscale zoomed context with explicit label boundaries.
 
         ## 4) Weighted quality scoring
-        Candidate regions are scored using circularity, area, line-fit alignment, and red-intensity features. Lower weighted score means better match; highest-ranked regions are retained for final reporting.
+        Candidate regions are scored using circularity, area, line-fit alignment, and red-intensity features. Each metric row uses a tissue overlay saturation map for that single metric, while a separate cumulative saturation map shows the weighted total quality.
         """
     ).strip() + "\n"
 
@@ -1216,7 +1398,7 @@ def _write_figure_map(dry_run: bool) -> None:
         - `N1` -> `assets/N1_pipeline_flowchart.png`: High-level pipeline flowchart used to guide figure order.
         - `N2` -> `assets/N2_channel_split_standardization.png`: Original field split into standardized DAPI/RFP channels.
         - `N3` -> `assets/N3_morphology_seed_flowchart.png`: Morphology-based likelihood and seed-to-label flow.
-        - `N4` -> `assets/N4_quality_scoring_breakdown.png`: Scoring criteria, weights, and quality-hue interpretation.
+        - `N4` -> `assets/N4_quality_scoring_breakdown.png`: Scoring criteria, weights, and quality-saturation interpretation.
 
         ## Figure text files
         - `figure_text/N1_pipeline_flowchart.txt`
@@ -1268,17 +1450,21 @@ def _write_figure_text_files(
         Large Text Box
         We first mark a zoom window around the highest-quality detection candidate, then run the visual flow on that local window so crypt-scale morphology is easy to read.
 
-        In RFP, crypt-like signal is modeled as local peaks that are relatively large, locally stable in intensity, and approximately round, with strong transitions near borders. In DAPI, we estimate tissue boundaries and cavity-like spaces where crypt lumens are expected to have low signal. Overlap between these maps highlights high-likelihood crypt centers. We then extract seed labels and grow base labels on the same grayscale context image.
+        In RFP, crypt-like signal is modeled as local peaks that are relatively large, locally stable in intensity, and approximately round, with strong transitions near borders. In DAPI, we estimate tissue boundaries and cavity-like spaces where crypt lumens are expected to have low signal. Overlap between these maps highlights high-likelihood crypt centers.
+
+        In this panel, seed labels are overlaid on a grayscale distance image, and base labels are overlaid on the grayscale zoomed analysis window with explicit label boundaries.
         """
     ).strip() + "\n"
 
     files["N4_quality_scoring_breakdown.txt"] = textwrap.dedent(
         f"""
         Subtitle
-        Weighted scoring with per-metric tissue hue references and a separate cumulative map.
+        Weighted scoring with per-metric tissue saturation references and a separate cumulative map.
 
         Large Text Box
-        Candidate regions are scored by shape and signal properties. For each metric row, the hue reference shows the same tissue image with detections colored by that metric-specific quality. A separate cumulative hue panel shows the weighted overall quality on the same subject image.
+        Candidate regions are scored by shape and signal properties. For each metric row, the saturation reference shows the same tissue image with detections colored by that metric-specific quality.
+
+        Row-level references use the same analysis-window bounds as the zoomed morphology panel: first we match the vertical extent to that window, then crop horizontally to fit the table cell proportion while staying inside the analysis-window limits. Labels come from the same base-label set.
 
         Selection weights (from config):
         - circularity: {_format_weight(scoring_weights.get('circularity'))}

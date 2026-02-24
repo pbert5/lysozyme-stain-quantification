@@ -17,7 +17,7 @@
 - `N1` -> `assets/N1_pipeline_flowchart.png`: High-level pipeline flowchart used to guide figure order.
 - `N2` -> `assets/N2_channel_split_standardization.png`: Original field split into standardized DAPI/RFP channels.
 - `N3` -> `assets/N3_morphology_seed_flowchart.png`: Morphology-based likelihood and seed-to-label flow.
-- `N4` -> `assets/N4_quality_scoring_breakdown.png`: Scoring criteria, weights, and quality-hue interpretation.
+- `N4` -> `assets/N4_quality_scoring_breakdown.png`: Scoring criteria, weights, and quality-saturation interpretation.
 
 ## Figure text files
 - `figure_text/N1_pipeline_flowchart.txt`
