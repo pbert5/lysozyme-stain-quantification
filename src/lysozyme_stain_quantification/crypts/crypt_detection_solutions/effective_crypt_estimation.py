@@ -292,11 +292,19 @@ def effective_label_count(labels: np.ndarray, region_mask: np.ndarray | None = N
 
 
 def _extract_slice_for_label(labels: np.ndarray, label_id: int) -> tuple[tuple[slice, ...], np.ndarray]:
-    slcs = ndi.find_objects(labels == label_id)
-    if not slcs:
+    # NOTE: scipy>=1.17 expects an integer-labeled array in find_objects.
+    # Passing a boolean mask now raises TypeError.
+    labels_arr = np.asarray(labels)
+    binary = labels_arr == label_id
+    if not np.any(binary):
+        return (slice(0, labels_arr.shape[0]), slice(0, labels_arr.shape[1])), binary
+
+    slcs = ndi.find_objects(labels_arr)
+    idx = int(label_id) - 1
+    if idx < 0 or idx >= len(slcs) or slcs[idx] is None:
         # fallback to whole-image to avoid indexing errors
-        return (slice(0, labels.shape[0]), slice(0, labels.shape[1])), labels == label_id
-    return slcs[0], labels == label_id
+        return (slice(0, labels_arr.shape[0]), slice(0, labels_arr.shape[1])), binary
+    return slcs[idx], binary
 
 
 def quantify_matches(

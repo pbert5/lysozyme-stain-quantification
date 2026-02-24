@@ -475,6 +475,7 @@ def run_dask_pipeline(
     dataset_cfg: DatasetConfig,
     *,
     results_root: Path,
+    input_csv: Optional[Path] = None,
     use_cluster: bool = True,
     n_workers: Optional[int] = None,
     threads_per_worker: Optional[int] = None,
@@ -631,17 +632,76 @@ def run_dask_pipeline(
         if debug:
             print(f"[x] Debug intermediate capture enabled for {len(whitelist)} stages.")
             print(f"    Output directory: {debug_dir.resolve()}\n")
-    # Find subject image sets
+    csv_records: List[Dict[str, object]] = []
+    unmatched: List[Path] = []
+    pairs: List[Tuple[Path, ...]] = []
+    paired_subject_names: List[str] = []
+    unmatched_subject_names: List[str] = []
 
-    unmatched, pairs, paired_subject_names, unmatched_subject_names = find_tif_images_by_keys(
-        dataset_cfg.image_base_dir,
-        keys=list(dataset_cfg.channel_keys),
-        max_subjects=max_subjects,
-        use_timestamps=use_timestamps,
-        include_unmatched=dataset_cfg.include_unmatched_combined,
-    )
+    csv_skipped_empty_subject = 0
+    csv_skipped_missing_paths = 0
+    csv_skipped_invalid_paths = 0
+    if input_csv is not None:
+        resolved_csv = Path(input_csv).expanduser().resolve()
+        if not resolved_csv.exists():
+            raise FileNotFoundError(f"input_csv not found: {resolved_csv}")
+        input_df = pd.read_csv(resolved_csv)
+        required_columns = {"subject_id", "lysozyme_path", "tissue_path"}
+        missing_columns = required_columns - set(input_df.columns)
+        if missing_columns:
+            raise ValueError(f"input_csv missing required columns: {sorted(missing_columns)}")
 
-    total_subjects = len(unmatched_subject_names) + len(paired_subject_names)
+        for _, row in input_df.iterrows():
+            subject_name = str(row.get("subject_id", "")).strip()
+            lysozyme_path = Path(str(row.get("lysozyme_path", "")).strip()).expanduser()
+            tissue_path = Path(str(row.get("tissue_path", "")).strip()).expanduser()
+            if not subject_name:
+                csv_skipped_empty_subject += 1
+                continue
+            if not str(lysozyme_path).strip() or not str(tissue_path).strip():
+                csv_skipped_invalid_paths += 1
+                continue
+            if not lysozyme_path.exists() or not tissue_path.exists():
+                csv_skipped_missing_paths += 1
+                continue
+
+            mpp_value = row.get("microns_per_pixel", None)
+            try:
+                csv_mpp = float(mpp_value) if pd.notna(mpp_value) and str(mpp_value).strip() != "" else None
+            except Exception:
+                csv_mpp = None
+
+            csv_records.append(
+                {
+                    "subject_name": subject_name,
+                    "lysozyme_path": lysozyme_path.resolve(),
+                    "tissue_path": tissue_path.resolve(),
+                    "csv_mpp": csv_mpp,
+                    "source_dataset": str(row.get("source_dataset", "")).strip(),
+                    "source_label": str(row.get("source_label", "")).strip(),
+                }
+            )
+
+        if max_subjects is not None:
+            csv_records = csv_records[: max(0, int(max_subjects))]
+        total_subjects = len(csv_records)
+        print(
+            "[x] CSV ingestion summary: "
+            f"loaded={len(csv_records)}, "
+            f"skipped_empty_subject={csv_skipped_empty_subject}, "
+            f"skipped_missing_paths={csv_skipped_missing_paths}, "
+            f"skipped_invalid_paths={csv_skipped_invalid_paths}"
+        )
+    else:
+        # Find subject image sets from filesystem discovery.
+        unmatched, pairs, paired_subject_names, unmatched_subject_names = find_tif_images_by_keys(
+            dataset_cfg.image_base_dir,
+            keys=list(dataset_cfg.channel_keys),
+            max_subjects=max_subjects,
+            use_timestamps=use_timestamps,
+            include_unmatched=dataset_cfg.include_unmatched_combined,
+        )
+        total_subjects = len(unmatched_subject_names) + len(paired_subject_names)
     normalized_subject_whitelist: Optional[set[str]] = None
     if debug_subject_whitelist:
         normalized_subject_whitelist = {
@@ -664,7 +724,10 @@ def run_dask_pipeline(
         and debug_subject_limit is not None
         and debug_subject_limit > 0
     ):
-        ordered_subject_names = list(paired_subject_names) + list(unmatched_subject_names)
+        if input_csv is not None:
+            ordered_subject_names = [str(item["subject_name"]) for item in csv_records]
+        else:
+            ordered_subject_names = list(paired_subject_names) + list(unmatched_subject_names)
         auto_limit_names = {
             str(name).strip().lower()
             for name in ordered_subject_names[: min(debug_subject_limit, len(ordered_subject_names))]
@@ -700,35 +763,56 @@ def run_dask_pipeline(
 
     image_bags = {}
     # region build bags
-    seperate_channels_bag = db.from_sequence(list(zip(pairs, paired_subject_names))).map(
-        lambda p: dict(
-            paths=p[0],
-            rfp=_to_2d_channel(imread(p[0][0]), preferred_index=dataset_cfg.rfp_channel_index),
-            dapi=_to_2d_channel(imread(p[0][1]), preferred_index=dataset_cfg.dapi_channel_index),
-            source_type="separate_channels",
-            subject_name=p[1],
-        )
-    )
-
-    combined_channels_bag = (
-        db.from_sequence(list(zip(unmatched, unmatched_subject_names)))
-        .map(lambda p: dict(paths=[p[0]], image=imread(p[0]), subject_name=p[1]))
-        .map(lambda x: x | {"image": _remove_rectangles_for_combined(x["image"])})
-        .map(
-            lambda x: dict(
-                paths=x["paths"],
-                rfp=_to_2d_channel(x["image"], preferred_index=dataset_cfg.rfp_channel_index),
-                dapi=_to_2d_channel(x["image"], preferred_index=dataset_cfg.dapi_channel_index),
-                source_type="combined_channels",
-                subject_name=x["subject_name"],
+    if input_csv is not None:
+        csv_bag = db.from_sequence(csv_records).map(
+            lambda rec: dict(
+                paths=[rec["lysozyme_path"], rec["tissue_path"]],
+                rfp=_to_2d_channel(imread(rec["lysozyme_path"]), preferred_index=dataset_cfg.rfp_channel_index),
+                dapi=_to_2d_channel(imread(rec["tissue_path"]), preferred_index=dataset_cfg.dapi_channel_index),
+                source_type="csv_input",
+                subject_name=rec["subject_name"],
+                source_dataset=rec.get("source_dataset", ""),
+                source_label=rec.get("source_label", ""),
+                csv_mpp=rec.get("csv_mpp", None),
             )
         )
-    )
-    if debug:
-        print(f"[x] Created Dask bag with:\n\t {len(unmatched)} subjects from combined channels\n\t and {len(paired_subject_names)} subjects from seperate channels.\n")
+        full_bag = csv_bag
+        if debug:
+            print(f"[x] Created Dask bag from CSV with {len(csv_records)} subjects.\n")
+    else:
+        seperate_channels_bag = db.from_sequence(list(zip(pairs, paired_subject_names))).map(
+            lambda p: dict(
+                paths=p[0],
+                rfp=_to_2d_channel(imread(p[0][0]), preferred_index=dataset_cfg.rfp_channel_index),
+                dapi=_to_2d_channel(imread(p[0][1]), preferred_index=dataset_cfg.dapi_channel_index),
+                source_type="separate_channels",
+                subject_name=p[1],
+                source_dataset="",
+                source_label="",
+                csv_mpp=None,
+            )
+        )
 
-    
-    full_bag = db.concat([seperate_channels_bag, combined_channels_bag])
+        combined_channels_bag = (
+            db.from_sequence(list(zip(unmatched, unmatched_subject_names)))
+            .map(lambda p: dict(paths=[p[0]], image=imread(p[0]), subject_name=p[1], source_dataset="", source_label="", csv_mpp=None))
+            .map(lambda x: x | {"image": _remove_rectangles_for_combined(x["image"])})
+            .map(
+                lambda x: dict(
+                    paths=x["paths"],
+                    rfp=_to_2d_channel(x["image"], preferred_index=dataset_cfg.rfp_channel_index),
+                    dapi=_to_2d_channel(x["image"], preferred_index=dataset_cfg.dapi_channel_index),
+                    source_type="combined_channels",
+                    subject_name=x["subject_name"],
+                    source_dataset=x.get("source_dataset", ""),
+                    source_label=x.get("source_label", ""),
+                    csv_mpp=x.get("csv_mpp", None),
+                )
+            )
+        )
+        if debug:
+            print(f"[x] Created Dask bag with:\n\t {len(unmatched)} subjects from combined channels\n\t and {len(paired_subject_names)} subjects from seperate channels.\n")
+        full_bag = db.concat([seperate_channels_bag, combined_channels_bag])
     # Filter out any subjects that did not yield 2D RFP/DAPI (no early compute)
     full_bag = full_bag.filter(lambda x: _is_2d(x["rfp"]) and _is_2d(x["dapi"]))
 
@@ -758,7 +842,11 @@ def run_dask_pipeline(
     full_bag = full_bag.map(  # TODO should add a propagate old keys func
         lambda x: x
         | dict(
-            scale_um_per_px=dataset_cfg.scale_lookup.resolve(Path(x["paths"][0]))
+            scale_um_per_px=(
+                float(x["csv_mpp"])
+                if x.get("csv_mpp", None) is not None
+                else dataset_cfg.scale_lookup.resolve(Path(x["paths"][0]))
+            )
         )
     )
     # Keep light-weight image size so we can compute % Area later without holding arrays
@@ -934,6 +1022,8 @@ def run_dask_pipeline(
         return {
             "subject_name": x["subject_name"],
             "source_type": x["source_type"],
+            "source_dataset": x.get("source_dataset", ""),
+            "source_label": x.get("source_label", ""),
             "microns_per_px": x["scale_um_per_px"],
             "image_pixel_count": x.get("image_pixel_count", None),
             "summary_image": x["summary_image"],
@@ -961,10 +1051,18 @@ def run_dask_pipeline(
 
     # region execute graph
     if debug:
-        print(f"[x] Executing Dask bag with {len(unmatched) + len(paired_subject_names)} subjects...\n")
+        subject_count = len(csv_records) if input_csv is not None else (len(unmatched) + len(paired_subject_names))
+        print(f"[x] Executing Dask bag with {subject_count} subjects...\n")
 
     start_time = time.perf_counter()
     results = full_bag.compute()
+    if input_csv is not None and len(results) != len(csv_records):
+        dropped = len(csv_records) - len(results)
+        print(
+            "[x] WARNING: Some CSV subjects were filtered before processing "
+            f"(expected={len(csv_records)}, processed={len(results)}, dropped={dropped}). "
+            "Likely non-2D channel extraction."
+        )
     elapsed = time.perf_counter() - start_time
     print(f"[x] Compute took {elapsed:.2f} seconds")
     if debug:
@@ -1011,6 +1109,8 @@ def run_dask_pipeline(
     for item in results:
         name = str(item.get("subject_name", ""))
         source_type = str(item.get("source_type", "unknown"))
+        source_dataset = str(item.get("source_dataset", ""))
+        source_label = str(item.get("source_label", ""))
         scale = item.get("microns_per_px", None)
         pixel_count = item.get("image_pixel_count", None)
         summary = item.get("summary_image", {})
@@ -1054,6 +1154,8 @@ def run_dask_pipeline(
             # Identification
             "subject name": name,
             "image_source_type": source_type,
+            "source_dataset": source_dataset,
+            "source_label": source_label,
         }
 
         if isinstance(summary, dict):
@@ -1147,6 +1249,8 @@ def run_dask_pipeline(
             row_simpson: Dict[str, object] = {
                 "subject name": name,
                 "image_source_type": source_type,
+                "source_dataset": source_dataset,
+                "source_label": source_label,
                 "Effective Count": simpson_n,
                 "Total Area": area_sum_um2,
                 "Average Size (Simpson)": area_mean_um2_simpson,
@@ -1168,6 +1272,8 @@ def run_dask_pipeline(
         detailed_row: Dict[str, object] = {
             "subject_name": name,
             "image_source_type": source_type,
+            "source_dataset": source_dataset,
+            "source_label": source_label,
             "microns_per_px": scale,
             "selected_crypt_area_px_sum": selected_area_px_sum,
             "selected_crypt_area_px_std": selected_area_px_std,
@@ -1205,6 +1311,8 @@ def run_dask_pipeline(
             detailed_row_simpson: Dict[str, object] = {
                 "subject_name": name,
                 "image_source_type": source_type,
+                "source_dataset": source_dataset,
+                "source_label": source_label,
                 "microns_per_px": scale,
                 "simpson_effective_count": float(eff.neff_simpson),
                 "simpson_k_raw": int(eff.k_raw),
@@ -1253,6 +1361,8 @@ def run_dask_pipeline(
                     rec_out = dict(rec)
                     rec_out["subject_name"] = rec_out.get("subject_name", name)
                     rec_out["image_source_type"] = source_type
+                    rec_out["source_dataset"] = source_dataset
+                    rec_out["source_label"] = source_label
                     per_crypt_records.append(rec_out)
 
     # Build DataFrames and save
@@ -1262,6 +1372,8 @@ def run_dask_pipeline(
         cols = [
             "subject name",
             "image_source_type",
+            "source_dataset",
+            "source_label",
             "Count",
             "Total Area",
             "Average Size",
@@ -1284,6 +1396,8 @@ def run_dask_pipeline(
         det_cols = [
             "subject_name",
             "image_source_type",
+            "source_dataset",
+            "source_label",
             "microns_per_px",
             "selected_crypt_area_px_sum",
             "selected_crypt_area_px_std",
@@ -1316,6 +1430,10 @@ def run_dask_pipeline(
         cols_pc = list(PER_CRYPT_FIELD_ORDER)
         if "image_source_type" not in cols_pc:
             cols_pc.insert(1, "image_source_type")
+        if "source_dataset" not in cols_pc:
+            cols_pc.insert(2, "source_dataset")
+        if "source_label" not in cols_pc:
+            cols_pc.insert(3, "source_label")
         per_crypt_df = per_crypt_df.reindex(columns=[c for c in cols_pc if c in per_crypt_df.columns])
 
     print("\n[Saving] Writing aggregated CSVs...")

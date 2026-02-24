@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -281,26 +282,110 @@ def write_csv(csv_path: Path, rows: Sequence[Dict[str, str]]) -> None:
             writer.writerow(row)
 
 
+def _csv_path_from_config(config: Dict, config_path: Path) -> Path:
+    dataset_cfg = config.get("dataset_config", {})
+    csv_path = Path(str(dataset_cfg.get("input_csv", "lysozyme_input_data.csv")))
+    if not csv_path.is_absolute():
+        csv_path = (config_path.parent / csv_path).resolve()
+    return csv_path
+
+
+def validate_existing_csv(csv_path: Path) -> Dict[str, int]:
+    if not csv_path.exists():
+        return {"rows": 0, "missing_rows": 0}
+
+    rows = 0
+    missing_rows = 0
+    with csv_path.open("r", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            rows += 1
+            lyso = Path(str(row.get("lysozyme_path", "")).strip())
+            tissue = Path(str(row.get("tissue_path", "")).strip())
+            if (not lyso.exists()) or (not tissue.exists()):
+                missing_rows += 1
+    return {"rows": rows, "missing_rows": missing_rows}
+
+
+def _resolve_config_path(*, config_arg: Optional[Path], work_dir_arg: Optional[Path]) -> Path:
+    if config_arg is not None and work_dir_arg is not None:
+        raise ValueError("Provide either --config or --work-dir, not both.")
+    if work_dir_arg is not None:
+        return (work_dir_arg.expanduser().resolve() / "lysozyme_pipeline_config.yaml").resolve()
+    if config_arg is not None:
+        return config_arg.expanduser().resolve()
+    return (Path.cwd() / "lysozyme_pipeline_config.yaml").resolve()
+
+
+def _confirm_overwrite(csv_path: Path, policy: str) -> bool:
+    if not csv_path.exists():
+        return True
+    if policy == "always":
+        return True
+    if policy == "never":
+        return False
+
+    # policy == "ask"
+    if not sys.stdin.isatty():
+        print(
+            f"CSV exists at {csv_path}. Non-interactive shell detected; skipping rewrite. "
+            "Use --rewrite-csv always to force."
+        )
+        return False
+    response = input(f"CSV exists at {csv_path}. Rewrite it? [y/N]: ").strip().lower()
+    return response in {"y", "yes"}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Discover lysozyme/tissue image pairs and rebuild input CSV.")
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("lysozyme_pipeline_config.yaml"),
-        help="Path to the YAML config created by init script.",
+        default=None,
+        help="Path to config YAML. Mutually exclusive with --work-dir.",
+    )
+    parser.add_argument(
+        "--work-dir",
+        type=Path,
+        default=None,
+        help="Directory containing lysozyme_pipeline_config.yaml.",
+    )
+    parser.add_argument(
+        "--rewrite-csv",
+        choices=("ask", "always", "never"),
+        default="ask",
+        help="CSV rewrite policy when output CSV already exists.",
+    )
+    parser.add_argument(
+        "--validate-existing-csv",
+        action="store_true",
+        default=True,
+        help="Validate existing CSV paths before rewrite decision (default: enabled).",
+    )
+    parser.add_argument(
+        "--no-validate-existing-csv",
+        action="store_false",
+        dest="validate_existing_csv",
+        help="Disable validation of existing CSV paths.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    config_path = args.config.expanduser().resolve()
+    config_path = _resolve_config_path(config_arg=args.config, work_dir_arg=args.work_dir)
     config = _load_yaml(config_path)
+    csv_path = _csv_path_from_config(config=config, config_path=config_path)
 
-    dataset_cfg = config.get("dataset_config", {})
-    csv_path = Path(str(dataset_cfg.get("input_csv", "lysozyme_input_data.csv")))
-    if not csv_path.is_absolute():
-        csv_path = (config_path.parent / csv_path).resolve()
+    if args.validate_existing_csv:
+        stats = validate_existing_csv(csv_path)
+        if stats["rows"] > 0:
+            print(
+                f"Existing CSV check: rows={stats['rows']}, rows_with_missing_paths={stats['missing_rows']}"
+            )
+    if not _confirm_overwrite(csv_path=csv_path, policy=args.rewrite_csv):
+        print(f"Skipped CSV rewrite: {csv_path}")
+        return
 
     rows = discover_rows(config)
     write_csv(csv_path, rows)

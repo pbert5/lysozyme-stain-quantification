@@ -12,6 +12,7 @@ CONFIG_FILENAME = "lysozyme_pipeline_config.yaml"
 INPUT_CSV_FILENAME = "lysozyme_input_data.csv"
 DISCOVERY_SCRIPT_FILENAME = "discover_lysozyme_images.py"
 RUN_HINT_FILENAME = "lysozyme_next_steps.txt"
+CONFIG_DOC_FILENAME = "lysozyme_config_reference.md"
 
 
 def _default_config(work_dir: Path) -> Dict:
@@ -138,17 +139,82 @@ def _copy_discovery_script(target_path: Path, force: bool) -> None:
 def _write_run_hint(hint_path: Path, work_dir: Path) -> str:
     discover_cmd = (
         f"python3 {work_dir / DISCOVERY_SCRIPT_FILENAME} "
-        f"--config {work_dir / CONFIG_FILENAME}"
+        f"--work-dir {work_dir} --rewrite-csv ask"
+    )
+    reinit_cmd = (
+        "python3 /home/ash/documents/code/lysozyme/src/lysozyme_init_project.py "
+        f"--output-dir {work_dir} --force"
+    )
+    run_pipeline_cmd = (
+        "python3 /home/ash/documents/code/lysozyme/src/lysozyme_run_pipeline.py "
+        f"--work-dir {work_dir}"
     )
     lines = [
-        "Suggested command:",
+        "Reinitialize scaffold files (updates discovery script/template docs):",
+        reinit_cmd,
+        "",
+        "Discover/update input CSV:",
         discover_cmd,
         "",
-        "Then run your pipeline entrypoint after reviewing CSV:",
-        f"python3 /home/ash/documents/code/lysozyme/src/dask_lysozyme_pipeline.py",
+        "Run pipeline from config + discovered CSV:",
+        run_pipeline_cmd,
     ]
     hint_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return discover_cmd
+
+
+def _write_config_doc(doc_path: Path, force: bool) -> None:
+    if doc_path.exists() and not force:
+        return
+    doc = """# Lysozyme Config Reference
+
+## File layout
+- `dataset_config`: imaging/discovery settings and analysis defaults.
+- `pipeline_config`: runtime execution flags and dataset selection switches.
+
+## dataset_config keys
+- `exp_name`: experiment name used for `results/<exp_name>`.
+- `input_csv`: output CSV path (absolute or relative to config file).
+- `blob_size_um`, `max_regions_per_image`, `rfp_gt_threshold`: analysis parameters.
+- `channel_keys`: default channel suffix pair for legacy discovery mode.
+- `scoring_weights`, `effective_count_scoring_weights`: detection scoring weights.
+- `scale_lookup.default_value`: fallback microns-per-pixel.
+- `scale_lookup.keys` / `scale_lookup.values`: filename token to MPP override pairs.
+- `discovery.datasets`: list of dataset discovery definitions.
+
+## discovery dataset entry keys
+- `name`: stable dataset id used in CSV `source_dataset`.
+- `mode`: `structured_dir` or `token_match`.
+- `recursive`: scan subdirectories recursively when `true`.
+- `root_dir`: filesystem root for this dataset.
+- `microns_per_pixel`: optional default MPP written into CSV rows.
+- `subject_from`: for `structured_dir`, choose `parent_dir_name`, `two_level_dir`, `relative_dir`.
+- `channel_file_names`: for `structured_dir`, exact file names:
+  - `lysozyme`
+  - `tissue`
+- `include_extensions`: for `token_match`, suffix list to scan.
+- `exclude_name_tokens`: for `token_match`, filename substrings to skip.
+- `allow_combined_single_file`: for `token_match`, if `true` unmatched files become combined rows.
+- `channel_tokens`: for `token_match`, base-name pairing tokens:
+  - `lysozyme`
+  - `tissue`
+
+## pipeline_config keys
+- `results_root`: where results directory tree is created.
+- `use_cluster`, `force_respawn_cluster`, `connect_to_existing_cluster`: Dask cluster behavior.
+- `n_workers`, `threads_per_worker`: worker sizing.
+- `save_images`, `debug`, `max_subjects`, `use_timestamps`: run control flags.
+- `debug_image_capture`, `debug_subject_count`, `debug_subject_whitelist`, `debug_stage`: debug capture.
+- `discovery_datasets_to_use`: list of dataset names to include during discovery.
+  - empty list (`[]`) means include all configured datasets.
+
+## Discovery CLI behavior
+- `--config <path>`: explicit config path.
+- `--work-dir <dir>`: directory containing `lysozyme_pipeline_config.yaml`.
+- `--rewrite-csv ask|always|never`: overwrite policy.
+- `--validate-existing-csv` / `--no-validate-existing-csv`: verify existing row paths before rewrite.
+"""
+    doc_path.write_text(doc, encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
@@ -178,6 +244,7 @@ def main() -> None:
     csv_path = work_dir / INPUT_CSV_FILENAME
     discovery_path = work_dir / DISCOVERY_SCRIPT_FILENAME
     hint_path = work_dir / RUN_HINT_FILENAME
+    doc_path = work_dir / CONFIG_DOC_FILENAME
 
     config = _default_config(work_dir)
 
@@ -185,12 +252,14 @@ def main() -> None:
     _write_template_csv(csv_path, force=args.force)
     _copy_discovery_script(discovery_path, force=args.force)
     discover_cmd = _write_run_hint(hint_path, work_dir)
+    _write_config_doc(doc_path, force=args.force)
 
     print("Initialized lysozyme workspace scaffold:")
     print(f"  Config:          {config_path}")
     print(f"  Input CSV:       {csv_path}")
     print(f"  Discovery script:{discovery_path}")
     print(f"  Run hint:        {hint_path}")
+    print(f"  Config docs:     {doc_path}")
     print("")
     print("Suggested run command:")
     print(f"  {discover_cmd}")
