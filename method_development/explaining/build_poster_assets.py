@@ -18,6 +18,7 @@ import argparse
 import csv
 import re
 import shutil
+import tempfile
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import yaml
-from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch
+from graphviz import Digraph
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+from scipy import ndimage as ndi
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -40,6 +43,9 @@ PLANNED_ANIMATION_ROOT = Path(
     "/home/ash/documents/code/morphological_animation_toolkit/planned_animation"
 )
 LYSOZYME_ROOT = Path("/home/ash/documents/code/lysozyme")
+ORIGINAL_OVERLAY_PATH = Path(
+    "/home/ash/documents/data/inputs/karen/lysozyme/new/Ileum Lysozyme - stt3 (Keyence)/G2/G2EL/G2EL_ileum_Overlay.jpg"
+)
 
 
 @dataclass(frozen=True)
@@ -145,6 +151,9 @@ def _build_subject_configs() -> dict[str, SubjectConfig]:
         "base_labels": curated[8].source_path,
         "final_labels": curated[9].source_path,
         "quality_hue_reference": curated[10].source_path,
+        "crypt_clean": debug_root / "identify_crypt_seeds_new/014_crypt_clean.png",
+        "opened_split_times_thinned": debug_root / "identify_crypt_seeds_new/019_opened_split_times_thinned.png",
+        "paired_overlay_original": ORIGINAL_OVERLAY_PATH,
     }
 
     cfg = SubjectConfig(
@@ -228,6 +237,105 @@ def _overlay(base_rgb: np.ndarray, overlay_rgb: np.ndarray, mask: np.ndarray, al
     out = base_rgb.copy()
     out[mask] = (1.0 - alpha) * out[mask] + alpha * overlay_rgb[mask]
     return np.clip(out, 0.0, 1.0)
+
+
+def _fit_primary_axis(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+    points: np.ndarray | None = None
+    labels, count = ndi.label(mask)
+    if count >= 2:
+        component_ids = np.arange(1, count + 1)
+        component_sizes = ndi.sum(mask.astype(np.float32), labels, index=component_ids)
+        keep_ids = component_ids[np.asarray(component_sizes) >= 8]
+        if keep_ids.size >= 2:
+            centers = np.asarray(
+                ndi.center_of_mass(mask.astype(np.float32), labels, index=keep_ids),
+                dtype=np.float64,
+            )
+            centers = centers[~np.isnan(centers).any(axis=1)]
+            if centers.shape[0] >= 2:
+                points = np.stack([centers[:, 1], centers[:, 0]], axis=1)
+
+    if points is None:
+        ys, xs = np.where(mask)
+        if xs.size < 2:
+            return None
+        points = np.stack([xs.astype(np.float64), ys.astype(np.float64)], axis=1)
+
+    center = points.mean(axis=0)
+    centered = points - center
+    _, _, vh = np.linalg.svd(centered, full_matrices=False)
+    direction = vh[0]
+    norm = float(np.linalg.norm(direction))
+    if norm <= 1e-12:
+        return None
+    return center, (direction / norm)
+
+
+def _line_segment_in_image(
+    width: int,
+    height: int,
+    center_xy: np.ndarray,
+    direction_xy: np.ndarray,
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    cx, cy = float(center_xy[0]), float(center_xy[1])
+    dx, dy = float(direction_xy[0]), float(direction_xy[1])
+
+    intersections: list[tuple[float, float, float]] = []
+    eps = 1e-12
+    if abs(dx) > eps:
+        for x in (0.0, float(width - 1)):
+            t = (x - cx) / dx
+            y = cy + t * dy
+            if 0.0 <= y <= float(height - 1):
+                intersections.append((t, x, y))
+    if abs(dy) > eps:
+        for y in (0.0, float(height - 1)):
+            t = (y - cy) / dy
+            x = cx + t * dx
+            if 0.0 <= x <= float(width - 1):
+                intersections.append((t, x, y))
+
+    if len(intersections) < 2:
+        return None
+
+    intersections.sort(key=lambda item: item[0])
+    _, x0, y0 = intersections[0]
+    _, x1, y1 = intersections[-1]
+    return (x0, y0), (x1, y1)
+
+
+def _save_graphviz_card(image_rgb: np.ndarray, title: str, out_path: Path) -> None:
+    fig = plt.figure(figsize=(4.2, 3.2), dpi=240)
+    gs = fig.add_gridspec(2, 1, height_ratios=(0.18, 0.82), hspace=0.0)
+    ax_title = fig.add_subplot(gs[0, 0])
+    ax_img = fig.add_subplot(gs[1, 0])
+
+    ax_title.set_facecolor("#1f4368")
+    ax_title.text(
+        0.5,
+        0.5,
+        title,
+        ha="center",
+        va="center",
+        color="white",
+        fontsize=11,
+        weight="bold",
+    )
+    ax_title.set_xticks([])
+    ax_title.set_yticks([])
+    for spine in ax_title.spines.values():
+        spine.set_visible(False)
+
+    ax_img.imshow(image_rgb)
+    ax_img.set_xticks([])
+    ax_img.set_yticks([])
+    for spine in ax_img.spines.values():
+        spine.set_edgecolor("#1f4368")
+        spine.set_linewidth(1.2)
+
+    fig.subplots_adjust(left=0.0, right=1.0, top=1.0, bottom=0.0)
+    fig.savefig(out_path, dpi=240, facecolor="white")
+    plt.close(fig)
 
 
 def _verify_exists(paths: Iterable[Path]) -> None:
@@ -329,81 +437,115 @@ def _generate_n1_pipeline_flowchart(output_path: Path, dry_run: bool) -> None:
         _log(f"DRY RUN: would generate {output_path}")
         return
 
-    fig, ax = plt.subplots(figsize=(18, 5.1), dpi=320)
+    fig, ax = plt.subplots(figsize=(18, 8.8), dpi=320)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.axis("off")
 
     ax.set_title(
         "Lysozyme Pipeline Overview (Poster Flow)",
-        fontsize=23,
+        fontsize=28,
         weight="bold",
-        pad=20,
+        pad=18,
     )
 
-    box_texts = [
-        "Input field\n(DAPI + RFP)",
-        "Split channels\nand standardize\nintensity",
-        "Morphology maps:\nDAPI borders +\nRFP peaks",
-        "Channel overlap\n-> distance /\nlikelihood map",
-        "Seed labels\n-> base labels\n-> final regions",
-        "Weighted scoring\nfor final\ncrypt selection",
+    step_cards = [
+        (1, "Input field\n(DAPI + RFP)"),
+        (2, "Split channels\nand standardize\nintensity"),
+        (3, "Build morphology\nmaps for DAPI\nand RFP"),
+        (4, "Combine channel\nevidence into\noverlap map"),
+        (5, "Create seeds\nthen grow\nbase labels"),
+        (6, "Apply weighted\nquality scoring\nand selection"),
     ]
-    box_colors = ["#1d3557", "#274b74", "#2f628f", "#3b7ca8", "#4d97bf", "#67b4d4"]
-    x_positions = np.linspace(0.02, 0.84, num=6)
-    width, height = 0.135, 0.38
-    y = 0.27
+    step_positions = {
+        1: (0.06, 0.59),
+        2: (0.38, 0.59),
+        3: (0.70, 0.59),
+        4: (0.70, 0.20),
+        5: (0.38, 0.20),
+        6: (0.06, 0.20),
+    }
+    box_colors = ["#1d3557", "#27527e", "#2f6b96", "#3b84ab", "#4b9dc1", "#65b8d6"]
+    box_width = 0.24
+    box_height = 0.25
 
-    for idx, (x, text, color) in enumerate(zip(x_positions, box_texts, box_colors), start=1):
+    for (idx, text), color in zip(step_cards, box_colors):
+        x, y = step_positions[idx]
         box = FancyBboxPatch(
             (x, y),
-            width,
-            height,
-            boxstyle="round,pad=0.012,rounding_size=0.018",
-            linewidth=2,
+            box_width,
+            box_height,
+            boxstyle="round,pad=0.014,rounding_size=0.02",
+            linewidth=2.3,
             edgecolor="#0f2138",
             facecolor=color,
             alpha=0.98,
         )
         ax.add_patch(box)
         ax.text(
-            x + width / 2,
-            y + height / 2,
+            x + box_width / 2,
+            y + box_height / 2,
             text,
             color="white",
-            fontsize=12,
+            fontsize=14,
             ha="center",
             va="center",
             weight="bold",
         )
         ax.text(
-            x + width / 2,
-            y - 0.06,
+            x + box_width / 2,
+            y - 0.05,
             f"Step {idx}",
             color="#16345b",
-            fontsize=11,
+            fontsize=12,
             ha="center",
             va="center",
             weight="bold",
         )
 
-    for i in range(5):
-        x0 = x_positions[i] + width + 0.006
-        x1 = x_positions[i + 1] - 0.006
+    def _arrow(start: tuple[float, float], end: tuple[float, float]) -> None:
         ax.annotate(
             "",
-            xy=(x1, y + height / 2),
-            xytext=(x0, y + height / 2),
-            arrowprops=dict(arrowstyle="-|>", lw=2.5, color="#10325b"),
+            xy=end,
+            xytext=start,
+            arrowprops=dict(arrowstyle="-|>", lw=3.0, color="#10325b"),
         )
+
+    step1 = step_positions[1]
+    step2 = step_positions[2]
+    step3 = step_positions[3]
+    step4 = step_positions[4]
+    step5 = step_positions[5]
+    step6 = step_positions[6]
+
+    _arrow(
+        (step1[0] + box_width + 0.01, step1[1] + box_height * 0.50),
+        (step2[0] - 0.01, step2[1] + box_height * 0.50),
+    )
+    _arrow(
+        (step2[0] + box_width + 0.01, step2[1] + box_height * 0.50),
+        (step3[0] - 0.01, step3[1] + box_height * 0.50),
+    )
+    _arrow(
+        (step3[0] + box_width * 0.50, step3[1] - 0.01),
+        (step4[0] + box_width * 0.50, step4[1] + box_height + 0.01),
+    )
+    _arrow(
+        (step4[0] - 0.01, step4[1] + box_height * 0.50),
+        (step5[0] + box_width + 0.01, step5[1] + box_height * 0.50),
+    )
+    _arrow(
+        (step5[0] - 0.01, step5[1] + box_height * 0.50),
+        (step6[0] + box_width + 0.01, step6[1] + box_height * 0.50),
+    )
 
     ax.text(
         0.5,
-        0.08,
-        "Start with paired channels, build a morphology-informed likelihood map, then score and keep the strongest crypt regions.",
+        0.07,
+        "Start with paired channels, build morphology-informed overlap evidence, then score and keep the strongest crypt regions.",
         ha="center",
         va="center",
-        fontsize=12,
+        fontsize=14,
         color="#10263f",
         weight="bold",
     )
@@ -422,12 +564,9 @@ def _generate_n2_channel_split_standardization(
         _log(f"DRY RUN: would generate {output_path}")
         return
 
-    rfp_raw = _load_rgb(cfg.paths_for_generation["rfp_input"])
-    dapi_raw = _load_rgb(cfg.paths_for_generation["dapi_input"])
+    original_overlay = _load_rgb(cfg.paths_for_generation["paired_overlay_original"])
     rfp_std = _load_rgb(cfg.paths_for_generation["crypt_preprocessed"])
     dapi_std = _load_rgb(cfg.paths_for_generation["tissue_preprocessed"])
-
-    merged_raw = _merge_channels(_grayscale(dapi_raw), _grayscale(rfp_raw))
 
     dapi_gray = _grayscale(dapi_std)
     rfp_gray = _grayscale(rfp_std)
@@ -446,8 +585,8 @@ def _generate_n2_channel_split_standardization(
     ax_dapi = fig.add_subplot(grid[0, 1])
     ax_rfp = fig.add_subplot(grid[1, 1])
 
-    ax_input.imshow(merged_raw)
-    ax_input.set_title("Original paired field (DAPI + RFP)", fontsize=16, weight="bold")
+    ax_input.imshow(original_overlay)
+    ax_input.set_title("Original paired field (precombined overlay)", fontsize=16, weight="bold")
     ax_input.axis("off")
 
     ax_dapi.imshow(dapi_vis)
@@ -471,7 +610,7 @@ def _generate_n2_channel_split_standardization(
     fig.text(
         0.5,
         0.02,
-        "Each channel is normalized independently so morphology filters operate on comparable contrast ranges.",
+        "The raw precombined field is split into channels, then each channel is normalized independently to align contrast for morphology filters.",
         ha="center",
         va="bottom",
         fontsize=12,
@@ -492,109 +631,101 @@ def _generate_n3_morphology_seed_flow(
         _log(f"DRY RUN: would generate {output_path}")
         return
 
-    tissue_pre = _load_rgb(cfg.paths_for_generation["tissue_preprocessed"])
-    crypt_pre = _load_rgb(cfg.paths_for_generation["crypt_preprocessed"])
+    dapi_input = _load_rgb(cfg.paths_for_generation["dapi_input"])
+    rfp_input = _load_rgb(cfg.paths_for_generation["rfp_input"])
     tissue_caps = _load_rgb(cfg.paths_for_generation["tissue_caps_troughs"])
-    good_crypts = _load_rgb(cfg.paths_for_generation["good_crypts"])
-    distance_img = _load_rgb(cfg.paths_for_generation["distance_image"])
+    crypt_clean = _load_rgb(cfg.paths_for_generation["crypt_clean"])
+    opened_split_times_thinned = _load_rgb(cfg.paths_for_generation["opened_split_times_thinned"])
     seed_labels = _load_rgb(cfg.paths_for_generation["seed_labels"])
     base_labels = _load_rgb(cfg.paths_for_generation["base_labels"])
-    final_labels = _load_rgb(cfg.paths_for_generation["final_labels"])
+    crypt_clean_gray = np.repeat(_grayscale(crypt_clean)[..., None], 3, axis=2)
 
-    dapi_gray = _grayscale(tissue_pre)
-    rfp_gray = _grayscale(crypt_pre)
-
-    dapi_vis = np.stack([0.12 * dapi_gray, 0.25 * dapi_gray, np.clip(1.05 * dapi_gray, 0.0, 1.0)], axis=-1)
-    rfp_vis = np.stack([np.clip(1.05 * rfp_gray, 0.0, 1.0), 0.18 * rfp_gray, 0.16 * rfp_gray], axis=-1)
-
-    context = np.repeat(dapi_gray[..., None], 3, axis=2) * 0.50
     tissue_mask = _nonblack_mask(tissue_caps, threshold=0.08)
-    crypt_mask = _nonblack_mask(good_crypts, threshold=0.08)
-    overlap = context.copy()
-    overlap[tissue_mask] = np.clip(overlap[tissue_mask] + np.array([0.08, 0.20, 0.70]), 0.0, 1.0)
-    overlap[crypt_mask] = np.clip(overlap[crypt_mask] + np.array([0.75, 0.10, 0.10]), 0.0, 1.0)
-
-    distance_gray = np.repeat(_grayscale(distance_img)[..., None], 3, axis=2)
+    opened_mask = _nonblack_mask(opened_split_times_thinned, threshold=0.08)
     seed_mask = _nonblack_mask(seed_labels, threshold=0.08)
     base_mask = _nonblack_mask(base_labels, threshold=0.08)
-    final_mask = _nonblack_mask(final_labels, threshold=0.08)
 
-    seeds_on_distance = _overlay(distance_gray, seed_labels, seed_mask, alpha=0.92)
-    base_on_distance = _overlay(distance_gray, base_labels, base_mask, alpha=0.55)
+    dapi_morph = crypt_clean_gray * 0.30
+    dapi_morph[tissue_mask] = np.clip(dapi_morph[tissue_mask] + np.array([0.08, 0.28, 0.92]), 0.0, 1.0)
 
-    merged_input = _merge_channels(dapi_gray, rfp_gray)
-    final_on_merged = _overlay(merged_input, final_labels, final_mask, alpha=0.62)
+    opened_red = np.zeros_like(crypt_clean_gray)
+    opened_red[..., 0] = 1.0
+    rfp_morph = _overlay(crypt_clean_gray, opened_red, opened_mask, alpha=0.90)
 
-    fig, axes = plt.subplots(2, 4, figsize=(20, 11), dpi=320)
-    fig.suptitle(
-        "Morphology-Guided Likelihood and Seeded Region Building",
-        fontsize=21,
-        weight="bold",
-        y=0.97,
-    )
+    overlap = crypt_clean_gray * 0.30
+    overlap[tissue_mask] = np.clip(overlap[tissue_mask] + np.array([0.08, 0.28, 0.92]), 0.0, 1.0)
+    overlap[opened_mask] = np.clip(overlap[opened_mask] + np.array([0.92, 0.06, 0.06]), 0.0, 1.0)
 
-    panels = [
-        (dapi_vis, "DAPI input", "Cell/tissue channel after standardization."),
-        (tissue_caps, "DAPI morphology", "Tissue edge + cavity map (caps/troughs)."),
-        (rfp_vis, "RFP input", "Lysozyme channel after standardization."),
-        (overlap, "Channel overlap", "Blue: DAPI cavity context, Red: RFP candidate regions."),
-        (distance_gray, "Distance image", "Morphology-driven likelihood surface."),
-        (seeds_on_distance, "Seed labels", "Unique seed areas found on the distance map."),
-        (base_on_distance, "Base labels", "Seeded growth into base crypt regions."),
-        (final_on_merged, "Final labels on input", "Selected crypt regions on merged channels."),
-    ]
+    seeds_on_gray = _overlay(crypt_clean_gray, seed_labels, seed_mask, alpha=0.92)
+    base_on_gray = _overlay(crypt_clean_gray, base_labels, base_mask, alpha=0.55)
 
-    for ax, (img, title, subtitle) in zip(axes.ravel(), panels):
-        ax.imshow(img)
-        ax.set_title(title, fontsize=13, weight="bold")
-        ax.text(
-            0.5,
-            -0.08,
-            subtitle,
-            transform=ax.transAxes,
-            ha="center",
-            va="top",
-            fontsize=9,
-            color="#133454",
+    node_images = {
+        "dapi_input": (dapi_input, "DAPI input"),
+        "rfp_input": (rfp_input, "RFP input"),
+        "dapi_morph": (dapi_morph, "DAPI morphology"),
+        "rfp_morph": (rfp_morph, "Crypt clean + opened split times thinned"),
+        "overlap": (overlap, "Channel overlap"),
+        "seed": (seeds_on_gray, "Seed labels on grayscale"),
+        "base": (base_on_gray, "Base labels on grayscale"),
+    }
+
+    with tempfile.TemporaryDirectory(prefix="n3_graphviz_cards_") as temp_dir:
+        temp_root = Path(temp_dir)
+        node_card_paths: dict[str, Path] = {}
+        for node_id, (img, title) in node_images.items():
+            card_path = temp_root / f"{node_id}.png"
+            _save_graphviz_card(img, title, card_path)
+            node_card_paths[node_id] = card_path
+
+        graph = Digraph(name="N3", engine="dot", format="png")
+        graph.attr(
+            rankdir="LR",
+            splines="spline",
+            nodesep="0.72",
+            ranksep="1.05",
+            bgcolor="white",
+            pad="0.20",
+            dpi="320",
+            label="Morphology-Guided Overlap and Seed Progression",
+            labelloc="t",
+            fontsize="28",
+            fontname="Helvetica-Bold",
         )
-        ax.axis("off")
+        graph.attr(
+            "node",
+            shape="box",
+            style="rounded",
+            color="#1a3f65",
+            penwidth="1.8",
+            width="2.95",
+            height="2.25",
+            fixedsize="true",
+            imagescale="both",
+            label="",
+        )
+        graph.attr("edge", color="#123a66", penwidth="2.2", arrowsize="0.95")
 
-    for col in range(3):
-        _add_arrow_between_axes(fig, axes[0, col], axes[0, col + 1])
-    for col in range(3):
-        _add_arrow_between_axes(fig, axes[1, col], axes[1, col + 1])
+        for node_id in node_images:
+            graph.node(node_id, image=str(node_card_paths[node_id]))
 
-    top_last = axes[0, 3].get_position()
-    bottom_first = axes[1, 0].get_position()
-    down_arrow = FancyArrowPatch(
-        (top_last.x0 + top_last.width * 0.50, top_last.y0),
-        (bottom_first.x0 + bottom_first.width * 0.50, bottom_first.y1),
-        transform=fig.transFigure,
-        arrowstyle="-|>",
-        mutation_scale=16,
-        lw=2.0,
-        color="#123a66",
-    )
-    fig.add_artist(down_arrow)
+        with graph.subgraph() as rank:
+            rank.attr(rank="same")
+            rank.node("dapi_input")
+            rank.node("rfp_input")
+        with graph.subgraph() as rank:
+            rank.attr(rank="same")
+            rank.node("dapi_morph")
+            rank.node("rfp_morph")
 
-    morph_text = (
-        "We combined information across multiple fluorescence channels and applied morphology "
-        "based filtering to emphasize structures consistent with the expected crypt appearance. "
-        "This produced a likelihood map where higher values indicate locations whose intensity and "
-        "local spatial pattern best match the target profile, even when diffuse staining is present."
-    )
-    fig.text(
-        0.5,
-        0.02,
-        textwrap.fill(morph_text, width=170),
-        ha="center",
-        va="bottom",
-        fontsize=10,
-        color="#12324f",
-    )
+        graph.edge("dapi_input", "dapi_morph")
+        graph.edge("rfp_input", "rfp_morph")
+        graph.edge("dapi_morph", "overlap")
+        graph.edge("rfp_morph", "overlap")
+        graph.edge("overlap", "seed")
+        graph.edge("seed", "base")
 
-    fig.savefig(output_path, dpi=320, bbox_inches="tight")
-    plt.close(fig)
+        output_path.write_bytes(graph.pipe(format="png"))
+
     _log(f"Generated {output_path}")
 
 
@@ -610,67 +741,185 @@ def _generate_n4_quality_scoring_breakdown(
         return
 
     quality_ref = _load_rgb(cfg.paths_for_generation["quality_hue_reference"])
+    source_overlay = _load_rgb(cfg.paths_for_generation["paired_overlay_original"])
+    good_crypts = _load_rgb(cfg.paths_for_generation["good_crypts"])
+    good_mask = _nonblack_mask(good_crypts, threshold=0.08)
+    scale = float(np.quantile(source_overlay, 0.995))
+    if scale <= 1e-6:
+        scale = 1.0
+    source_display = np.clip(source_overlay / scale, 0.0, 1.0)
 
-    fig = plt.figure(figsize=(16, 8.8), dpi=320)
-    gs = fig.add_gridspec(1, 2, width_ratios=(1.15, 1.0), wspace=0.06)
-    ax_img = fig.add_subplot(gs[0, 0])
-    ax_tbl = fig.add_subplot(gs[0, 1])
+    fig = plt.figure(figsize=(18, 10), dpi=320)
+    gs = fig.add_gridspec(2, 2, width_ratios=(1.0, 1.38), height_ratios=(1.0, 0.86), wspace=0.07, hspace=0.08)
+    ax_line = fig.add_subplot(gs[0, 0])
+    ax_cumulative = fig.add_subplot(gs[1, 0])
+    ax_tbl = fig.add_subplot(gs[:, 1])
 
-    ax_img.imshow(quality_ref)
-    ax_img.set_title("Quality Hue Reference", fontsize=16, weight="bold")
-    h, w = quality_ref.shape[:2]
-    ax_img.add_patch(Circle((w * 0.30, h * 0.55), radius=min(w, h) * 0.09, fill=False, ec="white", lw=2.0))
-    ax_img.add_patch(Circle((w * 0.63, h * 0.43), radius=min(w, h) * 0.08, fill=False, ec="#f8d44b", lw=2.0))
-    ax_img.plot([w * 0.16, w * 0.86], [h * 0.80, h * 0.22], "--", color="white", lw=2.2)
-    ax_img.text(w * 0.18, h * 0.17, "line fit", color="white", fontsize=11, weight="bold")
-    ax_img.text(w * 0.22, h * 0.66, "circularity", color="white", fontsize=11, weight="bold")
-    ax_img.axis("off")
+    ax_line.imshow(source_display)
+    if np.any(good_mask):
+        edge_only = good_mask & (
+            ~(
+                np.roll(good_mask, 1, axis=0)
+                & np.roll(good_mask, -1, axis=0)
+                & np.roll(good_mask, 1, axis=1)
+                & np.roll(good_mask, -1, axis=1)
+            )
+        )
+        edge_only = ndi.binary_dilation(edge_only, iterations=1)
+        line_overlay = np.zeros_like(source_overlay)
+        line_overlay[good_mask] = np.array([0.90, 0.10, 0.10])
+        ax_line.imshow(line_overlay, alpha=0.32)
+        edge_overlay = np.zeros_like(source_overlay)
+        edge_overlay[edge_only] = np.array([0.35, 0.98, 0.30])
+        ax_line.imshow(edge_overlay, alpha=0.95)
 
-    ax_tbl.axis("off")
-    ax_tbl.set_title("Weighted Quality Criteria", fontsize=16, weight="bold")
+        primary_axis = _fit_primary_axis(good_mask)
+        if primary_axis is not None:
+            center, direction = primary_axis
+            segment = _line_segment_in_image(
+                width=good_mask.shape[1],
+                height=good_mask.shape[0],
+                center_xy=center,
+                direction_xy=direction,
+            )
+            if segment is not None:
+                (x0, y0), (x1, y1) = segment
+                ax_line.plot([x0, x1], [y0, y1], color="#ffd75a", lw=3.0)
+    ax_line.set_title("Line-Fit Cue Through Good Crypt Regions", fontsize=15, weight="bold")
+    ax_line.axis("off")
 
-    rows = [
-        ["circularity", _format_weight(scoring_weights.get("circularity")), "Lower score if shape is closer to target roundness"],
-        ["area", _format_weight(scoring_weights.get("area")), "Lower score for larger regions in expected size range"],
-        ["line_fit", _format_weight(scoring_weights.get("line_fit")), "Lower score when centroid lies close to main axis"],
-        ["red_intensity", _format_weight(scoring_weights.get("red_intensity")), "Lower score for brighter per-area lysozyme signal"],
-        ["com_consistency", _format_weight(scoring_weights.get("com_consistency")), "Configured legacy term (compatibility only)"],
-    ]
-
-    table = ax_tbl.table(
-        cellText=rows,
-        colLabels=["Metric", "Weight", "Interpretation"],
-        cellLoc="left",
-        colLoc="left",
-        loc="upper center",
-        colWidths=[0.22, 0.14, 0.62],
-        bbox=[0.02, 0.30, 0.96, 0.62],
-    )
-    table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1.0, 1.42)
-
-    for (row_idx, _col_idx), cell in table.get_celld().items():
-        if row_idx == 0:
-            cell.set_facecolor("#1f4368")
-            cell.set_text_props(color="white", weight="bold")
-        else:
-            cell.set_facecolor("#f5f9ff" if row_idx % 2 == 1 else "white")
-
-    c_w = _format_weight(scoring_weights.get("circularity"))
-    a_w = _format_weight(scoring_weights.get("area"))
-    l_w = _format_weight(scoring_weights.get("line_fit"))
-    r_w = _format_weight(scoring_weights.get("red_intensity"))
-    formula_text = (
-        f"quality_score = {c_w}*circularity_score + {a_w}*area_score "
-        f"+ {l_w}*line_fit_score + {r_w}*red_intensity_score\n"
-        "(Lower total score ranks higher; top regions are selected.)"
-    )
-    ax_tbl.text(
+    ax_cumulative.imshow(quality_ref)
+    ax_cumulative.set_title("Cumulative Quality Hue Reference", fontsize=15, weight="bold")
+    ax_cumulative.text(
+        0.02,
         0.03,
-        0.20,
-        formula_text,
-        transform=ax_tbl.transAxes,
+        "Separate global reference: cumulative weighted quality map.",
+        transform=ax_cumulative.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=10,
+        color="white",
+        bbox=dict(boxstyle="round,pad=0.24", facecolor=(0.02, 0.07, 0.15, 0.70), edgecolor="none"),
+    )
+    ax_cumulative.axis("off")
+
+    ax_tbl.set_title("Weighted Quality Criteria", fontsize=18, weight="bold", pad=10)
+    ax_tbl.set_xlim(0.0, 1.0)
+    ax_tbl.set_ylim(0.0, 1.0)
+    ax_tbl.axis("off")
+
+    metric_descriptions = {
+        "circularity": "Lower subscore when shape better matches the target crypt roundness profile.",
+        "area": "Lower subscore when region size remains in expected crypt area range.",
+        "line_fit": "Lower subscore when region centroid aligns with the fitted crypt axis.",
+        "red_intensity": "Lower subscore when per-area lysozyme intensity is stronger.",
+    }
+    ordered_metrics = ["circularity", "area", "line_fit", "red_intensity"]
+    rows: list[tuple[str, str, str]] = []
+    for metric in ordered_metrics:
+        if metric in scoring_weights:
+            rows.append(
+                (
+                    metric,
+                    _format_weight(scoring_weights.get(metric)),
+                    metric_descriptions.get(metric, "Lower subscore indicates better match."),
+                )
+            )
+    for metric in sorted(scoring_weights.keys()):
+        if metric in {"com_consistency", *ordered_metrics}:
+            continue
+        rows.append(
+            (
+                metric,
+                _format_weight(scoring_weights.get(metric)),
+                metric_descriptions.get(metric, "Lower subscore indicates better match."),
+            )
+        )
+
+    col_edges = [0.02, 0.19, 0.30, 0.60, 0.98]
+    header_top = 0.94
+    header_h = 0.09
+    rows_count = max(len(rows), 1)
+    row_h = min(0.14, (header_top - 0.20 - header_h) / rows_count)
+    table_bottom = header_top - header_h - rows_count * row_h
+    header_labels = ["Metric", "Weight", "Quality Hue Ref", "Interpretation"]
+
+    for idx, label in enumerate(header_labels):
+        x0 = col_edges[idx]
+        width = col_edges[idx + 1] - col_edges[idx]
+        ax_tbl.add_patch(
+            FancyBboxPatch(
+                (x0, header_top - header_h),
+                width,
+                header_h,
+                boxstyle="square,pad=0.0",
+                facecolor="#1f4368",
+                edgecolor="#16344f",
+                linewidth=1.4,
+            )
+        )
+        ax_tbl.text(
+            x0 + width * 0.03,
+            header_top - header_h / 2,
+            label,
+            color="white",
+            fontsize=11,
+            weight="bold",
+            ha="left",
+            va="center",
+        )
+
+    gradient = np.linspace(0.0, 1.0, 256, dtype=np.float32)[None, :]
+    hue_strip = plt.get_cmap("turbo")(gradient)[..., :3]
+
+    for idx, (metric, weight, interpretation) in enumerate(rows):
+        y1 = header_top - header_h - idx * row_h
+        y0 = y1 - row_h
+        row_color = "#f5f9ff" if idx % 2 == 0 else "white"
+        ax_tbl.add_patch(
+            FancyBboxPatch(
+                (col_edges[0], y0),
+                col_edges[-1] - col_edges[0],
+                row_h,
+                boxstyle="square,pad=0.0",
+                facecolor=row_color,
+                edgecolor="#c4d4e7",
+                linewidth=1.0,
+            )
+        )
+        ax_tbl.text(col_edges[0] + 0.012, y0 + row_h * 0.50, metric, ha="left", va="center", fontsize=10, color="#10263f")
+        ax_tbl.text(col_edges[1] + 0.012, y0 + row_h * 0.50, weight, ha="left", va="center", fontsize=10, color="#10263f")
+
+        hue_x0 = col_edges[2] + 0.020
+        hue_x1 = col_edges[3] - 0.020
+        hue_y0 = y0 + row_h * 0.24
+        hue_y1 = y1 - row_h * 0.24
+        ax_tbl.imshow(hue_strip, extent=[hue_x0, hue_x1, hue_y0, hue_y1], aspect="auto", zorder=2)
+        ax_tbl.text(hue_x0 - 0.005, y0 + row_h * 0.50, "low", ha="right", va="center", fontsize=8, color="#25496d")
+        ax_tbl.text(hue_x1 + 0.005, y0 + row_h * 0.50, "high", ha="left", va="center", fontsize=8, color="#25496d")
+
+        ax_tbl.text(
+            col_edges[3] + 0.010,
+            y0 + row_h * 0.50,
+            textwrap.fill(interpretation, width=42),
+            ha="left",
+            va="center",
+            fontsize=9,
+            color="#10263f",
+        )
+
+    for x in col_edges:
+        ax_tbl.plot([x, x], [table_bottom, header_top], color="#b3c6db", lw=1.0)
+    for idx in range(rows_count + 1):
+        y = header_top - header_h - idx * row_h
+        ax_tbl.plot([col_edges[0], col_edges[-1]], [y, y], color="#b3c6db", lw=1.0)
+
+    formula_terms = [f"{_format_weight(scoring_weights.get(metric))}*{metric}_score" for metric, _, _ in rows]
+    formula = "quality_score = " + " + ".join(formula_terms) if formula_terms else "quality_score = configured weighted sum"
+    ax_tbl.text(
+        0.02,
+        table_bottom - 0.05,
+        textwrap.fill(formula, width=95),
         ha="left",
         va="top",
         fontsize=10,
@@ -681,18 +930,9 @@ def _generate_n4_quality_scoring_breakdown(
     eff_text = "Effective-count weights: " + ", ".join(
         f"{k}={_format_weight(v)}" for k, v in effective_weights.items()
     )
-    ax_tbl.text(
-        0.03,
-        0.08,
-        eff_text,
-        transform=ax_tbl.transAxes,
-        ha="left",
-        va="top",
-        fontsize=9,
-        color="#27496e",
-    )
+    ax_tbl.text(0.02, 0.05, eff_text, ha="left", va="bottom", fontsize=9, color="#27496e")
 
-    fig.suptitle("Scoring and Selection", fontsize=21, weight="bold", y=0.98)
+    fig.suptitle("Scoring and Selection", fontsize=22, weight="bold", y=0.98)
     fig.savefig(output_path, dpi=320, bbox_inches="tight")
     plt.close(fig)
     _log(f"Generated {output_path}")
@@ -826,7 +1066,7 @@ def _write_figure_text_files(
         Large Text Box
         We combined information across multiple fluorescence channels and applied morphology based filtering to emphasize structures consistent with the expected crypt appearance. This produced a likelihood map where higher values indicate locations whose intensity and local spatial pattern best match the target profile, even when diffuse staining is present.
 
-        In RFP, crypt-like signal is modeled as local peaks that are relatively large, locally stable in intensity, and approximately round, with strong transitions near borders. In DAPI, we estimate tissue boundaries and cavity-like spaces where crypt lumens are expected to have low signal. Overlap between these maps highlights high-likelihood crypt centers. We then extract seeds, grow base labels, and map final crypt labels back onto the original channel context.
+        In RFP, crypt-like signal is modeled as local peaks that are relatively large, locally stable in intensity, and approximately round, with strong transitions near borders. In DAPI, we estimate tissue boundaries and cavity-like spaces where crypt lumens are expected to have low signal. Overlap between these maps highlights high-likelihood crypt centers. We then extract seed labels and grow base labels on the same grayscale context image.
         """
     ).strip() + "\n"
 
@@ -843,7 +1083,6 @@ def _write_figure_text_files(
         - area: {_format_weight(scoring_weights.get('area'))}
         - line_fit: {_format_weight(scoring_weights.get('line_fit'))}
         - red_intensity: {_format_weight(scoring_weights.get('red_intensity'))}
-        - com_consistency: {_format_weight(scoring_weights.get('com_consistency'))} (legacy compatibility term)
 
         Effective-count weights:
         - circularity: {_format_weight(effective_weights.get('circularity'))}

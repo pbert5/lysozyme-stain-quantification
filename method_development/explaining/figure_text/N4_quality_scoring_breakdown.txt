@@ -9,7 +9,6 @@ Selection weights (from config):
 - area: 0.25
 - line_fit: 0.35
 - red_intensity: 0.85
-- com_consistency: 0.05 (legacy compatibility term)
 
 Effective-count weights:
 - circularity: 0.35

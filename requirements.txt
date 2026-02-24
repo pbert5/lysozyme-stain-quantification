@@ -13,6 +13,7 @@ scikit-learn>=1.2
 
 # Visualization
 matplotlib>=3.6
+graphviz>=0.20
 
 # Parallel computing and lazy evaluation
 dask>=2023.1
