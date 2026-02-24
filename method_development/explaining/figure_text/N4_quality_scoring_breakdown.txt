@@ -1,8 +1,8 @@
 Subtitle
-Weighted scoring of candidate crypt regions with explicit feature weights.
+Weighted scoring with per-metric tissue hue references and a separate cumulative map.
 
 Large Text Box
-Candidate regions are scored by shape and signal properties, then ranked so lower total score indicates a better crypt match.
+Candidate regions are scored by shape and signal properties. For each metric row, the hue reference shows the same tissue image with detections colored by that metric-specific quality. A separate cumulative hue panel shows the weighted overall quality on the same subject image.
 
 Selection weights (from config):
 - circularity: 0.15
