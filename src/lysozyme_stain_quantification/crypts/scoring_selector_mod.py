@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LinearRegression
 from skimage.measure import regionprops
 import matplotlib.pyplot as plt
 
@@ -19,6 +18,193 @@ DEFAULT_WEIGHTS = {
     "red_intensity": 0.15,  # Moderate - want bright regions
     "com_consistency": 0.10,  # Retained for backwards compatibility
 }
+
+
+def _sanitize_positive_weights(weights: np.ndarray | None, size: int) -> np.ndarray:
+    if weights is None:
+        return np.ones(int(size), dtype=np.float64)
+    w = np.asarray(weights, dtype=np.float64)
+    if w.size != int(size):
+        w = np.ones(int(size), dtype=np.float64)
+    w = np.where(np.isfinite(w) & (w > 0.0), w, 1.0)
+    wsum = float(np.sum(w))
+    if not np.isfinite(wsum) or wsum <= 0.0:
+        w = np.ones(int(size), dtype=np.float64)
+    return w
+
+
+def fit_weighted_centroid_curve(
+    x_coords: np.ndarray,
+    y_coords: np.ndarray,
+    weights: np.ndarray | None = None,
+    *,
+    max_degree: int = 2,
+) -> dict[str, object] | None:
+    x = np.asarray(x_coords, dtype=np.float64)
+    y = np.asarray(y_coords, dtype=np.float64)
+    if x.size < 2 or y.size < 2 or x.size != y.size:
+        return None
+
+    w = _sanitize_positive_weights(weights, x.size)
+    wsum = float(np.sum(w))
+
+    x_mean = float(np.sum(w * x) / wsum)
+    y_mean = float(np.sum(w * y) / wsum)
+    var_x = float(np.sum(w * (x - x_mean) ** 2) / wsum)
+    var_y = float(np.sum(w * (y - y_mean) ** 2) / wsum)
+
+    if var_x >= var_y:
+        model = "y_from_x"
+        indep = x
+        dep = y
+    else:
+        model = "x_from_y"
+        indep = y
+        dep = x
+
+    degree = int(max(1, min(int(max_degree), int(indep.size) - 1)))
+    indep_mean = float(np.sum(w * indep) / wsum)
+    indep_centered = indep - indep_mean
+    indep_scale = float(np.sqrt(np.sum(w * indep_centered * indep_centered) / wsum))
+    if not np.isfinite(indep_scale) or indep_scale <= 1e-6:
+        indep_span = float(np.max(indep) - np.min(indep))
+        indep_scale = max(indep_span / 2.0, 1.0)
+
+    scaled = indep_centered / indep_scale
+    fit_w = np.sqrt(w)
+    coeffs_desc = np.polyfit(scaled, dep, deg=degree, w=fit_w)
+
+    return {
+        "model": model,
+        "degree": degree,
+        "coeffs_desc": coeffs_desc.astype(np.float64),
+        "indep_mean": indep_mean,
+        "indep_scale": float(indep_scale),
+    }
+
+
+def evaluate_centroid_curve(
+    curve_model: dict[str, object],
+    indep_values: np.ndarray,
+) -> np.ndarray:
+    coeffs_desc = np.asarray(curve_model.get("coeffs_desc"), dtype=np.float64)
+    indep_mean = float(curve_model.get("indep_mean", 0.0))
+    indep_scale = float(curve_model.get("indep_scale", 1.0))
+    if not np.isfinite(indep_scale) or indep_scale <= 1e-12:
+        indep_scale = 1.0
+    indep = np.asarray(indep_values, dtype=np.float64)
+    scaled = (indep - indep_mean) / indep_scale
+    return np.polyval(coeffs_desc, scaled)
+
+
+def centroid_curve_distances(
+    x_coords: np.ndarray,
+    y_coords: np.ndarray,
+    curve_model: dict[str, object],
+) -> np.ndarray:
+    x = np.asarray(x_coords, dtype=np.float64)
+    y = np.asarray(y_coords, dtype=np.float64)
+    model = str(curve_model.get("model", "y_from_x"))
+    if model == "x_from_y":
+        x_hat = evaluate_centroid_curve(curve_model, y)
+        return np.abs(x - x_hat)
+    y_hat = evaluate_centroid_curve(curve_model, x)
+    return np.abs(y - y_hat)
+
+
+def sample_centroid_curve_points(
+    curve_model: dict[str, object] | None,
+    image_shape: tuple[int, ...],
+    *,
+    num_samples: int = 512,
+) -> np.ndarray:
+    if curve_model is None:
+        return np.empty((0, 2), dtype=np.float64)
+
+    h, w = int(image_shape[0]), int(image_shape[1])
+    if h <= 1 or w <= 1:
+        return np.empty((0, 2), dtype=np.float64)
+
+    model = str(curve_model.get("model", "y_from_x"))
+    sample_count = max(2, int(num_samples))
+    if model == "x_from_y":
+        ys = np.linspace(0.0, float(h - 1), sample_count, dtype=np.float64)
+        xs = evaluate_centroid_curve(curve_model, ys)
+    else:
+        xs = np.linspace(0.0, float(w - 1), sample_count, dtype=np.float64)
+        ys = evaluate_centroid_curve(curve_model, xs)
+
+    valid = np.isfinite(xs) & np.isfinite(ys)
+    valid &= (xs >= 0.0) & (xs <= float(w - 1)) & (ys >= 0.0) & (ys <= float(h - 1))
+    if not np.any(valid):
+        return np.empty((0, 2), dtype=np.float64)
+    return np.column_stack((xs[valid], ys[valid])).astype(np.float64, copy=False)
+
+
+def fit_centroid_curve_from_properties(
+    properties_df: pd.DataFrame,
+    *,
+    max_degree: int = 2,
+) -> dict[str, object] | None:
+    if properties_df is None or len(properties_df) < 2:
+        return None
+    if "physical_com" not in properties_df.columns:
+        return None
+    centers = np.asarray(list(properties_df["physical_com"]), dtype=np.float64)
+    if centers.ndim != 2 or centers.shape[1] != 2:
+        return None
+    y_coords = centers[:, 0]
+    x_coords = centers[:, 1]
+    weights = (
+        np.asarray(properties_df["total_red_intensity"], dtype=np.float64)
+        if "total_red_intensity" in properties_df.columns
+        else None
+    )
+    return fit_weighted_centroid_curve(
+        x_coords=x_coords,
+        y_coords=y_coords,
+        weights=weights,
+        max_degree=max_degree,
+    )
+
+
+def fit_centroid_curve_from_labels(
+    label_img: np.ndarray,
+    intensity_img: np.ndarray | None = None,
+    *,
+    max_degree: int = 2,
+) -> dict[str, object] | None:
+    labels = np.asarray(label_img)
+    if labels.ndim != 2:
+        labels = np.squeeze(labels)
+    regions = regionprops(labels.astype(np.int32), intensity_image=intensity_img)
+    if len(regions) < 2:
+        return None
+
+    x_coords = np.array([float(r.centroid[1]) for r in regions], dtype=np.float64)
+    y_coords = np.array([float(r.centroid[0]) for r in regions], dtype=np.float64)
+    if intensity_img is None:
+        weights = np.ones_like(x_coords, dtype=np.float64)
+    else:
+        weights = np.array(
+            [
+                float(
+                    (
+                        getattr(r, "intensity_mean", getattr(r, "mean_intensity", 0.0))
+                        or 0.0
+                    )
+                    * float(r.area)
+                )
+                for r in regions
+            ],
+            dtype=np.float64,
+        )
+    return fit_weighted_centroid_curve(
+        x_coords=x_coords,
+        y_coords=y_coords,
+        weights=weights,
+        max_degree=max_degree,
+    )
 
 
 def scoring_selector(
@@ -48,6 +234,7 @@ def scoring_selector(
     working_labels = np.asarray(label_img).copy()
     weights = weights if weights is not None else DEFAULT_WEIGHTS
     scoring_history: list[dict[str, float]] = []
+    curve_model: dict[str, object] | None = None
 
     def _log(message: str) -> None:
         if debug:
@@ -102,48 +289,39 @@ def scoring_selector(
 
     def _calculate_line_fit_deviation(properties_df: pd.DataFrame) -> pd.DataFrame:
         """
-        Compute distance from an intensity-weighted principal axis line.
-        - Centers weighted by total_red_intensity (fallback=1)
-        - Distances normalized by sqrt(area/2) as before
+        Compute distance from an intensity-weighted centroid curve.
+        - Fit quadratic (fallback linear) with adaptive orientation.
+        - Distances normalized by sqrt(area/2) as before.
         """
+        nonlocal curve_model
         if len(properties_df) < 2:
             properties_df = properties_df.copy()
+            properties_df["distance_from_curve"] = 0.0
+            properties_df["normalized_curve_distance"] = 0.0
             properties_df["distance_from_line"] = 0.0
             properties_df["normalized_line_distance"] = 0.0
+            curve_model = None
             return properties_df
 
         centers = np.array(list(properties_df["physical_com"]))
         x_coords = centers[:, 1].astype(float)
         y_coords = centers[:, 0].astype(float)
 
-        weights = properties_df.get("total_red_intensity")
-        if weights is None:
-            w = np.ones(len(centers), dtype=float)
+        weights_arr = (
+            np.asarray(properties_df["total_red_intensity"], dtype=np.float64)
+            if "total_red_intensity" in properties_df.columns
+            else None
+        )
+        curve_model = fit_weighted_centroid_curve(
+            x_coords=x_coords,
+            y_coords=y_coords,
+            weights=weights_arr,
+            max_degree=2,
+        )
+        if curve_model is None:
+            distances = np.zeros_like(x_coords, dtype=np.float64)
         else:
-            w = np.asarray(weights, dtype=float)
-            w = np.where(np.isfinite(w) & (w > 0), w, 1.0)
-
-        wsum = float(np.sum(w))
-        if not np.isfinite(wsum) or wsum <= 0:
-            w = np.ones_like(w)
-            wsum = float(np.sum(w))
-
-        x_mean = float(np.sum(w * x_coords) / wsum)
-        y_mean = float(np.sum(w * y_coords) / wsum)
-        x_c = x_coords - x_mean
-        y_c = y_coords - y_mean
-        cov_xx = float(np.sum(w * x_c * x_c) / wsum)
-        cov_xy = float(np.sum(w * x_c * y_c) / wsum)
-        cov_yy = float(np.sum(w * y_c * y_c) / wsum)
-        cov = np.array([[cov_xx, cov_xy], [cov_xy, cov_yy]], dtype=float)
-        eigvals, eigvecs = np.linalg.eigh(cov)
-        vx, vy = float(eigvecs[0, np.argmax(eigvals)]), float(eigvecs[1, np.argmax(eigvals)])
-        denom = np.sqrt(vx * vx + vy * vy)
-        if denom <= 0:
-            denom = 1.0
-
-        # Perpendicular distance to line through (x_mean, y_mean) with direction (vx, vy)
-        distances = np.abs(vy * (x_coords - x_mean) - vx * (y_coords - y_mean)) / denom
+            distances = centroid_curve_distances(x_coords, y_coords, curve_model)
 
         areas = properties_df["area"].to_numpy(dtype=float)
         radius_approx = np.sqrt(areas / 2.0)
@@ -151,6 +329,9 @@ def scoring_selector(
         normalized_distances = distances / radius_approx
 
         properties_df = properties_df.copy()
+        properties_df["distance_from_curve"] = distances
+        properties_df["normalized_curve_distance"] = normalized_distances
+        # Keep legacy column names for downstream compatibility.
         properties_df["distance_from_line"] = distances
         properties_df["normalized_line_distance"] = normalized_distances
         return properties_df
@@ -298,6 +479,8 @@ def scoring_selector(
         "scoring_history": scoring_history,
         "original_regions": max(len(np.unique(working_labels)) - 1, 0),
         "selected_regions": len(selected_labels),
+        "curve_model": curve_model,
+        "curve_points_xy": sample_centroid_curve_points(curve_model, working_labels.shape),
     }
 
     return (filtered_labels, debug_info) if return_details else filtered_labels

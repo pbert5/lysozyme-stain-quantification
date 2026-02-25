@@ -499,9 +499,11 @@ def _horizontal_crop_bounds(
     return (x0, x1)
 
 
-def _compute_linefit_axis_from_scored_regions(
+def _compute_linefit_curve_from_scored_regions(
     scored_regions: pd.DataFrame,
-) -> tuple[float, float, float, float] | None:
+    *,
+    max_degree: int = 2,
+) -> dict[str, object] | None:
     if scored_regions.empty or len(scored_regions) < 2:
         return None
 
@@ -516,128 +518,130 @@ def _compute_linefit_axis_from_scored_regions(
 
     x_mean = float(np.sum(weights * x_coords) / weight_sum)
     y_mean = float(np.sum(weights * y_coords) / weight_sum)
-    x_centered = x_coords - x_mean
-    y_centered = y_coords - y_mean
-    cov = np.array(
-        [
-            [
-                float(np.sum(weights * x_centered * x_centered) / weight_sum),
-                float(np.sum(weights * x_centered * y_centered) / weight_sum),
-            ],
-            [
-                float(np.sum(weights * x_centered * y_centered) / weight_sum),
-                float(np.sum(weights * y_centered * y_centered) / weight_sum),
-            ],
-        ],
-        dtype=np.float64,
-    )
-    eigvals, eigvecs = np.linalg.eigh(cov)
-    vx = float(eigvecs[0, int(np.argmax(eigvals))])
-    vy = float(eigvecs[1, int(np.argmax(eigvals))])
-    norm = float(np.hypot(vx, vy))
-    if not np.isfinite(norm) or norm <= 1e-12:
-        return None
-    return (x_mean, y_mean, vx / norm, vy / norm)
+    var_x = float(np.sum(weights * (x_coords - x_mean) ** 2) / weight_sum)
+    var_y = float(np.sum(weights * (y_coords - y_mean) ** 2) / weight_sum)
+
+    if var_x >= var_y:
+        model = "y_from_x"
+        indep = x_coords
+        dep = y_coords
+    else:
+        model = "x_from_y"
+        indep = y_coords
+        dep = x_coords
+
+    degree = int(max(1, min(int(max_degree), int(indep.size) - 1)))
+    indep_mean = float(np.sum(weights * indep) / weight_sum)
+    indep_centered = indep - indep_mean
+    indep_scale = float(np.sqrt(np.sum(weights * indep_centered * indep_centered) / weight_sum))
+    if not np.isfinite(indep_scale) or indep_scale <= 1e-6:
+        indep_span = float(np.max(indep) - np.min(indep))
+        indep_scale = max(indep_span / 2.0, 1.0)
+
+    scaled = indep_centered / indep_scale
+    coeffs_desc = np.polyfit(scaled, dep, deg=degree, w=np.sqrt(weights))
+    return {
+        "model": model,
+        "degree": degree,
+        "coeffs_desc": coeffs_desc.astype(np.float64),
+        "indep_mean": indep_mean,
+        "indep_scale": float(indep_scale),
+    }
 
 
-def _line_segment_in_image(
+def _evaluate_linefit_curve(curve_model: dict[str, object], indep_values: np.ndarray) -> np.ndarray:
+    coeffs_desc = np.asarray(curve_model.get("coeffs_desc"), dtype=np.float64)
+    indep_mean = float(curve_model.get("indep_mean", 0.0))
+    indep_scale = float(curve_model.get("indep_scale", 1.0))
+    if not np.isfinite(indep_scale) or indep_scale <= 1e-12:
+        indep_scale = 1.0
+    indep = np.asarray(indep_values, dtype=np.float64)
+    scaled = (indep - indep_mean) / indep_scale
+    return np.polyval(coeffs_desc, scaled)
+
+
+def _linefit_curve_distances(
+    x_coords: np.ndarray,
+    y_coords: np.ndarray,
+    curve_model: dict[str, object] | None,
+) -> np.ndarray:
+    x_vals = np.asarray(x_coords, dtype=np.float64)
+    y_vals = np.asarray(y_coords, dtype=np.float64)
+    if curve_model is None:
+        return np.zeros_like(x_vals, dtype=np.float64)
+    model = str(curve_model.get("model", "y_from_x"))
+    if model == "x_from_y":
+        x_hat = _evaluate_linefit_curve(curve_model, y_vals)
+        return np.abs(x_vals - x_hat)
+    y_hat = _evaluate_linefit_curve(curve_model, x_vals)
+    return np.abs(y_vals - y_hat)
+
+
+def _linefit_curve_points_in_image(
+    curve_model: dict[str, object] | None,
     *,
-    x_mean: float,
-    y_mean: float,
-    vx: float,
-    vy: float,
     image_height: int,
     image_width: int,
-) -> tuple[float, float, float, float] | None:
+    num_samples: int = 512,
+) -> np.ndarray:
+    if curve_model is None:
+        return np.empty((0, 2), dtype=np.float64)
     h = int(image_height)
     w = int(image_width)
     if h <= 1 or w <= 1:
-        return None
+        return np.empty((0, 2), dtype=np.float64)
 
-    eps = 1e-12
-    candidates: list[tuple[float, float]] = []
-    x_min, x_max = 0.0, float(w - 1)
-    y_min, y_max = 0.0, float(h - 1)
+    sample_count = max(2, int(num_samples))
+    model = str(curve_model.get("model", "y_from_x"))
+    if model == "x_from_y":
+        ys = np.linspace(0.0, float(h - 1), sample_count, dtype=np.float64)
+        xs = _evaluate_linefit_curve(curve_model, ys)
+    else:
+        xs = np.linspace(0.0, float(w - 1), sample_count, dtype=np.float64)
+        ys = _evaluate_linefit_curve(curve_model, xs)
 
-    if abs(vx) > eps:
-        for x_edge in (x_min, x_max):
-            t = (x_edge - x_mean) / vx
-            y_val = y_mean + t * vy
-            if y_min <= y_val <= y_max:
-                candidates.append((x_edge, y_val))
-
-    if abs(vy) > eps:
-        for y_edge in (y_min, y_max):
-            t = (y_edge - y_mean) / vy
-            x_val = x_mean + t * vx
-            if x_min <= x_val <= x_max:
-                candidates.append((x_val, y_edge))
-
-    unique: list[tuple[float, float]] = []
-    for x_val, y_val in candidates:
-        if not any(abs(x_val - px) < 1e-6 and abs(y_val - py) < 1e-6 for px, py in unique):
-            unique.append((x_val, y_val))
-
-    if len(unique) < 2:
-        return None
-
-    best_pair: tuple[tuple[float, float], tuple[float, float]] | None = None
-    best_dist2 = -1.0
-    for i in range(len(unique)):
-        for j in range(i + 1, len(unique)):
-            dx = unique[j][0] - unique[i][0]
-            dy = unique[j][1] - unique[i][1]
-            dist2 = float(dx * dx + dy * dy)
-            if dist2 > best_dist2:
-                best_dist2 = dist2
-                best_pair = (unique[i], unique[j])
-
-    if best_pair is None:
-        return None
-    (x0, y0), (x1, y1) = best_pair
-    return (x0, y0, x1, y1)
+    valid = np.isfinite(xs) & np.isfinite(ys)
+    valid &= (xs >= 0.0) & (xs <= float(w - 1)) & (ys >= 0.0) & (ys <= float(h - 1))
+    if not np.any(valid):
+        return np.empty((0, 2), dtype=np.float64)
+    return np.column_stack((xs[valid], ys[valid])).astype(np.float64, copy=False)
 
 
-def _overlay_linefit_axis(
+def _overlay_linefit_curve(
     rgb: np.ndarray,
-    linefit_axis: tuple[float, float, float, float] | None,
+    linefit_curve: dict[str, object] | None,
     *,
     color: tuple[float, float, float] = (0.13, 1.0, 0.93),
     alpha: float = 0.92,
     thickness: int = 3,
 ) -> np.ndarray:
-    if linefit_axis is None:
+    if linefit_curve is None:
         return rgb
 
     h, w = rgb.shape[:2]
-    x_mean, y_mean, vx, vy = linefit_axis
-    segment = _line_segment_in_image(
-        x_mean=x_mean,
-        y_mean=y_mean,
-        vx=vx,
-        vy=vy,
+    pts = _linefit_curve_points_in_image(
+        linefit_curve,
         image_height=h,
         image_width=w,
+        num_samples=max(128, int(np.hypot(h, w)) * 2),
     )
-    if segment is None:
+    if pts.shape[0] < 2:
         return rgb
 
-    x0, y0, x1, y1 = segment
-    steps = max(2, int(np.ceil(np.hypot(x1 - x0, y1 - y0))) * 2)
-    xs = np.rint(np.linspace(x0, x1, steps)).astype(np.int32)
-    ys = np.rint(np.linspace(y0, y1, steps)).astype(np.int32)
+    xs = np.rint(pts[:, 0]).astype(np.int32)
+    ys = np.rint(pts[:, 1]).astype(np.int32)
     valid = (xs >= 0) & (xs < w) & (ys >= 0) & (ys < h)
     if not np.any(valid):
         return rgb
 
-    line_mask = np.zeros((h, w), dtype=bool)
-    line_mask[ys[valid], xs[valid]] = True
+    curve_mask = np.zeros((h, w), dtype=bool)
+    curve_mask[ys[valid], xs[valid]] = True
     if int(thickness) > 1:
-        line_mask = ndi.binary_dilation(line_mask, iterations=max(1, int(thickness) - 1))
+        curve_mask = ndi.binary_dilation(curve_mask, iterations=max(1, int(thickness) - 1))
 
     out = rgb.copy()
-    line_color = np.asarray(color, dtype=np.float32)
-    out[line_mask] = (1.0 - alpha) * out[line_mask] + alpha * line_color
+    curve_color = np.asarray(color, dtype=np.float32)
+    out[curve_mask] = (1.0 - alpha) * out[curve_mask] + alpha * curve_color
     return np.clip(out, 0.0, 1.0)
 
 
@@ -703,14 +707,13 @@ def _score_label_regions(
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
-    linefit_axis = _compute_linefit_axis_from_scored_regions(df)
-    if linefit_axis is None:
+    linefit_curve = _compute_linefit_curve_from_scored_regions(df, max_degree=2)
+    if linefit_curve is None:
         df["normalized_line_distance"] = 0.0
     else:
         x_coords = df["com_col"].to_numpy(dtype=np.float64)
         y_coords = df["com_row"].to_numpy(dtype=np.float64)
-        x_mean, y_mean, vx, vy = linefit_axis
-        distances = np.abs(vy * (x_coords - x_mean) - vx * (y_coords - y_mean))
+        distances = _linefit_curve_distances(x_coords, y_coords, linefit_curve)
         area_radius = np.sqrt(np.maximum(df["area"].to_numpy(dtype=np.float64), 0.0) / 2.0)
         area_radius = np.where(area_radius > 0.0, area_radius, 1.0)
         df["normalized_line_distance"] = distances / area_radius
@@ -1570,7 +1573,7 @@ def _generate_n4_quality_scoring_breakdown(
         scoring_weights=scoring_weights,
         n3_box_dials=n3_box_dials,
     )
-    linefit_axis = _compute_linefit_axis_from_scored_regions(scored_regions)
+    linefit_curve = _compute_linefit_curve_from_scored_regions(scored_regions, max_degree=2)
     y0_max, y1_max, x0_max, x1_max = crop_box
 
     metric_to_score_col = {
@@ -1621,14 +1624,14 @@ def _generate_n4_quality_scoring_breakdown(
         cumulative_overlay_linear = source_display
         cumulative_overlay_exponential = source_display
 
-    cumulative_overlay_linear = _overlay_linefit_axis(
+    cumulative_overlay_linear = _overlay_linefit_curve(
         cumulative_overlay_linear,
-        linefit_axis,
+        linefit_curve,
         thickness=4,
     )
-    cumulative_overlay_exponential = _overlay_linefit_axis(
+    cumulative_overlay_exponential = _overlay_linefit_curve(
         cumulative_overlay_exponential,
-        linefit_axis,
+        linefit_curve,
         thickness=4,
     )
 
@@ -1680,9 +1683,9 @@ def _generate_n4_quality_scoring_breakdown(
             metric_overlays[metric] = source_display.copy()
 
     if "line_fit" in metric_overlays:
-        metric_overlays["line_fit"] = _overlay_linefit_axis(
+        metric_overlays["line_fit"] = _overlay_linefit_curve(
             metric_overlays["line_fit"],
-            linefit_axis,
+            linefit_curve,
             thickness=3,
         )
 

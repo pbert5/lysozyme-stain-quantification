@@ -14,6 +14,7 @@ import dask.bag as db
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import scipy.ndimage as ndi
 from dask_image.imread import imread
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -40,6 +41,10 @@ try:
     from src.lysozyme_stain_quantification.crypts.crypt_detection_solutions.effective_crypt_estimation import (
         EffectiveCryptEstimation,
         estimate_effective_selected_crypt_count,
+    )
+    from src.lysozyme_stain_quantification.crypts.scoring_selector_mod import (
+        fit_centroid_curve_from_labels,
+        sample_centroid_curve_points,
     )
     from src.lysozyme_stain_quantification.utils.remove_artifacts import (
         remove_rectangular_artifacts,
@@ -69,6 +74,10 @@ except ImportError:
     from lysozyme_stain_quantification.crypts.crypt_detection_solutions.effective_crypt_estimation import (
         EffectiveCryptEstimation,
         estimate_effective_selected_crypt_count,
+    )
+    from lysozyme_stain_quantification.crypts.scoring_selector_mod import (
+        fit_centroid_curve_from_labels,
+        sample_centroid_curve_points,
     )
     from lysozyme_stain_quantification.utils.remove_artifacts import (
         remove_rectangular_artifacts,
@@ -379,6 +388,32 @@ def save_overlay_image(
         normalize_scalar=True,
     )
     overlay_rgb = np.moveaxis(overlay_xr.values, 0, -1)
+
+    # Add the same centroid-fit curve used by line_fit scoring.
+    try:
+        curve_model = fit_centroid_curve_from_labels(labels_np, rfp_np, max_degree=2)
+        curve_pts = sample_centroid_curve_points(
+            curve_model,
+            labels_np.shape,
+            num_samples=max(128, int(np.hypot(labels_np.shape[0], labels_np.shape[1])) * 2),
+        )
+        if curve_pts.shape[0] >= 2:
+            xs = np.rint(curve_pts[:, 0]).astype(np.int32)
+            ys = np.rint(curve_pts[:, 1]).astype(np.int32)
+            valid = (xs >= 0) & (xs < labels_np.shape[1]) & (ys >= 0) & (ys < labels_np.shape[0])
+            if np.any(valid):
+                curve_mask = np.zeros(labels_np.shape, dtype=bool)
+                curve_mask[ys[valid], xs[valid]] = True
+                curve_mask = ndi.binary_dilation(curve_mask, iterations=2)
+                curve_color = np.asarray([0.13, 1.0, 0.93], dtype=np.float32)
+                curve_alpha = 0.90
+                overlay_rgb[curve_mask] = (
+                    (1.0 - curve_alpha) * overlay_rgb[curve_mask] + curve_alpha * curve_color
+                )
+                overlay_rgb = np.clip(overlay_rgb, 0.0, 1.0)
+    except Exception:
+        pass
+
     if isinstance(subject_name, (list, tuple)):
         safe_name = "_".join(str(s) for s in subject_name)
     elif isinstance(subject_name, (str, Path)):

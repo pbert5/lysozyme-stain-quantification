@@ -18,7 +18,11 @@ from skimage.color import label2rgb
 
 try:
     # Local import (when running inside this repo)
-    from ..scoring_selector_mod import scoring_selector
+    from ..scoring_selector_mod import (
+        scoring_selector,
+        fit_centroid_curve_from_labels,
+        sample_centroid_curve_points,
+    )
     from ..identify_potential_crypts_ import identify_potential_crypts
     from ..remove_edge_touching_regions_mod import remove_edge_touching_regions_sk
     from .crypt_identification_methodologies import (
@@ -28,7 +32,11 @@ try:
     from ...utils.debug_image_saver import DebugImageSession
 except Exception:  # pragma: no cover - fallback path
     # Package import name
-    from lysozyme_stain_quantification.crypts.scoring_selector_mod import scoring_selector
+    from lysozyme_stain_quantification.crypts.scoring_selector_mod import (
+        scoring_selector,
+        fit_centroid_curve_from_labels,
+        sample_centroid_curve_points,
+    )
     from lysozyme_stain_quantification.crypts.identify_potential_crypts_ import identify_potential_crypts
     from lysozyme_stain_quantification.crypts.remove_edge_touching_regions_mod import remove_edge_touching_regions_sk
     from lysozyme_stain_quantification.crypts.crypt_detection_solutions.crypt_identification_methodologies import (
@@ -99,58 +107,6 @@ def caps(image: np.ndarray, small_r: int, big_r: int) -> tuple[np.ndarray, np.nd
     clean = image1 - np.minimum(image1, hats)
     troughs = np.maximum(image1, hats) - image1
     return hats, clean, troughs
-
-
-def _clip_line_to_bounds(width: int, height: int, x0: float, y0: float, vx: float, vy: float) -> tuple[tuple[float, float], tuple[float, float]] | None:
-    """Return two endpoints of the infinite line clipped to image bounds or None.
-
-    The line passes through (x0, y0) with direction (vx, vy). Bounds are
-    [0, width-1] x [0, height-1].
-    """
-    eps = 1e-12
-    xs: list[float] = []
-    ys: list[float] = []
-
-    # Intersect with x = 0 and x = W-1
-    if abs(vx) > eps:
-        for x_edge in (0.0, float(width - 1)):
-            t = (x_edge - x0) / vx
-            y = y0 + t * vy
-            if 0.0 <= y <= float(height - 1):
-                xs.append(x_edge)
-                ys.append(y)
-
-    # Intersect with y = 0 and y = H-1
-    if abs(vy) > eps:
-        for y_edge in (0.0, float(height - 1)):
-            t = (y_edge - y0) / vy
-            x = x0 + t * vx
-            if 0.0 <= x <= float(width - 1):
-                xs.append(x)
-                ys.append(y_edge)
-
-    # Deduplicate close points
-    pts: list[tuple[float, float]] = []
-    for x, y in zip(xs, ys):
-        if not pts or (abs(pts[-1][0] - x) > 1e-6 or abs(pts[-1][1] - y) > 1e-6):
-            pts.append((x, y))
-
-    if len(pts) < 2:
-        return None
-    if len(pts) == 2:
-        return pts[0], pts[1]
-    # Pick farthest two points
-    max_d = -1.0
-    best_pair = (pts[0], pts[1])
-    for i in range(len(pts)):
-        for j in range(i + 1, len(pts)):
-            dx = pts[i][0] - pts[j][0]
-            dy = pts[i][1] - pts[j][1]
-            d2 = dx * dx + dy * dy
-            if d2 > max_d:
-                max_d = d2
-                best_pair = (pts[i], pts[j])
-    return best_pair
 
 
 # ------------------------ effective counts ------------------------- #
@@ -610,33 +566,16 @@ def estimate_effective_selected_crypt_count(
         # Draw medium (red, thicker) first, then best (blue, thinner)
         axs[0, 0].contour(medium_bounds, colors="r", linewidths=2.5)
         axs[0, 0].contour(best_bounds, colors="b", linewidths=1.2)
-        # Draw intensity-weighted principal axis through global RFP COM within best crypts
+        # Draw weighted centroid-fit curve through selected crypts.
         try:
-            mask = best_crypts_local > 0
-            if np.any(mask):
-                yy, xx = np.nonzero(mask)
-                vals = rfp[mask].astype(np.float64)
-                # Guard against zero weights
-                vals = np.maximum(vals, 1e-9)
-                wsum = float(np.sum(vals))
-                x_mean = float(np.sum(xx * vals) / wsum)
-                y_mean = float(np.sum(yy * vals) / wsum)
-                # Weighted covariance for principal direction
-                x_c = xx - x_mean
-                y_c = yy - y_mean
-                cov_xx = float(np.sum(vals * x_c * x_c) / wsum)
-                cov_xy = float(np.sum(vals * x_c * y_c) / wsum)
-                cov_yy = float(np.sum(vals * y_c * y_c) / wsum)
-                cov = np.array([[cov_xx, cov_xy], [cov_xy, cov_yy]], dtype=np.float64)
-                eigvals, eigvecs = np.linalg.eigh(cov)
-                v = eigvecs[:, np.argmax(eigvals)]  # principal axis
-                # Clip the infinite line to the image bounds
-                seg = _clip_line_to_bounds(
-                    width=base_rgb.shape[1], height=base_rgb.shape[0], x0=x_mean, y0=y_mean, vx=float(v[0]), vy=float(v[1])
-                )
-                if seg is not None:
-                    (x1, y1), (x2, y2) = seg
-                    axs[0, 0].plot([x1, x2], [y1, y2], color="y", linestyle="--", linewidth=2.0)
+            curve_model = fit_centroid_curve_from_labels(best_crypts_local, rfp, max_degree=2)
+            curve_pts = sample_centroid_curve_points(
+                curve_model,
+                best_crypts_local.shape,
+                num_samples=max(128, int(np.hypot(best_crypts_local.shape[0], best_crypts_local.shape[1])) * 2),
+            )
+            if curve_pts.shape[0] >= 2:
+                axs[0, 0].plot(curve_pts[:, 0], curve_pts[:, 1], color="y", linestyle="--", linewidth=2.0)
         except Exception:
             pass
 
