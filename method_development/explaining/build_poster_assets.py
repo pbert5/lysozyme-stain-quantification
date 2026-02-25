@@ -444,6 +444,148 @@ def _horizontal_crop_bounds(
     return (x0, x1)
 
 
+def _compute_linefit_axis_from_scored_regions(
+    scored_regions: pd.DataFrame,
+) -> tuple[float, float, float, float] | None:
+    if scored_regions.empty or len(scored_regions) < 2:
+        return None
+
+    x_coords = scored_regions["com_col"].to_numpy(dtype=np.float64)
+    y_coords = scored_regions["com_row"].to_numpy(dtype=np.float64)
+    weights = scored_regions["total_red_intensity"].to_numpy(dtype=np.float64)
+    weights = np.where(np.isfinite(weights) & (weights > 0.0), weights, 1.0)
+    weight_sum = float(np.sum(weights))
+    if not np.isfinite(weight_sum) or weight_sum <= 0.0:
+        weights = np.ones_like(weights)
+        weight_sum = float(np.sum(weights))
+
+    x_mean = float(np.sum(weights * x_coords) / weight_sum)
+    y_mean = float(np.sum(weights * y_coords) / weight_sum)
+    x_centered = x_coords - x_mean
+    y_centered = y_coords - y_mean
+    cov = np.array(
+        [
+            [
+                float(np.sum(weights * x_centered * x_centered) / weight_sum),
+                float(np.sum(weights * x_centered * y_centered) / weight_sum),
+            ],
+            [
+                float(np.sum(weights * x_centered * y_centered) / weight_sum),
+                float(np.sum(weights * y_centered * y_centered) / weight_sum),
+            ],
+        ],
+        dtype=np.float64,
+    )
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    vx = float(eigvecs[0, int(np.argmax(eigvals))])
+    vy = float(eigvecs[1, int(np.argmax(eigvals))])
+    norm = float(np.hypot(vx, vy))
+    if not np.isfinite(norm) or norm <= 1e-12:
+        return None
+    return (x_mean, y_mean, vx / norm, vy / norm)
+
+
+def _line_segment_in_image(
+    *,
+    x_mean: float,
+    y_mean: float,
+    vx: float,
+    vy: float,
+    image_height: int,
+    image_width: int,
+) -> tuple[float, float, float, float] | None:
+    h = int(image_height)
+    w = int(image_width)
+    if h <= 1 or w <= 1:
+        return None
+
+    eps = 1e-12
+    candidates: list[tuple[float, float]] = []
+    x_min, x_max = 0.0, float(w - 1)
+    y_min, y_max = 0.0, float(h - 1)
+
+    if abs(vx) > eps:
+        for x_edge in (x_min, x_max):
+            t = (x_edge - x_mean) / vx
+            y_val = y_mean + t * vy
+            if y_min <= y_val <= y_max:
+                candidates.append((x_edge, y_val))
+
+    if abs(vy) > eps:
+        for y_edge in (y_min, y_max):
+            t = (y_edge - y_mean) / vy
+            x_val = x_mean + t * vx
+            if x_min <= x_val <= x_max:
+                candidates.append((x_val, y_edge))
+
+    unique: list[tuple[float, float]] = []
+    for x_val, y_val in candidates:
+        if not any(abs(x_val - px) < 1e-6 and abs(y_val - py) < 1e-6 for px, py in unique):
+            unique.append((x_val, y_val))
+
+    if len(unique) < 2:
+        return None
+
+    best_pair: tuple[tuple[float, float], tuple[float, float]] | None = None
+    best_dist2 = -1.0
+    for i in range(len(unique)):
+        for j in range(i + 1, len(unique)):
+            dx = unique[j][0] - unique[i][0]
+            dy = unique[j][1] - unique[i][1]
+            dist2 = float(dx * dx + dy * dy)
+            if dist2 > best_dist2:
+                best_dist2 = dist2
+                best_pair = (unique[i], unique[j])
+
+    if best_pair is None:
+        return None
+    (x0, y0), (x1, y1) = best_pair
+    return (x0, y0, x1, y1)
+
+
+def _overlay_linefit_axis(
+    rgb: np.ndarray,
+    linefit_axis: tuple[float, float, float, float] | None,
+    *,
+    color: tuple[float, float, float] = (0.13, 1.0, 0.93),
+    alpha: float = 0.92,
+    thickness: int = 3,
+) -> np.ndarray:
+    if linefit_axis is None:
+        return rgb
+
+    h, w = rgb.shape[:2]
+    x_mean, y_mean, vx, vy = linefit_axis
+    segment = _line_segment_in_image(
+        x_mean=x_mean,
+        y_mean=y_mean,
+        vx=vx,
+        vy=vy,
+        image_height=h,
+        image_width=w,
+    )
+    if segment is None:
+        return rgb
+
+    x0, y0, x1, y1 = segment
+    steps = max(2, int(np.ceil(np.hypot(x1 - x0, y1 - y0))) * 2)
+    xs = np.rint(np.linspace(x0, x1, steps)).astype(np.int32)
+    ys = np.rint(np.linspace(y0, y1, steps)).astype(np.int32)
+    valid = (xs >= 0) & (xs < w) & (ys >= 0) & (ys < h)
+    if not np.any(valid):
+        return rgb
+
+    line_mask = np.zeros((h, w), dtype=bool)
+    line_mask[ys[valid], xs[valid]] = True
+    if int(thickness) > 1:
+        line_mask = ndi.binary_dilation(line_mask, iterations=max(1, int(thickness) - 1))
+
+    out = rgb.copy()
+    line_color = np.asarray(color, dtype=np.float32)
+    out[line_mask] = (1.0 - alpha) * out[line_mask] + alpha * line_color
+    return np.clip(out, 0.0, 1.0)
+
+
 def _compute_analysis_window_context(
     *,
     base_labels_rgb: np.ndarray,
@@ -506,36 +648,14 @@ def _score_label_regions(
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
-    if len(df) < 2:
+    linefit_axis = _compute_linefit_axis_from_scored_regions(df)
+    if linefit_axis is None:
         df["normalized_line_distance"] = 0.0
     else:
         x_coords = df["com_col"].to_numpy(dtype=np.float64)
         y_coords = df["com_row"].to_numpy(dtype=np.float64)
-        weights = df["total_red_intensity"].to_numpy(dtype=np.float64)
-        weights = np.where(np.isfinite(weights) & (weights > 0.0), weights, 1.0)
-        weight_sum = float(np.sum(weights))
-        if not np.isfinite(weight_sum) or weight_sum <= 0.0:
-            weights = np.ones_like(weights)
-            weight_sum = float(np.sum(weights))
-
-        x_mean = float(np.sum(weights * x_coords) / weight_sum)
-        y_mean = float(np.sum(weights * y_coords) / weight_sum)
-        x_centered = x_coords - x_mean
-        y_centered = y_coords - y_mean
-        cov = np.array(
-            [
-                [float(np.sum(weights * x_centered * x_centered) / weight_sum), float(np.sum(weights * x_centered * y_centered) / weight_sum)],
-                [float(np.sum(weights * x_centered * y_centered) / weight_sum), float(np.sum(weights * y_centered * y_centered) / weight_sum)],
-            ],
-            dtype=np.float64,
-        )
-        eigvals, eigvecs = np.linalg.eigh(cov)
-        vx = float(eigvecs[0, int(np.argmax(eigvals))])
-        vy = float(eigvecs[1, int(np.argmax(eigvals))])
-        denom = float(np.hypot(vx, vy))
-        if denom <= 1e-12:
-            denom = 1.0
-        distances = np.abs(vy * (x_coords - x_mean) - vx * (y_coords - y_mean)) / denom
+        x_mean, y_mean, vx, vy = linefit_axis
+        distances = np.abs(vy * (x_coords - x_mean) - vx * (y_coords - y_mean))
         area_radius = np.sqrt(np.maximum(df["area"].to_numpy(dtype=np.float64), 0.0) / 2.0)
         area_radius = np.where(area_radius > 0.0, area_radius, 1.0)
         df["normalized_line_distance"] = distances / area_radius
@@ -1393,6 +1513,7 @@ def _generate_n4_quality_scoring_breakdown(
         scoring_weights=scoring_weights,
         n3_box_dials=n3_box_dials,
     )
+    linefit_axis = _compute_linefit_axis_from_scored_regions(scored_regions)
     y0_max, y1_max, x0_max, x1_max = crop_box
 
     metric_to_score_col = {
@@ -1443,6 +1564,17 @@ def _generate_n4_quality_scoring_breakdown(
         cumulative_overlay_linear = source_display
         cumulative_overlay_exponential = source_display
 
+    cumulative_overlay_linear = _overlay_linefit_axis(
+        cumulative_overlay_linear,
+        linefit_axis,
+        thickness=4,
+    )
+    cumulative_overlay_exponential = _overlay_linefit_axis(
+        cumulative_overlay_exponential,
+        linefit_axis,
+        thickness=4,
+    )
+
     fig = plt.figure(figsize=(22, 10.8), dpi=320)
     gs = fig.add_gridspec(2, 2, width_ratios=(1.92, 1.50), hspace=0.08, wspace=0.06)
     ax_cumulative_linear = fig.add_subplot(gs[0, 0])
@@ -1489,6 +1621,13 @@ def _generate_n4_quality_scoring_breakdown(
             )
         else:
             metric_overlays[metric] = source_display.copy()
+
+    if "line_fit" in metric_overlays:
+        metric_overlays["line_fit"] = _overlay_linefit_axis(
+            metric_overlays["line_fit"],
+            linefit_axis,
+            thickness=3,
+        )
 
     vertical_context_overlays: dict[str, np.ndarray] = {
         metric: overlay[y0_max:y1_max, :] for metric, overlay in metric_overlays.items()
