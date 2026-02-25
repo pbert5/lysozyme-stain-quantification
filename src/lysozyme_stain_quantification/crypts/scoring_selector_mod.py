@@ -186,16 +186,18 @@ def fit_centroid_curve_from_labels(
     if intensity_img is None:
         weights = np.ones_like(x_coords, dtype=np.float64)
     else:
+        means: list[float] = []
+        for r in regions:
+            if hasattr(r, "intensity_mean"):
+                means.append(float(r.intensity_mean))
+            elif hasattr(r, "mean_intensity"):
+                means.append(float(r.mean_intensity))
+            else:
+                means.append(0.0)
         weights = np.array(
             [
-                float(
-                    (
-                        getattr(r, "intensity_mean", getattr(r, "mean_intensity", 0.0))
-                        or 0.0
-                    )
-                    * float(r.area)
-                )
-                for r in regions
+                float(max(mean_val, 0.0)) * float(r.area)
+                for mean_val, r in zip(means, regions)
             ],
             dtype=np.float64,
         )
@@ -261,8 +263,14 @@ def scoring_selector(
                 )
 
             if raw_img is not None:
-                total_red_intensity = region.mean_intensity * region.area
-                red_intensity_per_area = region.mean_intensity
+                if hasattr(region, "intensity_mean"):
+                    intensity_mean = float(region.intensity_mean)
+                elif hasattr(region, "mean_intensity"):
+                    intensity_mean = float(region.mean_intensity)
+                else:
+                    intensity_mean = 0.0
+                total_red_intensity = intensity_mean * float(region.area)
+                red_intensity_per_area = intensity_mean
             else:
                 total_red_intensity = 0.0
                 red_intensity_per_area = 0.0
