@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 import yaml
 from graphviz import Digraph
-from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle
 from scipy import ndimage as ndi
 from skimage.measure import regionprops
 
@@ -303,35 +303,90 @@ def _overlay(base_rgb: np.ndarray, overlay_rgb: np.ndarray, mask: np.ndarray, al
 
 def _save_graphviz_card(image_rgb: np.ndarray, title: str, out_path: Path) -> None:
     fig = plt.figure(figsize=(N3_CARD_WIDTH_IN, N3_CARD_HEIGHT_IN), dpi=240)
-    gs = fig.add_gridspec(2, 1, height_ratios=(0.18, 0.82), hspace=0.0)
-    ax_title = fig.add_subplot(gs[0, 0])
-    ax_img = fig.add_subplot(gs[1, 0])
+    ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
+    ax.set_axis_off()
 
-    ax_title.set_facecolor("#1f4368")
-    ax_title.text(
-        0.5,
-        0.5,
+    card_pad = 0.01
+    card_width = 1.0 - 2.0 * card_pad
+    card_height = 1.0 - 2.0 * card_pad
+    title_height = 0.18
+    corner_radius = 0.06
+
+    clip_patch = FancyBboxPatch(
+        (card_pad, card_pad),
+        card_width,
+        card_height,
+        boxstyle=f"round,pad=0.0,rounding_size={corner_radius}",
+        transform=ax.transAxes,
+        linewidth=0.0,
+        edgecolor="none",
+        facecolor="none",
+        zorder=0,
+    )
+    ax.add_patch(clip_patch)
+
+    background_patch = FancyBboxPatch(
+        (card_pad, card_pad),
+        card_width,
+        card_height,
+        boxstyle=f"round,pad=0.0,rounding_size={corner_radius}",
+        transform=ax.transAxes,
+        linewidth=0.0,
+        edgecolor="none",
+        facecolor="white",
+        zorder=0,
+    )
+    ax.add_patch(background_patch)
+
+    img_artist = ax.imshow(
+        image_rgb,
+        extent=(card_pad, card_pad + card_width, card_pad, card_pad + card_height - title_height),
+        interpolation="nearest",
+        aspect="auto",
+        zorder=1,
+    )
+    img_artist.set_clip_path(clip_patch)
+
+    title_patch = Rectangle(
+        (card_pad, card_pad + card_height - title_height),
+        card_width,
+        title_height,
+        transform=ax.transAxes,
+        linewidth=0.0,
+        edgecolor="none",
+        facecolor="#1f4368",
+        zorder=3,
+    )
+    title_patch.set_clip_path(clip_patch)
+    ax.add_patch(title_patch)
+
+    ax.text(
+        card_pad + card_width * 0.5,
+        card_pad + card_height - title_height * 0.5,
         title,
         ha="center",
         va="center",
         color="white",
         fontsize=11,
         weight="bold",
+        transform=ax.transAxes,
+        zorder=4,
     )
-    ax_title.set_xticks([])
-    ax_title.set_yticks([])
-    for spine in ax_title.spines.values():
-        spine.set_visible(False)
 
-    ax_img.imshow(image_rgb)
-    ax_img.set_xticks([])
-    ax_img.set_yticks([])
-    for spine in ax_img.spines.values():
-        spine.set_edgecolor("#1f4368")
-        spine.set_linewidth(1.2)
+    border_patch = FancyBboxPatch(
+        (card_pad, card_pad),
+        card_width,
+        card_height,
+        boxstyle=f"round,pad=0.0,rounding_size={corner_radius}",
+        transform=ax.transAxes,
+        linewidth=1.6,
+        edgecolor="#1f4368",
+        facecolor="none",
+        zorder=5,
+    )
+    ax.add_patch(border_patch)
 
-    fig.subplots_adjust(left=0.0, right=1.0, top=1.0, bottom=0.0)
-    fig.savefig(out_path, dpi=240, facecolor="white")
+    fig.savefig(out_path, dpi=240, facecolor="none", transparent=True)
     plt.close(fig)
 
 
@@ -1384,13 +1439,15 @@ def _generate_n3_morphology_seed_flow(
         graph.attr(
             "node",
             shape="box",
-            style="rounded",
-            color="#1a3f65",
-            penwidth="1.8",
+            style="filled",
+            color="transparent",
+            fillcolor="transparent",
+            penwidth="0",
             width="3.00",
             height="2.20",
             fixedsize="true",
             imagescale="both",
+            margin="0",
             label="",
         )
         graph.attr("edge", color="#123a66", penwidth="2.2", arrowsize="0.95")
