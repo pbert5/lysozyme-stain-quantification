@@ -4,10 +4,10 @@
 
 weights:
   poster_universal:
-    circularity: 0.20
+    circularity: 0.25
     area: 0.20
-    line_fit: 0.35
-    red_intensity: 0.85
+    line_fit: 0.30
+    red_intensity: 0.80
 
 n3_box_relative_dims:
   # Analysis-window geometry around the top-ranked detection candidate.

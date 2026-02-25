@@ -53,10 +53,10 @@ N3_CARD_HEIGHT_IN = 3.2
 N3_CARD_IMAGE_HEIGHT_FRAC = 0.82
 N3_CARD_IMAGE_ASPECT = N3_CARD_WIDTH_IN / (N3_CARD_HEIGHT_IN * N3_CARD_IMAGE_HEIGHT_FRAC)
 POSTER_UNIVERSAL_SCORING_WEIGHTS = {
-    "circularity": 0.20,
+    "circularity": 0.25,
     "area": 0.20,
-    "line_fit": 0.35,
-    "red_intensity": 0.85,
+    "line_fit": 0.30,
+    "red_intensity": 0.80,
 }
 N4_EXPONENTIAL_QUALITY_STRENGTH = 3.0
 N4_ROW_CROP_WIDTH_MULTIPLIER = 2.0
@@ -677,6 +677,19 @@ def _series_to_quality(values: pd.Series) -> dict[int, float]:
         norm = (arr - lo) / (hi - lo)
     quality = 1.0 - np.clip(norm, 0.0, 1.0)
     return {int(label): float(q) for label, q in zip(values.index.to_numpy(), quality)}
+
+
+def _series_to_quality_on_label_subset(
+    values: pd.Series,
+    label_subset: set[int],
+) -> dict[int, float]:
+    if not label_subset:
+        return _series_to_quality(values)
+    subset_index = [int(idx) for idx in values.index.to_numpy() if int(idx) in label_subset]
+    if not subset_index:
+        return _series_to_quality(values)
+    subset_series = values.loc[subset_index]
+    return _series_to_quality(subset_series)
 
 
 def _apply_exponential_quality_scale(
@@ -1361,6 +1374,11 @@ def _generate_n4_quality_scoring_breakdown(
         n3_box_dials=n3_box_dials,
     )
     y0_max, y1_max, x0_max, x1_max = crop_box
+    labels_in_crop = {
+        int(label_id)
+        for label_id in np.unique(label_img[y0_max:y1_max, x0_max:x1_max]).tolist()
+        if int(label_id) > 0
+    }
 
     metric_to_score_col = {
         "circularity": "circularity_score",
@@ -1405,15 +1423,20 @@ def _generate_n4_quality_scoring_breakdown(
             label_to_quality=cumulative_quality_exponential,
             alpha=0.74,
         )
+        cumulative_overlay_linear = _draw_crop_box(cumulative_overlay_linear, crop_box)
+        cumulative_overlay_exponential = _draw_crop_box(cumulative_overlay_exponential, crop_box)
     else:
         scored_indexed = pd.DataFrame()
-        cumulative_overlay_linear = source_display
-        cumulative_overlay_exponential = source_display
+        cumulative_overlay_linear = _draw_crop_box(source_display, crop_box)
+        cumulative_overlay_exponential = _draw_crop_box(source_display, crop_box)
 
     metric_overlays: dict[str, np.ndarray] = {}
     for metric, _weight, _description, score_col in rows:
         if not scored_regions.empty and score_col in scored_indexed.columns:
-            metric_quality = _series_to_quality(scored_indexed[score_col])
+            metric_quality = _series_to_quality_on_label_subset(
+                scored_indexed[score_col],
+                labels_in_crop,
+            )
             metric_overlays[metric] = _render_quality_overlay(
                 context_rgb=source_display,
                 label_img=label_img,
@@ -1533,7 +1556,10 @@ def _generate_n4_quality_scoring_breakdown(
         if not scored_indexed.empty and metric in metric_overlays:
             score_col = metric_to_score_col.get(metric)
             if score_col and score_col in scored_indexed.columns:
-                metric_quality = _series_to_quality(scored_indexed[score_col])
+                metric_quality = _series_to_quality_on_label_subset(
+                    scored_indexed[score_col],
+                    labels_in_crop,
+                )
                 in_window = (
                     (scored_indexed["com_row"] >= y0_max)
                     & (scored_indexed["com_row"] < y1_max)
