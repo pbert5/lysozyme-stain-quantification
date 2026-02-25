@@ -57,6 +57,8 @@ POSTER_UNIVERSAL_SCORING_WEIGHTS = {
     "line_fit": 0.35,
     "red_intensity": 0.85,
 }
+N4_EXPONENTIAL_QUALITY_STRENGTH = 3.0
+N4_ROW_CROP_WIDTH_MULTIPLIER = 2.0
 
 
 @dataclass(frozen=True)
@@ -588,6 +590,25 @@ def _series_to_quality(values: pd.Series) -> dict[int, float]:
         norm = (arr - lo) / (hi - lo)
     quality = 1.0 - np.clip(norm, 0.0, 1.0)
     return {int(label): float(q) for label, q in zip(values.index.to_numpy(), quality)}
+
+
+def _apply_exponential_quality_scale(
+    label_to_quality: dict[int, float],
+    strength: float = N4_EXPONENTIAL_QUALITY_STRENGTH,
+) -> dict[int, float]:
+    if not label_to_quality:
+        return {}
+    s = float(strength)
+    if not np.isfinite(s) or s <= 0.0:
+        return {int(label): float(np.clip(q, 0.0, 1.0)) for label, q in label_to_quality.items()}
+    denom = float(np.expm1(s))
+    if denom <= 1e-12:
+        return {int(label): float(np.clip(q, 0.0, 1.0)) for label, q in label_to_quality.items()}
+    out: dict[int, float] = {}
+    for label, q in label_to_quality.items():
+        q_clip = float(np.clip(q, 0.0, 1.0))
+        out[int(label)] = float(np.expm1(s * q_clip) / denom)
+    return out
 
 
 def _render_quality_overlay(
@@ -1142,16 +1163,24 @@ def _generate_n4_quality_scoring_breakdown(
         scored_indexed = scored_regions.copy()
         scored_indexed["label_id"] = scored_indexed["label_id"].astype(int)
         scored_indexed = scored_indexed.set_index("label_id")
-        cumulative_quality = _series_to_quality(scored_indexed["quality_score"])
-        cumulative_overlay = _render_quality_overlay(
+        cumulative_quality_linear = _series_to_quality(scored_indexed["quality_score"])
+        cumulative_quality_exponential = _apply_exponential_quality_scale(cumulative_quality_linear)
+        cumulative_overlay_linear = _render_quality_overlay(
             context_rgb=source_display,
             label_img=label_img,
-            label_to_quality=cumulative_quality,
+            label_to_quality=cumulative_quality_linear,
+            alpha=0.74,
+        )
+        cumulative_overlay_exponential = _render_quality_overlay(
+            context_rgb=source_display,
+            label_img=label_img,
+            label_to_quality=cumulative_quality_exponential,
             alpha=0.74,
         )
     else:
         scored_indexed = pd.DataFrame()
-        cumulative_overlay = source_display
+        cumulative_overlay_linear = source_display
+        cumulative_overlay_exponential = source_display
 
     metric_overlays: dict[str, np.ndarray] = {}
     for metric, _weight, _description, score_col in rows:
@@ -1170,25 +1199,45 @@ def _generate_n4_quality_scoring_breakdown(
         metric: _crop_rgb(overlay, crop_box) for metric, overlay in metric_overlays.items()
     }
 
-    fig = plt.figure(figsize=(18, 9.6), dpi=320)
-    gs = fig.add_gridspec(1, 2, width_ratios=(0.96, 1.50), wspace=0.06)
-    ax_cumulative = fig.add_subplot(gs[0, 0])
-    ax_tbl = fig.add_subplot(gs[0, 1])
+    fig = plt.figure(figsize=(22, 10.8), dpi=320)
+    gs = fig.add_gridspec(2, 2, width_ratios=(1.92, 1.50), hspace=0.08, wspace=0.06)
+    ax_cumulative_linear = fig.add_subplot(gs[0, 0])
+    ax_cumulative_exponential = fig.add_subplot(gs[1, 0])
+    ax_tbl = fig.add_subplot(gs[:, 1])
 
-    ax_cumulative.imshow(cumulative_overlay)
-    ax_cumulative.set_title("Cumulative Quality Saturation Reference", fontsize=16, weight="bold")
-    ax_cumulative.text(
+    ax_cumulative_linear.imshow(cumulative_overlay_linear)
+    ax_cumulative_linear.set_title("Cumulative Quality Saturation Reference (Linear)", fontsize=15, weight="bold")
+    ax_cumulative_linear.text(
         0.02,
         0.03,
-        "Separate global reference outside the table.",
-        transform=ax_cumulative.transAxes,
+        "Baseline global reference.",
+        transform=ax_cumulative_linear.transAxes,
         ha="left",
         va="bottom",
         fontsize=10,
         color="white",
         bbox=dict(boxstyle="round,pad=0.24", facecolor=(0.02, 0.07, 0.15, 0.70), edgecolor="none"),
     )
-    ax_cumulative.axis("off")
+    ax_cumulative_linear.axis("off")
+
+    ax_cumulative_exponential.imshow(cumulative_overlay_exponential)
+    ax_cumulative_exponential.set_title(
+        "Cumulative Quality Saturation Reference (Exponential)",
+        fontsize=15,
+        weight="bold",
+    )
+    ax_cumulative_exponential.text(
+        0.02,
+        0.03,
+        f"Expanded top-end separation (exp strength={N4_EXPONENTIAL_QUALITY_STRENGTH:.1f}).",
+        transform=ax_cumulative_exponential.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=10,
+        color="white",
+        bbox=dict(boxstyle="round,pad=0.24", facecolor=(0.02, 0.07, 0.15, 0.70), edgecolor="none"),
+    )
+    ax_cumulative_exponential.axis("off")
 
     ax_tbl.set_title("Weighted Quality Criteria", fontsize=18, weight="bold", pad=10)
     ax_tbl.set_xlim(0.0, 1.0)
@@ -1250,7 +1299,9 @@ def _generate_n4_quality_scoring_breakdown(
         hue_x1 = col_edges[3] - 0.020
         hue_y0 = y0 + row_h * 0.12
         hue_y1 = y1 - row_h * 0.12
-        target_aspect = (hue_x1 - hue_x0) / max(hue_y1 - hue_y0, 1e-6)
+        target_aspect = (
+            (hue_x1 - hue_x0) / max(hue_y1 - hue_y0, 1e-6)
+        ) * float(N4_ROW_CROP_WIDTH_MULTIPLIER)
 
         row_overlay = max_crop_overlays.get(metric, _crop_rgb(source_display, crop_box))
         if not scored_indexed.empty and metric in metric_overlays:
@@ -1497,10 +1548,10 @@ def _write_figure_text_files(
     files["N4_quality_scoring_breakdown.txt"] = textwrap.dedent(
         f"""
         Subtitle
-        Weighted scoring with per-metric tissue saturation references and a separate cumulative map.
+        Weighted scoring with per-metric tissue saturation references and paired cumulative maps (linear + exponential).
 
         Large Text Box
-        Candidate regions are scored by shape and signal properties. For each metric row, the saturation reference shows the same tissue image with detections colored by that metric-specific quality.
+        Candidate regions are scored by shape and signal properties. For each metric row, the saturation reference shows the same tissue image with detections colored by that metric-specific quality. The global cumulative reference is shown twice: linear (baseline) and exponential (top-end quality separation).
 
         Row-level references use the same analysis-window bounds as the zoomed morphology panel: first we match the vertical extent to that window, then crop horizontally to fit the table cell proportion while staying inside the analysis-window limits. Labels come from the same base-label set.
 
