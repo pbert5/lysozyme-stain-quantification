@@ -20,9 +20,9 @@ n3_box_relative_dims:
 
 n4:
   # Exponential scaling for cumulative quality reference map.
-  exp_strength: 3.0
+  exp_strength: 4.0
   # Row-level saturation reference crop width multiplier.
-  row_crop_width_multiplier: 2.0
+  row_crop_width_multiplier: 1.0
 
 text:
   n1:

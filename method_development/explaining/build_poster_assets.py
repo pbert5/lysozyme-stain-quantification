@@ -412,16 +412,36 @@ def _horizontal_crop_within_bounds(
     h, w = image_rgb.shape[:2]
     if h <= 1 or w <= 1 or not np.isfinite(target_aspect) or target_aspect <= 0.0:
         return image_rgb
+    x0, x1 = _horizontal_crop_bounds(
+        height=h,
+        width=w,
+        target_aspect=target_aspect,
+        center_x=center_x,
+    )
+    return image_rgb[:, x0:x1]
+
+
+def _horizontal_crop_bounds(
+    *,
+    height: int,
+    width: int,
+    target_aspect: float,
+    center_x: float,
+) -> tuple[int, int]:
+    h = int(height)
+    w = int(width)
+    if h <= 1 or w <= 1 or not np.isfinite(target_aspect) or target_aspect <= 0.0:
+        return (0, max(1, w))
     target_w = int(round(float(h) * float(target_aspect)))
     target_w = max(1, min(w, target_w))
     if target_w >= w:
-        return image_rgb
+        return (0, w)
     if not np.isfinite(center_x):
         center_x = float(w) / 2.0
     x0 = int(round(center_x - target_w / 2.0))
     x0 = max(0, min(w - target_w, x0))
     x1 = x0 + target_w
-    return image_rgb[:, x0:x1]
+    return (x0, x1)
 
 
 def _compute_analysis_window_context(
@@ -1374,11 +1394,6 @@ def _generate_n4_quality_scoring_breakdown(
         n3_box_dials=n3_box_dials,
     )
     y0_max, y1_max, x0_max, x1_max = crop_box
-    labels_in_crop = {
-        int(label_id)
-        for label_id in np.unique(label_img[y0_max:y1_max, x0_max:x1_max]).tolist()
-        if int(label_id) > 0
-    }
 
     metric_to_score_col = {
         "circularity": "circularity_score",
@@ -1423,19 +1438,48 @@ def _generate_n4_quality_scoring_breakdown(
             label_to_quality=cumulative_quality_exponential,
             alpha=0.74,
         )
-        cumulative_overlay_linear = _draw_crop_box(cumulative_overlay_linear, crop_box)
-        cumulative_overlay_exponential = _draw_crop_box(cumulative_overlay_exponential, crop_box)
     else:
         scored_indexed = pd.DataFrame()
-        cumulative_overlay_linear = _draw_crop_box(source_display, crop_box)
-        cumulative_overlay_exponential = _draw_crop_box(source_display, crop_box)
+        cumulative_overlay_linear = source_display
+        cumulative_overlay_exponential = source_display
+
+    fig = plt.figure(figsize=(22, 10.8), dpi=320)
+    gs = fig.add_gridspec(2, 2, width_ratios=(1.92, 1.50), hspace=0.08, wspace=0.06)
+    ax_cumulative_linear = fig.add_subplot(gs[0, 0])
+    ax_cumulative_exponential = fig.add_subplot(gs[1, 0])
+    ax_tbl = fig.add_subplot(gs[:, 1])
+
+    col_edges = [0.02, 0.17, 0.28, 0.66, 0.98]
+    header_top = 0.94
+    header_h = 0.10
+    rows_count = max(len(rows), 1)
+    row_h = min(0.16, (header_top - 0.20 - header_h) / rows_count)
+    table_bottom = header_top - header_h - rows_count * row_h
+    hue_ref_width = (col_edges[3] - 0.020) - (col_edges[2] + 0.020)
+    hue_ref_height = (row_h - 2.0 * row_h * 0.12)
+    row_target_aspect_default = (
+        hue_ref_width / max(hue_ref_height, 1e-6)
+    ) * float(row_crop_width_multiplier)
+    center_x_default = 0.5 * (float(x0_max) + float(x1_max))
+    row_context_x0, row_context_x1 = _horizontal_crop_bounds(
+        height=max(1, int(y1_max - y0_max)),
+        width=int(label_img.shape[1]),
+        target_aspect=row_target_aspect_default,
+        center_x=center_x_default,
+    )
+    row_context_box = (y0_max, y1_max, row_context_x0, row_context_x1)
+    labels_in_row_context = {
+        int(label_id)
+        for label_id in np.unique(label_img[y0_max:y1_max, row_context_x0:row_context_x1]).tolist()
+        if int(label_id) > 0
+    }
 
     metric_overlays: dict[str, np.ndarray] = {}
     for metric, _weight, _description, score_col in rows:
         if not scored_regions.empty and score_col in scored_indexed.columns:
             metric_quality = _series_to_quality_on_label_subset(
                 scored_indexed[score_col],
-                labels_in_crop,
+                labels_in_row_context,
             )
             metric_overlays[metric] = _render_quality_overlay(
                 context_rgb=source_display,
@@ -1446,17 +1490,13 @@ def _generate_n4_quality_scoring_breakdown(
         else:
             metric_overlays[metric] = source_display.copy()
 
-    max_crop_overlays: dict[str, np.ndarray] = {
-        metric: _crop_rgb(overlay, crop_box) for metric, overlay in metric_overlays.items()
+    vertical_context_overlays: dict[str, np.ndarray] = {
+        metric: overlay[y0_max:y1_max, :] for metric, overlay in metric_overlays.items()
     }
+    cumulative_overlay_linear_boxed = _draw_crop_box(cumulative_overlay_linear, row_context_box)
+    cumulative_overlay_exponential_boxed = _draw_crop_box(cumulative_overlay_exponential, row_context_box)
 
-    fig = plt.figure(figsize=(22, 10.8), dpi=320)
-    gs = fig.add_gridspec(2, 2, width_ratios=(1.92, 1.50), hspace=0.08, wspace=0.06)
-    ax_cumulative_linear = fig.add_subplot(gs[0, 0])
-    ax_cumulative_exponential = fig.add_subplot(gs[1, 0])
-    ax_tbl = fig.add_subplot(gs[:, 1])
-
-    ax_cumulative_linear.imshow(cumulative_overlay_linear)
+    ax_cumulative_linear.imshow(cumulative_overlay_linear_boxed)
     ax_cumulative_linear.set_title(cumulative_linear_title, fontsize=15, weight="bold")
     ax_cumulative_linear.text(
         0.02,
@@ -1471,7 +1511,7 @@ def _generate_n4_quality_scoring_breakdown(
     )
     ax_cumulative_linear.axis("off")
 
-    ax_cumulative_exponential.imshow(cumulative_overlay_exponential)
+    ax_cumulative_exponential.imshow(cumulative_overlay_exponential_boxed)
     ax_cumulative_exponential.set_title(
         cumulative_exponential_title,
         fontsize=15,
@@ -1495,12 +1535,6 @@ def _generate_n4_quality_scoring_breakdown(
     ax_tbl.set_ylim(0.0, 1.0)
     ax_tbl.axis("off")
 
-    col_edges = [0.02, 0.17, 0.28, 0.66, 0.98]
-    header_top = 0.94
-    header_h = 0.10
-    rows_count = max(len(rows), 1)
-    row_h = min(0.16, (header_top - 0.20 - header_h) / rows_count)
-    table_bottom = header_top - header_h - rows_count * row_h
     for idx, label in enumerate(header_labels):
         x0 = col_edges[idx]
         width = col_edges[idx + 1] - col_edges[idx]
@@ -1552,19 +1586,19 @@ def _generate_n4_quality_scoring_breakdown(
             (hue_x1 - hue_x0) / max(hue_y1 - hue_y0, 1e-6)
         ) * float(row_crop_width_multiplier)
 
-        row_overlay = max_crop_overlays.get(metric, _crop_rgb(source_display, crop_box))
+        row_overlay = vertical_context_overlays.get(metric, source_display[y0_max:y1_max, :])
         if not scored_indexed.empty and metric in metric_overlays:
             score_col = metric_to_score_col.get(metric)
             if score_col and score_col in scored_indexed.columns:
                 metric_quality = _series_to_quality_on_label_subset(
                     scored_indexed[score_col],
-                    labels_in_crop,
+                    labels_in_row_context,
                 )
                 in_window = (
                     (scored_indexed["com_row"] >= y0_max)
                     & (scored_indexed["com_row"] < y1_max)
-                    & (scored_indexed["com_col"] >= x0_max)
-                    & (scored_indexed["com_col"] < x1_max)
+                    & (scored_indexed["com_col"] >= row_context_x0)
+                    & (scored_indexed["com_col"] < row_context_x1)
                 )
                 subset = scored_indexed.loc[in_window]
                 if not subset.empty:
@@ -1575,18 +1609,18 @@ def _generate_n4_quality_scoring_breakdown(
                         ],
                         dtype=np.float64,
                     )
-                    coords = subset["com_col"].to_numpy(dtype=np.float64) - float(x0_max)
+                    coords = subset["com_col"].to_numpy(dtype=np.float64)
                     weight_sum = float(np.sum(weights))
                     if weight_sum > 1e-8:
                         center_x = float(np.sum(coords * weights) / weight_sum)
                     else:
-                        center_x = row_overlay.shape[1] * 0.5
+                        center_x = center_x_default
                 else:
-                    center_x = row_overlay.shape[1] * 0.5
+                    center_x = center_x_default
             else:
-                center_x = row_overlay.shape[1] * 0.5
+                center_x = center_x_default
         else:
-            center_x = row_overlay.shape[1] * 0.5
+            center_x = center_x_default
 
         row_overlay = _horizontal_crop_within_bounds(
             row_overlay,
