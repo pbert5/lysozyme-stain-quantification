@@ -301,7 +301,15 @@ def _overlay(base_rgb: np.ndarray, overlay_rgb: np.ndarray, mask: np.ndarray, al
     return np.clip(out, 0.0, 1.0)
 
 
-def _save_graphviz_card(image_rgb: np.ndarray, title: str, out_path: Path) -> None:
+def _save_graphviz_card(
+    image_rgb: np.ndarray,
+    title: str,
+    out_path: Path,
+    *,
+    title_bar_color: str = "#1f4368",
+    border_color: str = "#1f4368",
+    title_fontsize: int = 11,
+) -> None:
     fig = plt.figure(figsize=(N3_CARD_WIDTH_IN, N3_CARD_HEIGHT_IN), dpi=240)
     ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
     ax.set_axis_off()
@@ -354,7 +362,7 @@ def _save_graphviz_card(image_rgb: np.ndarray, title: str, out_path: Path) -> No
         transform=ax.transAxes,
         linewidth=0.0,
         edgecolor="none",
-        facecolor="#1f4368",
+        facecolor=title_bar_color,
         zorder=3,
     )
     title_patch.set_clip_path(clip_patch)
@@ -367,7 +375,7 @@ def _save_graphviz_card(image_rgb: np.ndarray, title: str, out_path: Path) -> No
         ha="center",
         va="center",
         color="white",
-        fontsize=11,
+        fontsize=title_fontsize,
         weight="bold",
         transform=ax.transAxes,
         zorder=4,
@@ -380,7 +388,7 @@ def _save_graphviz_card(image_rgb: np.ndarray, title: str, out_path: Path) -> No
         boxstyle=f"round,pad=0.0,rounding_size={corner_radius}",
         transform=ax.transAxes,
         linewidth=1.6,
-        edgecolor="#1f4368",
+        edgecolor=border_color,
         facecolor="none",
         zorder=5,
     )
@@ -1410,12 +1418,28 @@ def _generate_n3_morphology_seed_flow(
         "base": (base_on_zoom, default_node_titles["base"]),
     }
 
+    n3_style_cfg = _dial(poster_dials, "text.n3", {})
+    if not isinstance(n3_style_cfg, dict):
+        n3_style_cfg = {}
+    n3_title_bar_color = str(n3_style_cfg.get("card_titlebar_color", "#1f4368"))
+    n3_border_color = str(n3_style_cfg.get("card_border_color", n3_title_bar_color))
+    n3_edge_color = str(n3_style_cfg.get("edge_color", "#123a66"))
+    n3_card_title_fontsize = _as_int(n3_style_cfg.get("card_title_fontsize", 11), 11, min_value=6)
+    n3_graph_title_fontsize = _as_int(n3_style_cfg.get("graph_title_fontsize", 27), 27, min_value=10)
+
     with tempfile.TemporaryDirectory(prefix="n3_graphviz_cards_") as temp_dir:
         temp_root = Path(temp_dir)
         node_card_paths: dict[str, Path] = {}
         for node_id, (img, title) in node_images.items():
             card_path = temp_root / f"{node_id}.png"
-            _save_graphviz_card(img, title, card_path)
+            _save_graphviz_card(
+                img,
+                title,
+                card_path,
+                title_bar_color=n3_title_bar_color,
+                border_color=n3_border_color,
+                title_fontsize=n3_card_title_fontsize,
+            )
             node_card_paths[node_id] = card_path
 
         graph = Digraph(name="N3", engine="dot", format="png")
@@ -1436,7 +1460,7 @@ def _generate_n3_morphology_seed_flow(
             dpi="320",
             label=graph_title,
             labelloc="t",
-            fontsize="27",
+            fontsize=str(n3_graph_title_fontsize),
             fontname="Helvetica-Bold",
         )
         graph.attr(
@@ -1453,7 +1477,7 @@ def _generate_n3_morphology_seed_flow(
             margin="0",
             label="",
         )
-        graph.attr("edge", color="#123a66", penwidth="2.2", arrowsize="0.95")
+        graph.attr("edge", color=n3_edge_color, penwidth="2.2", arrowsize="0.95")
 
         for node_id in node_images:
             graph.node(node_id, image=str(node_card_paths[node_id]))
@@ -1527,11 +1551,12 @@ def _generate_n4_quality_scoring_breakdown(
         "figure_title": "Scoring and Selection",
         "effective_prefix": "Effective-count weights:",
         "metric_descriptions": {
-            "circularity": "Saturation ranks detections by circularity quality (higher saturation is better).",
-            "area": "Saturation ranks detections by area quality (higher saturation is better).",
-            "line_fit": "Saturation ranks detections by axis-alignment quality (higher saturation is better).",
-            "red_intensity": "Saturation ranks detections by red-intensity quality (higher saturation is better).",
+            "circularity": "Shape compactness (closer to a round/closed crypt profile).",
+            "area": "Size consistency (closer to expected crypt area range).",
+            "line_fit": "Spatial alignment (how well detections follow a consistent axis/curve).",
+            "red_intensity": "LYZ signal strength (RFP intensity within the detection).",
         },
+        "interpretation_note": "All saturation maps: higher saturation indicates higher quality for that metric.",
     }
     n4_text_cfg = _dial(poster_dials, "text.n4", {})
     if not isinstance(n4_text_cfg, dict):
@@ -1562,10 +1587,23 @@ def _generate_n4_quality_scoring_breakdown(
     table_title = str(n4_text_cfg.get("table_title", n4_text_defaults["table_title"]))
     figure_title = str(n4_text_cfg.get("figure_title", n4_text_defaults["figure_title"]))
     effective_prefix = str(n4_text_cfg.get("effective_prefix", n4_text_defaults["effective_prefix"]))
+    interpretation_note = str(n4_text_cfg.get("interpretation_note", n4_text_defaults["interpretation_note"]))
     try:
         cumulative_exponential_note = cumulative_exponential_note_template.format(exp_strength=exp_strength)
     except Exception:
         cumulative_exponential_note = cumulative_exponential_note_template
+
+    n4_accent_color = str(n4_text_cfg.get("accent_color", "#1f4368"))
+    n4_cumulative_title_fontsize = _as_int(n4_text_cfg.get("cumulative_title_fontsize", 15), 15, min_value=8)
+    n4_cumulative_note_fontsize = _as_int(n4_text_cfg.get("cumulative_note_fontsize", 10), 10, min_value=6)
+    n4_table_title_fontsize = _as_int(n4_text_cfg.get("table_title_fontsize", 18), 18, min_value=10)
+    n4_table_header_fontsize = _as_int(n4_text_cfg.get("table_header_fontsize", 11), 11, min_value=8)
+    n4_table_cell_fontsize = _as_int(n4_text_cfg.get("table_cell_fontsize", 10), 10, min_value=7)
+    n4_table_interpretation_fontsize = _as_int(
+        n4_text_cfg.get("table_interpretation_fontsize", 9), 9, min_value=7
+    )
+    n4_table_footer_fontsize = _as_int(n4_text_cfg.get("table_footer_fontsize", 10), 10, min_value=7)
+    n4_suptitle_fontsize = _as_int(n4_text_cfg.get("suptitle_fontsize", 22), 22, min_value=10)
 
     label_img, scored_regions, crop_box = _compute_analysis_window_context(
         base_labels_rgb=base_labels,
@@ -1696,7 +1734,11 @@ def _generate_n4_quality_scoring_breakdown(
     cumulative_overlay_exponential_boxed = _draw_crop_box(cumulative_overlay_exponential, row_context_box)
 
     ax_cumulative_linear.imshow(cumulative_overlay_linear_boxed)
-    ax_cumulative_linear.set_title(cumulative_linear_title, fontsize=15, weight="bold")
+    ax_cumulative_linear.set_title(
+        cumulative_linear_title,
+        fontsize=n4_cumulative_title_fontsize,
+        weight="bold",
+    )
     ax_cumulative_linear.text(
         0.02,
         0.03,
@@ -1704,7 +1746,7 @@ def _generate_n4_quality_scoring_breakdown(
         transform=ax_cumulative_linear.transAxes,
         ha="left",
         va="bottom",
-        fontsize=10,
+        fontsize=n4_cumulative_note_fontsize,
         color="white",
         bbox=dict(boxstyle="round,pad=0.24", facecolor=(0.02, 0.07, 0.15, 0.70), edgecolor="none"),
     )
@@ -1713,7 +1755,7 @@ def _generate_n4_quality_scoring_breakdown(
     ax_cumulative_exponential.imshow(cumulative_overlay_exponential_boxed)
     ax_cumulative_exponential.set_title(
         cumulative_exponential_title,
-        fontsize=15,
+        fontsize=n4_cumulative_title_fontsize,
         weight="bold",
     )
     ax_cumulative_exponential.text(
@@ -1723,13 +1765,13 @@ def _generate_n4_quality_scoring_breakdown(
         transform=ax_cumulative_exponential.transAxes,
         ha="left",
         va="bottom",
-        fontsize=10,
+        fontsize=n4_cumulative_note_fontsize,
         color="white",
         bbox=dict(boxstyle="round,pad=0.24", facecolor=(0.02, 0.07, 0.15, 0.70), edgecolor="none"),
     )
     ax_cumulative_exponential.axis("off")
 
-    ax_tbl.set_title(table_title, fontsize=18, weight="bold", pad=10)
+    ax_tbl.set_title(table_title, fontsize=n4_table_title_fontsize, weight="bold", pad=10)
     ax_tbl.set_xlim(0.0, 1.0)
     ax_tbl.set_ylim(0.0, 1.0)
     ax_tbl.axis("off")
@@ -1743,8 +1785,8 @@ def _generate_n4_quality_scoring_breakdown(
                 width,
                 header_h,
                 boxstyle="square,pad=0.0",
-                facecolor="#1f4368",
-                edgecolor="#16344f",
+                facecolor=n4_accent_color,
+                edgecolor=n4_accent_color,
                 linewidth=1.4,
             )
         )
@@ -1753,7 +1795,7 @@ def _generate_n4_quality_scoring_breakdown(
             header_top - header_h / 2,
             label,
             color="white",
-            fontsize=11,
+            fontsize=n4_table_header_fontsize,
             weight="bold",
             ha="left",
             va="center",
@@ -1762,7 +1804,7 @@ def _generate_n4_quality_scoring_breakdown(
     for idx, (metric, weight, interpretation, _score_col) in enumerate(rows):
         y1 = header_top - header_h - idx * row_h
         y0 = y1 - row_h
-        row_color = "#f5f9ff" if idx % 2 == 0 else "white"
+        row_color = "#fff5f5" if idx % 2 == 0 else "white"
         ax_tbl.add_patch(
             FancyBboxPatch(
                 (col_edges[0], y0),
@@ -1770,12 +1812,28 @@ def _generate_n4_quality_scoring_breakdown(
                 row_h,
                 boxstyle="square,pad=0.0",
                 facecolor=row_color,
-                edgecolor="#c4d4e7",
+                edgecolor="#e2b3b3",
                 linewidth=1.0,
             )
         )
-        ax_tbl.text(col_edges[0] + 0.012, y0 + row_h * 0.50, metric, ha="left", va="center", fontsize=10, color="#10263f")
-        ax_tbl.text(col_edges[1] + 0.012, y0 + row_h * 0.50, weight, ha="left", va="center", fontsize=10, color="#10263f")
+        ax_tbl.text(
+            col_edges[0] + 0.012,
+            y0 + row_h * 0.50,
+            metric,
+            ha="left",
+            va="center",
+            fontsize=n4_table_cell_fontsize,
+            color="#10263f",
+        )
+        ax_tbl.text(
+            col_edges[1] + 0.012,
+            y0 + row_h * 0.50,
+            weight,
+            ha="left",
+            va="center",
+            fontsize=n4_table_cell_fontsize,
+            color="#10263f",
+        )
 
         hue_x0 = col_edges[2] + 0.020
         hue_x1 = col_edges[3] - 0.020
@@ -1850,7 +1908,7 @@ def _generate_n4_quality_scoring_breakdown(
                 draw_y1 - draw_y0,
                 boxstyle="square,pad=0.0",
                 facecolor="none",
-                edgecolor="#1f4368",
+                edgecolor=n4_accent_color,
                 linewidth=0.9,
                 zorder=3,
             )
@@ -1862,35 +1920,54 @@ def _generate_n4_quality_scoring_breakdown(
             textwrap.fill(interpretation, width=40),
             ha="left",
             va="center",
-            fontsize=9,
+            fontsize=n4_table_interpretation_fontsize,
             color="#10263f",
         )
 
     for x in col_edges:
-        ax_tbl.plot([x, x], [table_bottom, header_top], color="#b3c6db", lw=1.0)
+        ax_tbl.plot([x, x], [table_bottom, header_top], color="#e2b3b3", lw=1.0)
     for idx in range(rows_count + 1):
         y = header_top - header_h - idx * row_h
-        ax_tbl.plot([col_edges[0], col_edges[-1]], [y, y], color="#b3c6db", lw=1.0)
+        ax_tbl.plot([col_edges[0], col_edges[-1]], [y, y], color="#e2b3b3", lw=1.0)
+
+    if interpretation_note.strip():
+        ax_tbl.text(
+            0.02,
+            table_bottom - 0.02,
+            textwrap.fill(interpretation_note, width=110),
+            ha="left",
+            va="top",
+            fontsize=n4_table_footer_fontsize,
+            color="#5a1b1b",
+        )
 
     formula_terms = [f"{_format_weight(scoring_weights.get(metric))}*{metric}_score" for metric, _, _, _ in rows]
     formula = "quality_score = " + " + ".join(formula_terms) if formula_terms else "quality_score = configured weighted sum"
     ax_tbl.text(
         0.02,
-        table_bottom - 0.05,
+        table_bottom - 0.09,
         textwrap.fill(formula, width=95),
         ha="left",
         va="top",
-        fontsize=10,
-        color="#16345a",
-        bbox=dict(boxstyle="round,pad=0.35", facecolor="#eef5ff", edgecolor="#b7c8de"),
+        fontsize=n4_table_footer_fontsize,
+        color="#5a1b1b",
+        bbox=dict(boxstyle="round,pad=0.35", facecolor="#fff1f1", edgecolor="#e2b3b3"),
     )
 
     eff_text = f"{effective_prefix} " + ", ".join(
         f"{k}={_format_weight(v)}" for k, v in effective_weights.items()
     )
-    ax_tbl.text(0.02, 0.05, eff_text, ha="left", va="bottom", fontsize=9, color="#27496e")
+    ax_tbl.text(
+        0.02,
+        0.05,
+        eff_text,
+        ha="left",
+        va="bottom",
+        fontsize=n4_table_footer_fontsize,
+        color="#5a1b1b",
+    )
 
-    fig.suptitle(figure_title, fontsize=22, weight="bold", y=0.98)
+    fig.suptitle(figure_title, fontsize=n4_suptitle_fontsize, weight="bold", y=0.98)
     fig.savefig(output_path, dpi=320, bbox_inches="tight")
     plt.close(fig)
     _log(f"Generated {output_path}")

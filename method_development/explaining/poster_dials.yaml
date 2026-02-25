@@ -46,19 +46,35 @@ text:
 
   n3:
     figure_title: "Zoomed Morphology-Guided Overlap and Seed Progression"
+    # Visual dials (applied to each card in the flowchart).
+    card_title_fontsize: 17
+    card_titlebar_color: "#9b0000"
+    card_border_color: "#9b0000"
+    graph_title_fontsize: 29
+    edge_color: "#9b0000"
     node_titles:
       original_with_box: "Original field + zoom box"
       zoom_source: "Zoomed analysis window"
-      dapi_input: "DAPI input (standardized)"
-      rfp_input: "RFP input (standardized)"
+      dapi_input: "DAPI input"
+      rfp_input: "RFP input"
       dapi_morph: "DAPI morphology"
       rfp_morph: "RFP morphology"
       overlap: "Channel overlap"
-      seed: "Seed labels on grayscale distance"
-      base: "Base labels on zoomed grayscale + boundaries"
+      seed: "Labeled seeds"
+      base: "Full crypt detections"
 
   n4:
     figure_title: "Scoring and Selection"
+    # Visual dials (colors + font sizes).
+    accent_color: "#9b0000"
+    cumulative_title_fontsize: 16
+    cumulative_note_fontsize: 11
+    table_title_fontsize: 19
+    table_header_fontsize: 12
+    table_cell_fontsize: 11
+    table_interpretation_fontsize: 10
+    table_footer_fontsize: 10
+    suptitle_fontsize: 23
     table_title: "Weighted Quality Criteria"
     cumulative_linear_title: "Cumulative Quality Saturation Reference (Linear)"
     cumulative_linear_note: "Baseline global reference."
@@ -70,8 +86,9 @@ text:
       - "Quality Saturation Ref"
       - "Interpretation"
     effective_prefix: "Effective-count weights:"
+    interpretation_note: "All saturation maps: higher saturation indicates higher quality for that metric."
     metric_descriptions:
-      circularity: "Saturation ranks detections by circularity quality (higher saturation is better)."
-      area: "Saturation ranks detections by area quality (higher saturation is better)."
-      line_fit: "Saturation ranks detections by axis-alignment quality (higher saturation is better)."
-      red_intensity: "Saturation ranks detections by red-intensity quality (higher saturation is better)."
+      circularity: "Shape compactness (closer to a round/closed crypt profile)."
+      area: "Size consistency (closer to expected crypt area range)."
+      line_fit: "Spatial alignment (how well detections follow a consistent axis/curve)."
+      red_intensity: "LYZ signal strength (RFP intensity within the detection)."
