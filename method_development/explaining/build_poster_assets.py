@@ -51,6 +51,12 @@ N3_CARD_WIDTH_IN = 4.2
 N3_CARD_HEIGHT_IN = 3.2
 N3_CARD_IMAGE_HEIGHT_FRAC = 0.82
 N3_CARD_IMAGE_ASPECT = N3_CARD_WIDTH_IN / (N3_CARD_HEIGHT_IN * N3_CARD_IMAGE_HEIGHT_FRAC)
+POSTER_UNIVERSAL_SCORING_WEIGHTS = {
+    "circularity": 0.20,
+    "area": 0.20,
+    "line_fit": 0.35,
+    "red_intensity": 0.85,
+}
 
 
 @dataclass(frozen=True)
@@ -367,6 +373,26 @@ def _horizontal_crop_within_bounds(
     return image_rgb[:, x0:x1]
 
 
+def _compute_analysis_window_context(
+    *,
+    base_labels_rgb: np.ndarray,
+    rfp_std_rgb: np.ndarray,
+    scoring_weights: dict[str, float],
+) -> tuple[np.ndarray, pd.DataFrame, tuple[int, int, int, int]]:
+    label_img = _labels_from_color_components(base_labels_rgb, threshold=0.08)
+    scored_regions = _score_label_regions(
+        label_img=label_img,
+        intensity_gray=_grayscale(rfp_std_rgb),
+        scoring_weights=scoring_weights,
+    )
+    crop_box = _crop_box_from_top_region(
+        scored_regions,
+        image_shape=label_img.shape,
+        target_aspect=N3_CARD_IMAGE_ASPECT,
+    )
+    return label_img, scored_regions, crop_box
+
+
 def _score_label_regions(
     label_img: np.ndarray,
     intensity_gray: np.ndarray,
@@ -673,6 +699,18 @@ def _load_scoring_weights(config_path: Path) -> tuple[dict[str, float], dict[str
     return scoring, effective
 
 
+def _apply_poster_weight_overrides(
+    scoring_weights: dict[str, float],
+    effective_weights: dict[str, float],
+) -> tuple[dict[str, float], dict[str, float]]:
+    poster_scoring = dict(scoring_weights)
+    poster_effective = dict(effective_weights)
+    for metric, value in POSTER_UNIVERSAL_SCORING_WEIGHTS.items():
+        poster_scoring[metric] = float(value)
+        poster_effective[metric] = float(value)
+    return poster_scoring, poster_effective
+
+
 def _format_weight(weight: float | int | str | None) -> str:
     if weight is None:
         return "NA"
@@ -897,6 +935,7 @@ def _generate_n2_channel_split_standardization(
 def _generate_n3_morphology_seed_flow(
     cfg: SubjectConfig,
     output_path: Path,
+    scoring_weights: dict[str, float],
     dry_run: bool,
 ) -> None:
     if dry_run:
@@ -912,21 +951,11 @@ def _generate_n3_morphology_seed_flow(
     opened_split_times_thinned = _load_rgb(cfg.paths_for_generation["opened_split_times_thinned"])
     seed_labels = _load_rgb(cfg.paths_for_generation["seed_labels"])
     base_labels = _load_rgb(cfg.paths_for_generation["base_labels"])
-    scoring_weights, _ = _load_scoring_weights(cfg.scoring_config_path)
-    roi_scoring_weights = dict(scoring_weights)
-    roi_scoring_weights.update({"circularity": 0.25, "area": 0.15, "line_fit": 0.35})
-
-    base_label_img = _labels_from_color_components(base_labels, threshold=0.08)
     rfp_gray = _grayscale(rfp_std)
-    scored_regions = _score_label_regions(
-        label_img=base_label_img,
-        intensity_gray=rfp_gray,
-        scoring_weights=roi_scoring_weights,
-    )
-    crop_box = _crop_box_from_top_region(
-        scored_regions,
-        image_shape=rfp_gray.shape,
-        target_aspect=N3_CARD_IMAGE_ASPECT,
+    base_label_img, _scored_regions, crop_box = _compute_analysis_window_context(
+        base_labels_rgb=base_labels,
+        rfp_std_rgb=rfp_std,
+        scoring_weights=scoring_weights,
     )
 
     original_display = _normalize_for_display(original_overlay)
@@ -1074,13 +1103,11 @@ def _generate_n4_quality_scoring_breakdown(
     base_labels = _load_rgb(cfg.paths_for_generation["base_labels"])
     source_display = _normalize_for_display(source_overlay)
 
-    label_img = _labels_from_color_components(base_labels, threshold=0.08)
-    scored_regions = _score_label_regions(
-        label_img=label_img,
-        intensity_gray=_grayscale(rfp_std),
+    label_img, scored_regions, crop_box = _compute_analysis_window_context(
+        base_labels_rgb=base_labels,
+        rfp_std_rgb=rfp_std,
         scoring_weights=scoring_weights,
     )
-    crop_box = _crop_box_from_top_region(scored_regions, image_shape=label_img.shape)
     y0_max, y1_max, x0_max, x1_max = crop_box
 
     metric_descriptions = {
@@ -1263,17 +1290,28 @@ def _generate_n4_quality_scoring_breakdown(
             target_aspect=target_aspect,
             center_x=center_x,
         )
+        overlay_h = max(row_overlay.shape[0], 1)
+        overlay_w = max(row_overlay.shape[1], 1)
+        overlay_aspect = float(overlay_w) / float(overlay_h)
+        cell_w = hue_x1 - hue_x0
+        cell_h = hue_y1 - hue_y0
+        draw_w = min(cell_w, cell_h * overlay_aspect)
+        draw_h = draw_w / max(overlay_aspect, 1e-6)
+        draw_x0 = hue_x0 + 0.5 * (cell_w - draw_w)
+        draw_x1 = draw_x0 + draw_w
+        draw_y0 = hue_y0 + 0.5 * (cell_h - draw_h)
+        draw_y1 = draw_y0 + draw_h
         ax_tbl.imshow(
             row_overlay,
-            extent=[hue_x0, hue_x1, hue_y0, hue_y1],
+            extent=[draw_x0, draw_x1, draw_y0, draw_y1],
             aspect="auto",
             zorder=2,
         )
         ax_tbl.add_patch(
             FancyBboxPatch(
-                (hue_x0, hue_y0),
-                hue_x1 - hue_x0,
-                hue_y1 - hue_y0,
+                (draw_x0, draw_y0),
+                draw_x1 - draw_x0,
+                draw_y1 - draw_y0,
                 boxstyle="square,pad=0.0",
                 facecolor="none",
                 edgecolor="#1f4368",
@@ -1466,7 +1504,7 @@ def _write_figure_text_files(
 
         Row-level references use the same analysis-window bounds as the zoomed morphology panel: first we match the vertical extent to that window, then crop horizontally to fit the table cell proportion while staying inside the analysis-window limits. Labels come from the same base-label set.
 
-        Selection weights (from config):
+        Selection weights (poster-standardized):
         - circularity: {_format_weight(scoring_weights.get('circularity'))}
         - area: {_format_weight(scoring_weights.get('area'))}
         - line_fit: {_format_weight(scoring_weights.get('line_fit'))}
@@ -1607,7 +1645,11 @@ def build_bundle(cfg: SubjectConfig, dry_run: bool) -> None:
     _ensure_dirs(dry_run=dry_run)
 
     curated_rows = _copy_curated_assets(cfg=cfg, dry_run=dry_run)
-    scoring_weights, effective_weights = _load_scoring_weights(cfg.scoring_config_path)
+    loaded_scoring_weights, loaded_effective_weights = _load_scoring_weights(cfg.scoring_config_path)
+    scoring_weights, effective_weights = _apply_poster_weight_overrides(
+        loaded_scoring_weights,
+        loaded_effective_weights,
+    )
 
     n1_path = GENERATED_DIR / "N1_pipeline_flowchart.png"
     n2_path = GENERATED_DIR / "N2_channel_split_standardization.png"
@@ -1623,6 +1665,7 @@ def build_bundle(cfg: SubjectConfig, dry_run: bool) -> None:
     _generate_n3_morphology_seed_flow(
         cfg=cfg,
         output_path=n3_path,
+        scoring_weights=scoring_weights,
         dry_run=dry_run,
     )
     _generate_n4_quality_scoring_breakdown(

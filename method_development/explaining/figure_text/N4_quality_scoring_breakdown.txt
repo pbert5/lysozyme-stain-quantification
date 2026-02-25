@@ -6,14 +6,14 @@ Candidate regions are scored by shape and signal properties. For each metric row
 
 Row-level references use the same analysis-window bounds as the zoomed morphology panel: first we match the vertical extent to that window, then crop horizontally to fit the table cell proportion while staying inside the analysis-window limits. Labels come from the same base-label set.
 
-Selection weights (from config):
-- circularity: 0.15
-- area: 0.25
+Selection weights (poster-standardized):
+- circularity: 0.20
+- area: 0.20
 - line_fit: 0.35
 - red_intensity: 0.85
 
 Effective-count weights:
-- circularity: 0.35
-- area: 0.15
-- line_fit: 0.45
-- red_intensity: 0.25
+- circularity: 0.20
+- area: 0.20
+- line_fit: 0.35
+- red_intensity: 0.85
