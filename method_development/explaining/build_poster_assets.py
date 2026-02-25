@@ -22,7 +22,7 @@ import tempfile
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -39,6 +39,7 @@ EXPLAINING_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = EXPLAINING_DIR / "assets"
 GENERATED_DIR = EXPLAINING_DIR / "generated"
 FIGURE_TEXT_DIR = EXPLAINING_DIR / "figure_text"
+DEFAULT_POSTER_DIALS_PATH = EXPLAINING_DIR / "poster_dials.yaml"
 
 PLANNED_ANIMATION_ROOT = Path(
     "/home/ash/documents/code/morphological_animation_toolkit/planned_animation"
@@ -197,11 +198,59 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Show intended actions without writing files.",
     )
+    parser.add_argument(
+        "--poster-dials-yaml",
+        default=str(DEFAULT_POSTER_DIALS_PATH),
+        help="YAML file that controls poster dials (weights, N3 crop geometry, figure text, N4 exp strength).",
+    )
     return parser.parse_args()
 
 
 def _log(message: str) -> None:
     print(f"[build_poster_assets] {message}")
+
+
+def _as_float(value: Any, default: float, *, min_value: float | None = None) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if not np.isfinite(out):
+        return float(default)
+    if min_value is not None and out < min_value:
+        return float(default)
+    return out
+
+
+def _as_int(value: Any, default: int, *, min_value: int | None = None) -> int:
+    try:
+        out = int(round(float(value)))
+    except (TypeError, ValueError):
+        return int(default)
+    if min_value is not None and out < min_value:
+        return int(default)
+    return out
+
+
+def _dial(dials: dict[str, Any], path: str, default: Any) -> Any:
+    node: Any = dials
+    for key in path.split("."):
+        if not isinstance(node, dict) or key not in node:
+            return default
+        node = node[key]
+    return node
+
+
+def _load_poster_dials(dials_path: Path) -> dict[str, Any]:
+    if not dials_path.exists():
+        _log(f"Poster dials YAML not found at {dials_path}; using in-code defaults.")
+        return {}
+    with dials_path.open("r", encoding="utf-8") as fh:
+        loaded = yaml.safe_load(fh) or {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Poster dials YAML must be a mapping: {dials_path}")
+    _log(f"Loaded poster dials from {dials_path}")
+    return dict(loaded)
 
 
 def _to_float_rgb(arr: np.ndarray) -> np.ndarray:
@@ -380,6 +429,7 @@ def _compute_analysis_window_context(
     base_labels_rgb: np.ndarray,
     rfp_std_rgb: np.ndarray,
     scoring_weights: dict[str, float],
+    n3_box_dials: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, pd.DataFrame, tuple[int, int, int, int]]:
     label_img = _labels_from_color_components(base_labels_rgb, threshold=0.08)
     scored_regions = _score_label_regions(
@@ -391,6 +441,7 @@ def _compute_analysis_window_context(
         scored_regions,
         image_shape=label_img.shape,
         target_aspect=N3_CARD_IMAGE_ASPECT,
+        n3_box_dials=n3_box_dials,
     )
     return label_img, scored_regions, crop_box
 
@@ -498,7 +549,40 @@ def _crop_box_from_top_region(
     image_shape: tuple[int, int],
     *,
     target_aspect: float = N3_CARD_IMAGE_ASPECT,
+    n3_box_dials: dict[str, Any] | None = None,
 ) -> tuple[int, int, int, int]:
+    n3_box_dials = n3_box_dials or {}
+    center_to_edge_scale = _as_float(
+        n3_box_dials.get("center_to_edge_equivalent_diameter_scale"),
+        0.5,
+        min_value=0.01,
+    )
+    vertical_up_multiplier = _as_float(
+        n3_box_dials.get("vertical_up_multiplier"),
+        3.0,
+        min_value=0.0,
+    )
+    vertical_down_multiplier = _as_float(
+        n3_box_dials.get("vertical_down_multiplier"),
+        5.0,
+        min_value=0.0,
+    )
+    crypt_length_min_px = _as_float(
+        n3_box_dials.get("crypt_length_min_px"),
+        20.0,
+        min_value=1.0,
+    )
+    crypt_length_max_fraction = _as_float(
+        n3_box_dials.get("crypt_length_max_fraction_of_min_image_dim"),
+        1.0 / 3.0,
+        min_value=0.01,
+    )
+    min_span = _as_int(
+        n3_box_dials.get("min_span_px"),
+        160,
+        min_value=1,
+    )
+
     height, width = int(image_shape[0]), int(image_shape[1])
     if scored_df.empty:
         return (0, height, 0, width)
@@ -513,10 +597,14 @@ def _crop_box_from_top_region(
         equivalent_diameter = fallback_diameter
 
     # Treat "length" as center-to-edge distance so requested multipliers remain zoom-friendly.
-    crypt_length = np.clip(0.5 * equivalent_diameter, 20.0, min(height, width) / 3.0)
+    crypt_length = np.clip(
+        center_to_edge_scale * equivalent_diameter,
+        crypt_length_min_px,
+        float(min(height, width)) * crypt_length_max_fraction,
+    )
 
-    y0 = int(np.floor(center_y - 3.0 * crypt_length))
-    y1 = int(np.ceil(center_y + 5.0 * crypt_length))
+    y0 = int(np.floor(center_y - vertical_up_multiplier * crypt_length))
+    y1 = int(np.ceil(center_y + vertical_down_multiplier * crypt_length))
     target_height = max(1, y1 - y0)
     target_width = int(round(float(target_aspect) * float(target_height)))
     half_width = max(1, int(round(target_width / 2.0)))
@@ -528,7 +616,6 @@ def _crop_box_from_top_region(
     y1 = min(height, y1)
     x1 = min(width, x1)
 
-    min_span = 160
     if (y1 - y0) < min_span:
         pad = min_span - (y1 - y0)
         y0 = max(0, y0 - pad // 2)
@@ -723,10 +810,12 @@ def _load_scoring_weights(config_path: Path) -> tuple[dict[str, float], dict[str
 def _apply_poster_weight_overrides(
     scoring_weights: dict[str, float],
     effective_weights: dict[str, float],
+    poster_weights: dict[str, Any],
 ) -> tuple[dict[str, float], dict[str, float]]:
     poster_scoring = dict(scoring_weights)
     poster_effective = dict(effective_weights)
-    for metric, value in POSTER_UNIVERSAL_SCORING_WEIGHTS.items():
+    for metric, fallback in POSTER_UNIVERSAL_SCORING_WEIGHTS.items():
+        value = _as_float(poster_weights.get(metric), fallback)
         poster_scoring[metric] = float(value)
         poster_effective[metric] = float(value)
     return poster_scoring, poster_effective
@@ -763,7 +852,11 @@ def _add_arrow_between_axes(
     fig.add_artist(arrow)
 
 
-def _generate_n1_pipeline_flowchart(output_path: Path, dry_run: bool) -> None:
+def _generate_n1_pipeline_flowchart(
+    output_path: Path,
+    dry_run: bool,
+    poster_dials: dict[str, Any],
+) -> None:
     if dry_run:
         _log(f"DRY RUN: would generate {output_path}")
         return
@@ -773,21 +866,37 @@ def _generate_n1_pipeline_flowchart(output_path: Path, dry_run: bool) -> None:
     ax.set_ylim(0, 1)
     ax.axis("off")
 
-    ax.set_title(
-        "Lysozyme Pipeline Overview (Poster Flow)",
-        fontsize=28,
-        weight="bold",
-        pad=18,
+    default_title = "Lysozyme Pipeline Overview (Poster Flow)"
+    default_step_cards = [
+        "Input field\n(DAPI + RFP)",
+        "Split channels\nand standardize\nintensity",
+        "Build morphology\nmaps for DAPI\nand RFP",
+        "Combine channel\nevidence into\noverlap map",
+        "Create seeds\nthen grow\nbase labels",
+        "Apply weighted\nquality scoring\nand selection",
+    ]
+    default_step_label_prefix = "Step"
+    default_footer = (
+        "Start with paired channels, build morphology-informed overlap evidence, "
+        "then score and keep the strongest crypt regions."
     )
 
-    step_cards = [
-        (1, "Input field\n(DAPI + RFP)"),
-        (2, "Split channels\nand standardize\nintensity"),
-        (3, "Build morphology\nmaps for DAPI\nand RFP"),
-        (4, "Combine channel\nevidence into\noverlap map"),
-        (5, "Create seeds\nthen grow\nbase labels"),
-        (6, "Apply weighted\nquality scoring\nand selection"),
-    ]
+    title = str(_dial(poster_dials, "text.n1.title", default_title))
+    step_cards_cfg = _dial(poster_dials, "text.n1.step_cards", default_step_cards)
+    if not isinstance(step_cards_cfg, list):
+        step_cards_cfg = default_step_cards
+    step_cards_txt = []
+    for idx, fallback_txt in enumerate(default_step_cards):
+        if idx < len(step_cards_cfg) and isinstance(step_cards_cfg[idx], str):
+            step_cards_txt.append(step_cards_cfg[idx])
+        else:
+            step_cards_txt.append(fallback_txt)
+    step_label_prefix = str(_dial(poster_dials, "text.n1.step_label_prefix", default_step_label_prefix))
+    footer_text = str(_dial(poster_dials, "text.n1.footer_text", default_footer))
+
+    ax.set_title(title, fontsize=28, weight="bold", pad=18)
+
+    step_cards = [(idx + 1, txt) for idx, txt in enumerate(step_cards_txt)]
     step_positions = {
         1: (0.06, 0.59),
         2: (0.38, 0.59),
@@ -826,7 +935,7 @@ def _generate_n1_pipeline_flowchart(output_path: Path, dry_run: bool) -> None:
         ax.text(
             x + box_width / 2,
             y - 0.05,
-            f"Step {idx}",
+            f"{step_label_prefix} {idx}",
             color="#16345b",
             fontsize=12,
             ha="center",
@@ -873,7 +982,7 @@ def _generate_n1_pipeline_flowchart(output_path: Path, dry_run: bool) -> None:
     ax.text(
         0.5,
         0.07,
-        "Start with paired channels, build morphology-informed overlap evidence, then score and keep the strongest crypt regions.",
+        footer_text,
         ha="center",
         va="center",
         fontsize=14,
@@ -890,6 +999,7 @@ def _generate_n2_channel_split_standardization(
     cfg: SubjectConfig,
     output_path: Path,
     dry_run: bool,
+    poster_dials: dict[str, Any],
 ) -> None:
     if dry_run:
         _log(f"DRY RUN: would generate {output_path}")
@@ -916,32 +1026,60 @@ def _generate_n2_channel_split_standardization(
     ax_dapi = fig.add_subplot(grid[0, 1])
     ax_rfp = fig.add_subplot(grid[1, 1])
 
+    input_title = str(
+        _dial(
+            poster_dials,
+            "text.n2.input_panel_title",
+            "Original paired field (precombined overlay)",
+        )
+    )
+    dapi_title = str(_dial(poster_dials, "text.n2.dapi_panel_title", "DAPI channel (standardized)"))
+    rfp_title = str(
+        _dial(
+            poster_dials,
+            "text.n2.rfp_panel_title",
+            "RFP anti-LYZ channel (standardized)",
+        )
+    )
+    figure_title = str(
+        _dial(
+            poster_dials,
+            "text.n2.figure_title",
+            "Channel Split and Intensity Standardization",
+        )
+    )
+    footer_text = str(
+        _dial(
+            poster_dials,
+            "text.n2.footer_text",
+            (
+                "The raw precombined field is split into channels, then each channel is normalized "
+                "independently to align contrast for morphology filters."
+            ),
+        )
+    )
+
     ax_input.imshow(original_overlay)
-    ax_input.set_title("Original paired field (precombined overlay)", fontsize=16, weight="bold")
+    ax_input.set_title(input_title, fontsize=16, weight="bold")
     ax_input.axis("off")
 
     ax_dapi.imshow(dapi_vis)
-    ax_dapi.set_title("DAPI channel (standardized)", fontsize=14, weight="bold")
+    ax_dapi.set_title(dapi_title, fontsize=14, weight="bold")
     ax_dapi.axis("off")
 
     ax_rfp.imshow(rfp_vis)
-    ax_rfp.set_title("RFP anti-LYZ channel (standardized)", fontsize=14, weight="bold")
+    ax_rfp.set_title(rfp_title, fontsize=14, weight="bold")
     ax_rfp.axis("off")
 
     _add_arrow_between_axes(fig, ax_input, ax_dapi, start_y_frac=0.66, end_y_frac=0.50)
     _add_arrow_between_axes(fig, ax_input, ax_rfp, start_y_frac=0.34, end_y_frac=0.50)
 
-    fig.suptitle(
-        "Channel Split and Intensity Standardization",
-        fontsize=21,
-        weight="bold",
-        y=0.98,
-    )
+    fig.suptitle(figure_title, fontsize=21, weight="bold", y=0.98)
 
     fig.text(
         0.5,
         0.02,
-        "The raw precombined field is split into channels, then each channel is normalized independently to align contrast for morphology filters.",
+        footer_text,
         ha="center",
         va="bottom",
         fontsize=12,
@@ -958,6 +1096,8 @@ def _generate_n3_morphology_seed_flow(
     output_path: Path,
     scoring_weights: dict[str, float],
     dry_run: bool,
+    poster_dials: dict[str, Any],
+    n3_box_dials: dict[str, Any],
 ) -> None:
     if dry_run:
         _log(f"DRY RUN: would generate {output_path}")
@@ -977,6 +1117,7 @@ def _generate_n3_morphology_seed_flow(
         base_labels_rgb=base_labels,
         rfp_std_rgb=rfp_std,
         scoring_weights=scoring_weights,
+        n3_box_dials=n3_box_dials,
     )
 
     original_display = _normalize_for_display(original_overlay)
@@ -1026,19 +1167,36 @@ def _generate_n3_morphology_seed_flow(
     base_on_zoom = _overlay(zoom_gray_rgb, base_crop_rgb, base_mask_crop, alpha=0.52)
     base_on_zoom[base_boundary_crop] = 1.0
 
+    default_node_titles = {
+        "original_with_box": "Original field + zoom box",
+        "zoom_source": "Zoomed analysis window",
+        "dapi_input": "DAPI input (standardized)",
+        "rfp_input": "RFP input (standardized)",
+        "dapi_morph": "DAPI morphology",
+        "rfp_morph": "RFP morphology",
+        "overlap": "Channel overlap",
+        "seed": "Seed labels on grayscale distance",
+        "base": "Base labels on zoomed grayscale + boundaries",
+    }
+    node_titles_cfg = _dial(poster_dials, "text.n3.node_titles", {})
+    if isinstance(node_titles_cfg, dict):
+        for key in default_node_titles:
+            if isinstance(node_titles_cfg.get(key), str):
+                default_node_titles[key] = node_titles_cfg[key]
+
     node_images = {
-        "original_with_box": (source_with_box, "Original field + zoom box"),
-        "zoom_source": (zoom_source, "Zoomed analysis window"),
-        "dapi_input": (_crop_rgb(dapi_input_vis, crop_box), "DAPI input (standardized)"),
-        "rfp_input": (_crop_rgb(rfp_input_vis, crop_box), "RFP input (standardized)"),
-        "dapi_morph": (_crop_rgb(dapi_morph, crop_box), "DAPI morphology"),
+        "original_with_box": (source_with_box, default_node_titles["original_with_box"]),
+        "zoom_source": (zoom_source, default_node_titles["zoom_source"]),
+        "dapi_input": (_crop_rgb(dapi_input_vis, crop_box), default_node_titles["dapi_input"]),
+        "rfp_input": (_crop_rgb(rfp_input_vis, crop_box), default_node_titles["rfp_input"]),
+        "dapi_morph": (_crop_rgb(dapi_morph, crop_box), default_node_titles["dapi_morph"]),
         "rfp_morph": (
             _crop_rgb(rfp_morph, crop_box),
-            "RFP morphology",
+            default_node_titles["rfp_morph"],
         ),
-        "overlap": (_crop_rgb(overlap, crop_box), "Channel overlap"),
-        "seed": (_crop_rgb(seeds_on_distance, crop_box), "Seed labels on grayscale distance"),
-        "base": (base_on_zoom, "Base labels on zoomed grayscale + boundaries"),
+        "overlap": (_crop_rgb(overlap, crop_box), default_node_titles["overlap"]),
+        "seed": (_crop_rgb(seeds_on_distance, crop_box), default_node_titles["seed"]),
+        "base": (base_on_zoom, default_node_titles["base"]),
     }
 
     with tempfile.TemporaryDirectory(prefix="n3_graphviz_cards_") as temp_dir:
@@ -1050,6 +1208,13 @@ def _generate_n3_morphology_seed_flow(
             node_card_paths[node_id] = card_path
 
         graph = Digraph(name="N3", engine="dot", format="png")
+        graph_title = str(
+            _dial(
+                poster_dials,
+                "text.n3.figure_title",
+                "Zoomed Morphology-Guided Overlap and Seed Progression",
+            )
+        )
         graph.attr(
             rankdir="LR",
             splines="spline",
@@ -1058,7 +1223,7 @@ def _generate_n3_morphology_seed_flow(
             bgcolor="white",
             pad="0.20",
             dpi="320",
-            label="Zoomed Morphology-Guided Overlap and Seed Progression",
+            label=graph_title,
             labelloc="t",
             fontsize="27",
             fontname="Helvetica-Bold",
@@ -1114,6 +1279,8 @@ def _generate_n4_quality_scoring_breakdown(
     scoring_weights: dict[str, float],
     effective_weights: dict[str, float],
     dry_run: bool,
+    poster_dials: dict[str, Any],
+    n3_box_dials: dict[str, Any],
 ) -> None:
     if dry_run:
         _log(f"DRY RUN: would generate {output_path}")
@@ -1123,20 +1290,78 @@ def _generate_n4_quality_scoring_breakdown(
     rfp_std = _load_rgb(cfg.paths_for_generation["crypt_preprocessed"])
     base_labels = _load_rgb(cfg.paths_for_generation["base_labels"])
     source_display = _normalize_for_display(source_overlay)
+    exp_strength = _as_float(
+        _dial(poster_dials, "n4.exp_strength", N4_EXPONENTIAL_QUALITY_STRENGTH),
+        N4_EXPONENTIAL_QUALITY_STRENGTH,
+        min_value=0.0,
+    )
+    row_crop_width_multiplier = _as_float(
+        _dial(
+            poster_dials,
+            "n4.row_crop_width_multiplier",
+            N4_ROW_CROP_WIDTH_MULTIPLIER,
+        ),
+        N4_ROW_CROP_WIDTH_MULTIPLIER,
+        min_value=0.01,
+    )
+    n4_text_defaults = {
+        "cumulative_linear_title": "Cumulative Quality Saturation Reference (Linear)",
+        "cumulative_linear_note": "Baseline global reference.",
+        "cumulative_exponential_title": "Cumulative Quality Saturation Reference (Exponential)",
+        "cumulative_exponential_note": "Expanded top-end separation (exp strength={exp_strength:.1f}).",
+        "table_title": "Weighted Quality Criteria",
+        "header_labels": ["Metric", "Weight", "Quality Saturation Ref", "Interpretation"],
+        "figure_title": "Scoring and Selection",
+        "effective_prefix": "Effective-count weights:",
+        "metric_descriptions": {
+            "circularity": "Saturation ranks detections by circularity quality (higher saturation is better).",
+            "area": "Saturation ranks detections by area quality (higher saturation is better).",
+            "line_fit": "Saturation ranks detections by axis-alignment quality (higher saturation is better).",
+            "red_intensity": "Saturation ranks detections by red-intensity quality (higher saturation is better).",
+        },
+    }
+    n4_text_cfg = _dial(poster_dials, "text.n4", {})
+    if not isinstance(n4_text_cfg, dict):
+        n4_text_cfg = {}
+    metric_descriptions_cfg = n4_text_cfg.get("metric_descriptions", {})
+    metric_descriptions = dict(n4_text_defaults["metric_descriptions"])
+    if isinstance(metric_descriptions_cfg, dict):
+        for metric in metric_descriptions:
+            if isinstance(metric_descriptions_cfg.get(metric), str):
+                metric_descriptions[metric] = metric_descriptions_cfg[metric]
+    header_labels_cfg = n4_text_cfg.get("header_labels", n4_text_defaults["header_labels"])
+    if not isinstance(header_labels_cfg, list):
+        header_labels_cfg = n4_text_defaults["header_labels"]
+    header_labels = []
+    for idx, fallback in enumerate(n4_text_defaults["header_labels"]):
+        if idx < len(header_labels_cfg) and isinstance(header_labels_cfg[idx], str):
+            header_labels.append(header_labels_cfg[idx])
+        else:
+            header_labels.append(fallback)
+    cumulative_linear_title = str(n4_text_cfg.get("cumulative_linear_title", n4_text_defaults["cumulative_linear_title"]))
+    cumulative_linear_note = str(n4_text_cfg.get("cumulative_linear_note", n4_text_defaults["cumulative_linear_note"]))
+    cumulative_exponential_title = str(
+        n4_text_cfg.get("cumulative_exponential_title", n4_text_defaults["cumulative_exponential_title"])
+    )
+    cumulative_exponential_note_template = str(
+        n4_text_cfg.get("cumulative_exponential_note", n4_text_defaults["cumulative_exponential_note"])
+    )
+    table_title = str(n4_text_cfg.get("table_title", n4_text_defaults["table_title"]))
+    figure_title = str(n4_text_cfg.get("figure_title", n4_text_defaults["figure_title"]))
+    effective_prefix = str(n4_text_cfg.get("effective_prefix", n4_text_defaults["effective_prefix"]))
+    try:
+        cumulative_exponential_note = cumulative_exponential_note_template.format(exp_strength=exp_strength)
+    except Exception:
+        cumulative_exponential_note = cumulative_exponential_note_template
 
     label_img, scored_regions, crop_box = _compute_analysis_window_context(
         base_labels_rgb=base_labels,
         rfp_std_rgb=rfp_std,
         scoring_weights=scoring_weights,
+        n3_box_dials=n3_box_dials,
     )
     y0_max, y1_max, x0_max, x1_max = crop_box
 
-    metric_descriptions = {
-        "circularity": "Saturation ranks detections by circularity quality (higher saturation is better).",
-        "area": "Saturation ranks detections by area quality (higher saturation is better).",
-        "line_fit": "Saturation ranks detections by axis-alignment quality (higher saturation is better).",
-        "red_intensity": "Saturation ranks detections by red-intensity quality (higher saturation is better).",
-    }
     metric_to_score_col = {
         "circularity": "circularity_score",
         "area": "area_score",
@@ -1164,7 +1389,10 @@ def _generate_n4_quality_scoring_breakdown(
         scored_indexed["label_id"] = scored_indexed["label_id"].astype(int)
         scored_indexed = scored_indexed.set_index("label_id")
         cumulative_quality_linear = _series_to_quality(scored_indexed["quality_score"])
-        cumulative_quality_exponential = _apply_exponential_quality_scale(cumulative_quality_linear)
+        cumulative_quality_exponential = _apply_exponential_quality_scale(
+            cumulative_quality_linear,
+            strength=exp_strength,
+        )
         cumulative_overlay_linear = _render_quality_overlay(
             context_rgb=source_display,
             label_img=label_img,
@@ -1206,11 +1434,11 @@ def _generate_n4_quality_scoring_breakdown(
     ax_tbl = fig.add_subplot(gs[:, 1])
 
     ax_cumulative_linear.imshow(cumulative_overlay_linear)
-    ax_cumulative_linear.set_title("Cumulative Quality Saturation Reference (Linear)", fontsize=15, weight="bold")
+    ax_cumulative_linear.set_title(cumulative_linear_title, fontsize=15, weight="bold")
     ax_cumulative_linear.text(
         0.02,
         0.03,
-        "Baseline global reference.",
+        cumulative_linear_note,
         transform=ax_cumulative_linear.transAxes,
         ha="left",
         va="bottom",
@@ -1222,14 +1450,14 @@ def _generate_n4_quality_scoring_breakdown(
 
     ax_cumulative_exponential.imshow(cumulative_overlay_exponential)
     ax_cumulative_exponential.set_title(
-        "Cumulative Quality Saturation Reference (Exponential)",
+        cumulative_exponential_title,
         fontsize=15,
         weight="bold",
     )
     ax_cumulative_exponential.text(
         0.02,
         0.03,
-        f"Expanded top-end separation (exp strength={N4_EXPONENTIAL_QUALITY_STRENGTH:.1f}).",
+        cumulative_exponential_note,
         transform=ax_cumulative_exponential.transAxes,
         ha="left",
         va="bottom",
@@ -1239,7 +1467,7 @@ def _generate_n4_quality_scoring_breakdown(
     )
     ax_cumulative_exponential.axis("off")
 
-    ax_tbl.set_title("Weighted Quality Criteria", fontsize=18, weight="bold", pad=10)
+    ax_tbl.set_title(table_title, fontsize=18, weight="bold", pad=10)
     ax_tbl.set_xlim(0.0, 1.0)
     ax_tbl.set_ylim(0.0, 1.0)
     ax_tbl.axis("off")
@@ -1250,8 +1478,6 @@ def _generate_n4_quality_scoring_breakdown(
     rows_count = max(len(rows), 1)
     row_h = min(0.16, (header_top - 0.20 - header_h) / rows_count)
     table_bottom = header_top - header_h - rows_count * row_h
-    header_labels = ["Metric", "Weight", "Quality Saturation Ref", "Interpretation"]
-
     for idx, label in enumerate(header_labels):
         x0 = col_edges[idx]
         width = col_edges[idx + 1] - col_edges[idx]
@@ -1301,7 +1527,7 @@ def _generate_n4_quality_scoring_breakdown(
         hue_y1 = y1 - row_h * 0.12
         target_aspect = (
             (hue_x1 - hue_x0) / max(hue_y1 - hue_y0, 1e-6)
-        ) * float(N4_ROW_CROP_WIDTH_MULTIPLIER)
+        ) * float(row_crop_width_multiplier)
 
         row_overlay = max_crop_overlays.get(metric, _crop_rgb(source_display, crop_box))
         if not scored_indexed.empty and metric in metric_overlays:
@@ -1400,12 +1626,12 @@ def _generate_n4_quality_scoring_breakdown(
         bbox=dict(boxstyle="round,pad=0.35", facecolor="#eef5ff", edgecolor="#b7c8de"),
     )
 
-    eff_text = "Effective-count weights: " + ", ".join(
+    eff_text = f"{effective_prefix} " + ", ".join(
         f"{k}={_format_weight(v)}" for k, v in effective_weights.items()
     )
     ax_tbl.text(0.02, 0.05, eff_text, ha="left", va="bottom", fontsize=9, color="#27496e")
 
-    fig.suptitle("Scoring and Selection", fontsize=22, weight="bold", y=0.98)
+    fig.suptitle(figure_title, fontsize=22, weight="bold", y=0.98)
     fig.savefig(output_path, dpi=320, bbox_inches="tight")
     plt.close(fig)
     _log(f"Generated {output_path}")
@@ -1690,16 +1916,24 @@ def _validate_references(dry_run: bool) -> None:
     )
 
 
-def build_bundle(cfg: SubjectConfig, dry_run: bool) -> None:
+def build_bundle(cfg: SubjectConfig, dry_run: bool, poster_dials_yaml: Path) -> None:
     required = [cfg.scoring_config_path, *cfg.paths_for_generation.values()]
     _verify_exists(required)
     _ensure_dirs(dry_run=dry_run)
+    poster_dials = _load_poster_dials(poster_dials_yaml)
+    poster_weights = _dial(poster_dials, "weights.poster_universal", {})
+    if not isinstance(poster_weights, dict):
+        poster_weights = {}
+    n3_box_dials = _dial(poster_dials, "n3_box_relative_dims", {})
+    if not isinstance(n3_box_dials, dict):
+        n3_box_dials = {}
 
     curated_rows = _copy_curated_assets(cfg=cfg, dry_run=dry_run)
     loaded_scoring_weights, loaded_effective_weights = _load_scoring_weights(cfg.scoring_config_path)
     scoring_weights, effective_weights = _apply_poster_weight_overrides(
         loaded_scoring_weights,
         loaded_effective_weights,
+        poster_weights=poster_weights,
     )
 
     n1_path = GENERATED_DIR / "N1_pipeline_flowchart.png"
@@ -1707,17 +1941,24 @@ def build_bundle(cfg: SubjectConfig, dry_run: bool) -> None:
     n3_path = GENERATED_DIR / "N3_morphology_seed_flowchart.png"
     n4_path = GENERATED_DIR / "N4_quality_scoring_breakdown.png"
 
-    _generate_n1_pipeline_flowchart(output_path=n1_path, dry_run=dry_run)
+    _generate_n1_pipeline_flowchart(
+        output_path=n1_path,
+        dry_run=dry_run,
+        poster_dials=poster_dials,
+    )
     _generate_n2_channel_split_standardization(
         cfg=cfg,
         output_path=n2_path,
         dry_run=dry_run,
+        poster_dials=poster_dials,
     )
     _generate_n3_morphology_seed_flow(
         cfg=cfg,
         output_path=n3_path,
         scoring_weights=scoring_weights,
         dry_run=dry_run,
+        poster_dials=poster_dials,
+        n3_box_dials=n3_box_dials,
     )
     _generate_n4_quality_scoring_breakdown(
         cfg=cfg,
@@ -1725,6 +1966,8 @@ def build_bundle(cfg: SubjectConfig, dry_run: bool) -> None:
         scoring_weights=scoring_weights,
         effective_weights=effective_weights,
         dry_run=dry_run,
+        poster_dials=poster_dials,
+        n3_box_dials=n3_box_dials,
     )
 
     generated_rows = _copy_generated_to_assets(
@@ -1758,7 +2001,11 @@ def build_bundle(cfg: SubjectConfig, dry_run: bool) -> None:
 def main() -> None:
     args = parse_args()
     cfg = SUBJECT_CONFIGS[args.subject_key]
-    build_bundle(cfg=cfg, dry_run=bool(args.dry_run))
+    build_bundle(
+        cfg=cfg,
+        dry_run=bool(args.dry_run),
+        poster_dials_yaml=Path(args.poster_dials_yaml),
+    )
 
 
 if __name__ == "__main__":

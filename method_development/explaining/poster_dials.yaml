@@ -1,0 +1,77 @@
+# Poster dials for method_development/explaining/build_poster_assets.py
+# Edit this file, then rerun:
+#   .venv/bin/python method_development/explaining/build_poster_assets.py
+
+weights:
+  poster_universal:
+    circularity: 0.20
+    area: 0.20
+    line_fit: 0.35
+    red_intensity: 0.85
+
+n3_box_relative_dims:
+  # Analysis-window geometry around the top-ranked detection candidate.
+  center_to_edge_equivalent_diameter_scale: 0.50
+  vertical_up_multiplier: 3.0
+  vertical_down_multiplier: 5.0
+  crypt_length_min_px: 20.0
+  crypt_length_max_fraction_of_min_image_dim: 0.333333
+  min_span_px: 160
+
+n4:
+  # Exponential scaling for cumulative quality reference map.
+  exp_strength: 3.0
+  # Row-level saturation reference crop width multiplier.
+  row_crop_width_multiplier: 2.0
+
+text:
+  n1:
+    title: "Lysozyme Pipeline Overview (Poster Flow)"
+    step_label_prefix: "Step"
+    step_cards:
+      - "Input field\n(DAPI + RFP)"
+      - "Split channels\nand standardize\nintensity"
+      - "Build morphology\nmaps for DAPI\nand RFP"
+      - "Combine channel\nevidence into\noverlap map"
+      - "Create seeds\nthen grow\nbase labels"
+      - "Apply weighted\nquality scoring\nand selection"
+    footer_text: "Start with paired channels, build morphology-informed overlap evidence, then score and keep the strongest crypt regions."
+
+  n2:
+    figure_title: "Channel Split and Intensity Standardization"
+    input_panel_title: "Original paired field (precombined overlay)"
+    dapi_panel_title: "DAPI channel (standardized)"
+    rfp_panel_title: "RFP anti-LYZ channel (standardized)"
+    footer_text: "The raw precombined field is split into channels, then each channel is normalized independently to align contrast for morphology filters."
+
+  n3:
+    figure_title: "Zoomed Morphology-Guided Overlap and Seed Progression"
+    node_titles:
+      original_with_box: "Original field + zoom box"
+      zoom_source: "Zoomed analysis window"
+      dapi_input: "DAPI input (standardized)"
+      rfp_input: "RFP input (standardized)"
+      dapi_morph: "DAPI morphology"
+      rfp_morph: "RFP morphology"
+      overlap: "Channel overlap"
+      seed: "Seed labels on grayscale distance"
+      base: "Base labels on zoomed grayscale + boundaries"
+
+  n4:
+    figure_title: "Scoring and Selection"
+    table_title: "Weighted Quality Criteria"
+    cumulative_linear_title: "Cumulative Quality Saturation Reference (Linear)"
+    cumulative_linear_note: "Baseline global reference."
+    cumulative_exponential_title: "Cumulative Quality Saturation Reference (Exponential)"
+    cumulative_exponential_note: "Expanded top-end separation (exp strength={exp_strength:.1f})."
+    header_labels:
+      - "Metric"
+      - "Weight"
+      - "Quality Saturation Ref"
+      - "Interpretation"
+    effective_prefix: "Effective-count weights:"
+    metric_descriptions:
+      circularity: "Saturation ranks detections by circularity quality (higher saturation is better)."
+      area: "Saturation ranks detections by area quality (higher saturation is better)."
+      line_fit: "Saturation ranks detections by axis-alignment quality (higher saturation is better)."
+      red_intensity: "Saturation ranks detections by red-intensity quality (higher saturation is better)."
