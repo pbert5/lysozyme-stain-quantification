@@ -30,6 +30,7 @@ import pandas as pd
 import yaml
 from graphviz import Digraph
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle
+from matplotlib.text import Text
 from scipy import ndimage as ndi
 from skimage.measure import regionprops
 
@@ -251,6 +252,50 @@ def _load_poster_dials(dials_path: Path) -> dict[str, Any]:
         raise ValueError(f"Poster dials YAML must be a mapping: {dials_path}")
     _log(f"Loaded poster dials from {dials_path}")
     return dict(loaded)
+
+
+def _wrap_text_to_pixel_width(
+    fig: plt.Figure,
+    text: str,
+    *,
+    max_width_px: float,
+    fontsize: int,
+    weight: str = "normal",
+    fontname: str | None = None,
+) -> str:
+    cleaned = " ".join(str(text).split())
+    if not cleaned:
+        return ""
+    max_width_px = float(max_width_px)
+    if not np.isfinite(max_width_px) or max_width_px <= 1.0:
+        return cleaned
+
+    renderer = fig.canvas.get_renderer()
+    words = cleaned.split(" ")
+    lines: list[str] = []
+    current: list[str] = []
+
+    for word in words:
+        trial = f"{' '.join(current)} {word}".strip() if current else word
+        probe = Text(
+            0.0,
+            0.0,
+            trial,
+            fontsize=int(fontsize),
+            fontweight=str(weight),
+            fontname=fontname,
+        )
+        probe.set_figure(fig)
+        bbox = probe.get_window_extent(renderer=renderer)
+        if bbox.width <= max_width_px or not current:
+            current.append(word)
+        else:
+            lines.append(" ".join(current))
+            current = [word]
+
+    if current:
+        lines.append(" ".join(current))
+    return "\n".join(lines)
 
 
 def _to_float_rgb(arr: np.ndarray) -> np.ndarray:
@@ -1775,6 +1820,7 @@ def _generate_n4_quality_scoring_breakdown(
     ax_tbl.set_xlim(0.0, 1.0)
     ax_tbl.set_ylim(0.0, 1.0)
     ax_tbl.axis("off")
+    fig.canvas.draw()
 
     for idx, label in enumerate(header_labels):
         x0 = col_edges[idx]
@@ -1917,7 +1963,15 @@ def _generate_n4_quality_scoring_breakdown(
         ax_tbl.text(
             col_edges[3] + 0.010,
             y0 + row_h * 0.50,
-            textwrap.fill(interpretation, width=40),
+            _wrap_text_to_pixel_width(
+                fig,
+                interpretation,
+                max_width_px=(
+                    ax_tbl.transAxes.transform((col_edges[4] - 0.012, 0.0))[0]
+                    - ax_tbl.transAxes.transform((col_edges[3] + 0.010, 0.0))[0]
+                ),
+                fontsize=n4_table_interpretation_fontsize,
+            ),
             ha="left",
             va="center",
             fontsize=n4_table_interpretation_fontsize,
@@ -1930,11 +1984,23 @@ def _generate_n4_quality_scoring_breakdown(
         y = header_top - header_h - idx * row_h
         ax_tbl.plot([col_edges[0], col_edges[-1]], [y, y], color="#e2b3b3", lw=1.0)
 
+    eff_y = 0.035
+    note_y = table_bottom - 0.020
+    formula_y = note_y - 0.085 if interpretation_note.strip() else (table_bottom - 0.080)
+    formula_y = max(formula_y, eff_y + 0.085)
+
     if interpretation_note.strip():
         ax_tbl.text(
             0.02,
-            table_bottom - 0.02,
-            textwrap.fill(interpretation_note, width=110),
+            note_y,
+            _wrap_text_to_pixel_width(
+                fig,
+                interpretation_note,
+                max_width_px=(
+                    ax_tbl.transAxes.transform((0.98, 0.0))[0] - ax_tbl.transAxes.transform((0.02, 0.0))[0]
+                ),
+                fontsize=n4_table_footer_fontsize,
+            ),
             ha="left",
             va="top",
             fontsize=n4_table_footer_fontsize,
@@ -1945,7 +2011,7 @@ def _generate_n4_quality_scoring_breakdown(
     formula = "quality_score = " + " + ".join(formula_terms) if formula_terms else "quality_score = configured weighted sum"
     ax_tbl.text(
         0.02,
-        table_bottom - 0.09,
+        formula_y,
         textwrap.fill(formula, width=95),
         ha="left",
         va="top",
@@ -1959,7 +2025,7 @@ def _generate_n4_quality_scoring_breakdown(
     )
     ax_tbl.text(
         0.02,
-        0.05,
+        eff_y,
         eff_text,
         ha="left",
         va="bottom",
