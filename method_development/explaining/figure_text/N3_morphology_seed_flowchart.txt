@@ -1,9 +1,9 @@
 Subtitle
-Zoomed morphology-guided overlap from standardized channels, then seed-to-region progression.
+What is a crypt, and how dual-channel morphology drives seed-to-label segmentation.
 
 Large Text Box
-We first mark a zoom window around the highest-quality detection candidate, then run the visual flow on that local window so crypt-scale morphology is easy to read.
+Intestinal crypts are pocket-like invaginations between villi. Their lumens appear as DAPI-low cavities bordered by epithelial cells, and lysozyme signal is concentrated near these pockets. Lysozyme levels can increase with inflammation.
 
-In RFP, crypt-like signal is modeled as local peaks that are relatively large, locally stable in intensity, and approximately round, with strong transitions near borders. In DAPI, we estimate tissue boundaries and cavity-like spaces where crypt lumens are expected to have low signal. Overlap between these maps highlights high-likelihood crypt centers.
+We build morphology maps from each channel (DAPI: tissue borders + cavities; RFP: lysozyme-positive regions in an expected size/shape range) and combine them into a crypt-likelihood map where higher values better match the target crypt profile.
 
-In this panel, seed labels are overlaid on a grayscale distance image, and base labels are overlaid on the grayscale zoomed analysis window with explicit label boundaries.
+High-likelihood peaks define non-overlapping seed regions, which are expanded into full crypt labels; overlays show seeds on the likelihood map and final label boundaries on the zoomed window.

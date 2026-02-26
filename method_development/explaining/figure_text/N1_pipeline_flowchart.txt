@@ -1,5 +1,5 @@
 Subtitle
-End-to-end pipeline overview from paired fluorescence channels to final crypt-level outputs.
+Pipeline overview: from paired fluorescence channels to ranked crypt detections.
 
 Large Text Box
-Start with paired DAPI and RFP images, split and standardize each channel, then build morphology-driven maps that emphasize crypt-like patterns. Combine channel evidence into a likelihood/distance representation, derive seed labels, expand to base and final crypt labels, and apply weighted quality scoring to keep the strongest crypt regions for downstream quantification.
+Workflow: split + standardize channels -> build morphology maps (DAPI, RFP) -> combine maps to predict crypt locations -> label individual crypt regions -> score + select representative crypts for downstream quantification.

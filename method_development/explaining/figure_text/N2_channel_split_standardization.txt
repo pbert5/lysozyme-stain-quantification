@@ -1,5 +1,7 @@
 Subtitle
-What we start with: one field that branches into standardized DAPI and RFP channels.
+Example inputs and channel meaning, after per-channel intensity standardization.
 
 Large Text Box
-The input field is split into DAPI (tissue/cell context) and RFP anti-LYZ (lysozyme signal) channels. We standardize intensity per channel so both channels are on consistent contrast scales before morphology filtering. This makes downstream operations less sensitive to raw brightness variation across images.
+Each field contains two fluorescence channels. DAPI (blue) marks nuclei and provides tissue context; RFP anti-LYZ (red) reports lysozyme signal concentrated around crypt regions.
+
+We standardize intensity per channel to place images on a consistent contrast scale, making downstream morphology and thresholding less sensitive to exposure/staining variability. Quantifying crypt-associated lysozyme is a commonly used readout in gut inflammation studies.
