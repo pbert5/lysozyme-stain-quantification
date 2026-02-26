@@ -2069,19 +2069,22 @@ def _write_methods_text(dry_run: bool) -> None:
         # Methods Text (Poster-Ready, Plain Language)
 
         ## One-line goal
-        Detect lysozyme-producing intestinal crypt regions from paired DAPI and RFP images, then rank and select the most representative crypts per field.
+        Detect intestinal crypt regions and quantify crypt-associated lysozyme from paired DAPI and RFP anti-LYZ fluorescence images.
+
+        ## 0) What you're looking at
+        Each field contains two channels. DAPI (blue) marks nuclei and provides tissue architecture; RFP anti-LYZ (red) reports lysozyme signal concentrated around crypt regions. Intestinal crypts are pocket-like invaginations between villi; their lumens appear as DAPI-low cavities, adjacent to lysozyme signal. Crypt-level lysozyme is a commonly used readout in gut inflammation studies.
 
         ## 1) Pipeline framing
-        The pipeline starts from paired fluorescence channels, standardizes each channel independently, and then builds morphology-informed maps that encode where crypt-like structures are most likely to exist.
+        Starting from the paired channels, we standardize intensity per channel and build morphology maps that capture (a) DAPI-defined tissue borders/cavities and (b) RFP-defined lysozyme-positive regions in expected size/shape ranges.
 
         ## 2) Morphology-informed likelihood
-        In DAPI, we identify tissue borders and cavity-like structures; in RFP, we identify strong lysozyme-positive regions in expected size/shape ranges. These maps are combined into a distance/likelihood image where high values better match the target crypt profile.
+        We combine the DAPI and RFP morphology maps into a crypt-likelihood (distance) image where higher values better match the target crypt profile, even when staining is diffuse.
 
         ## 3) Seed to region progression
-        For figure communication, we select a zoom window around the highest-quality candidate and show the morphology flow locally: channel overlap, seed labels over grayscale distance image, and base labels over grayscale zoomed context with explicit label boundaries.
+        High-likelihood peaks define non-overlapping seed regions. Seeds are expanded into full crypt labels, visualized as seed overlays on the likelihood map and final label boundaries on a zoomed analysis window.
 
-        ## 4) Weighted quality scoring
-        Candidate regions are scored using circularity, area, line-fit alignment, and red-intensity features. Each metric row uses a tissue overlay saturation map for that single metric, while a separate cumulative saturation map shows the weighted total quality.
+        ## 4) Weighted quality scoring and selection
+        Candidate crypt labels are scored using circularity, area consistency, spatial alignment (line fit), and red-intensity features. A weighted sum ranks detections, and the top-scoring crypts are selected for downstream quantification.
         """
     ).strip() + "\n"
 
@@ -2142,46 +2145,74 @@ def _write_figure_text_files(
     files["N1_pipeline_flowchart.txt"] = textwrap.dedent(
         """
         Subtitle
-        End-to-end pipeline overview from paired fluorescence channels to final crypt-level outputs.
+        Pipeline overview: from paired fluorescence channels to ranked crypt detections.
 
         Large Text Box
-        Start with paired DAPI and RFP images, split and standardize each channel, then build morphology-driven maps that emphasize crypt-like patterns. Combine channel evidence into a likelihood/distance representation, derive seed labels, expand to base and final crypt labels, and apply weighted quality scoring to keep the strongest crypt regions for downstream quantification.
+        Workflow: split + standardize channels -> build morphology maps (DAPI, RFP) -> combine maps to predict crypt locations -> label individual crypt regions -> score + select representative crypts for downstream quantification.
         """
     ).strip() + "\n"
 
     files["N2_channel_split_standardization.txt"] = textwrap.dedent(
         """
         Subtitle
-        What we start with: one field that branches into standardized DAPI and RFP channels.
+        Example inputs and channel meaning, after per-channel intensity standardization.
 
         Large Text Box
-        The input field is split into DAPI (tissue/cell context) and RFP anti-LYZ (lysozyme signal) channels. We standardize intensity per channel so both channels are on consistent contrast scales before morphology filtering. This makes downstream operations less sensitive to raw brightness variation across images.
+        Each field contains two fluorescence channels. DAPI (blue) marks nuclei and provides tissue context; RFP anti-LYZ (red) reports lysozyme signal concentrated around crypt regions.
+
+        We standardize intensity per channel to place images on a consistent contrast scale, making downstream morphology and thresholding less sensitive to exposure/staining variability. Quantifying crypt-associated lysozyme is a commonly used readout in gut inflammation studies.
         """
     ).strip() + "\n"
 
     files["N3_morphology_seed_flowchart.txt"] = textwrap.dedent(
         """
         Subtitle
-        Zoomed morphology-guided overlap from standardized channels, then seed-to-region progression.
+        What is a crypt, and how dual-channel morphology drives seed-to-label segmentation.
 
         Large Text Box
-        We first mark a zoom window around the highest-quality detection candidate, then run the visual flow on that local window so crypt-scale morphology is easy to read.
+        Intestinal crypts are pocket-like invaginations between villi. Their lumens appear as DAPI-low cavities bordered by epithelial cells, and lysozyme signal is concentrated near these pockets. Lysozyme levels can increase with inflammation.
 
-        In RFP, crypt-like signal is modeled as local peaks that are relatively large, locally stable in intensity, and approximately round, with strong transitions near borders. In DAPI, we estimate tissue boundaries and cavity-like spaces where crypt lumens are expected to have low signal. Overlap between these maps highlights high-likelihood crypt centers.
+        We build morphology maps from each channel (DAPI: tissue borders + cavities; RFP: lysozyme-positive regions in an expected size/shape range) and combine them into a crypt-likelihood map where higher values better match the target crypt profile.
 
-        In this panel, seed labels are overlaid on a grayscale distance image, and base labels are overlaid on the grayscale zoomed analysis window with explicit label boundaries.
+        High-likelihood peaks define non-overlapping seed regions, which are expanded into full crypt labels; overlays show seeds on the likelihood map and final label boundaries on the zoomed window.
         """
     ).strip() + "\n"
+
+    weight_keys = ["circularity", "area", "line_fit", "red_intensity"]
+    effective_matches_selection = all(
+        _format_weight(effective_weights.get(key))
+        == _format_weight(scoring_weights.get(key))
+        for key in weight_keys
+    )
+    effective_weight_block = (
+        "Effective-count weights: same as selection weights."
+        if effective_matches_selection
+        else textwrap.dedent(
+            f"""
+            Effective-count weights:
+            - circularity: {_format_weight(effective_weights.get('circularity'))}
+            - area: {_format_weight(effective_weights.get('area'))}
+            - line_fit: {_format_weight(effective_weights.get('line_fit'))}
+            - red_intensity: {_format_weight(effective_weights.get('red_intensity'))}
+            """
+        ).strip()
+    )
 
     files["N4_quality_scoring_breakdown.txt"] = textwrap.dedent(
         f"""
         Subtitle
-        Weighted scoring with per-metric tissue saturation references and paired cumulative maps (linear + exponential).
+        Weighted quality scoring to prioritize well-formed, high-signal crypt detections.
 
         Large Text Box
-        Candidate regions are scored by shape and signal properties. For each metric row, the saturation reference shows the same tissue image with detections colored by that metric-specific quality. The global cumulative reference is shown twice: linear (baseline) and exponential (top-end quality separation).
+        Not every candidate region is a true, well-isolated crypt (noise, partial crypts, or merged neighbors). We compute an interpretable quality score from shape and signal features, then select the top-scoring detections per field for quantification.
 
-        Row-level references use the same analysis-window bounds as the zoomed morphology panel: first we match the vertical extent to that window, then crop horizontally to fit the table cell proportion while staying inside the analysis-window limits. Labels come from the same base-label set.
+        Saturation maps visualize per-metric quality (higher saturation = higher quality), while the cumulative map shows the weighted total score.
+
+        Metrics (higher is better):
+        - circularity: shape compactness (closer to a round/closed crypt profile)
+        - area: size consistency (closer to expected crypt area range)
+        - line_fit: spatial alignment (detections follow a consistent axis/curve)
+        - red_intensity: lysozyme signal strength (RFP intensity within the detection)
 
         Selection weights (poster-standardized):
         - circularity: {_format_weight(scoring_weights.get('circularity'))}
@@ -2189,11 +2220,7 @@ def _write_figure_text_files(
         - line_fit: {_format_weight(scoring_weights.get('line_fit'))}
         - red_intensity: {_format_weight(scoring_weights.get('red_intensity'))}
 
-        Effective-count weights:
-        - circularity: {_format_weight(effective_weights.get('circularity'))}
-        - area: {_format_weight(effective_weights.get('area'))}
-        - line_fit: {_format_weight(effective_weights.get('line_fit'))}
-        - red_intensity: {_format_weight(effective_weights.get('red_intensity'))}
+        {effective_weight_block}
         """
     ).strip() + "\n"
 

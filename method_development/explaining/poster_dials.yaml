@@ -26,7 +26,7 @@ n4:
 
 text:
   n1:
-    title: "Lysozyme Pipeline Overview (Poster Flow)"
+    title: "N1 - Lysozyme Pipeline Overview (Poster Flow)"
     step_label_prefix: "Step"
     step_cards:
       - "Input field\n(DAPI + RFP)"
@@ -38,14 +38,14 @@ text:
     footer_text: "Start with paired channels, build morphology-informed overlap evidence, then score and keep the strongest crypt regions."
 
   n2:
-    figure_title: "Channel Split and Intensity Standardization"
+    figure_title: "N2 - Channel Split and Intensity Standardization"
     input_panel_title: "Original paired field (precombined overlay)"
     dapi_panel_title: "DAPI channel (standardized)"
     rfp_panel_title: "RFP anti-LYZ channel (standardized)"
     footer_text: "The raw precombined field is split into channels, then each channel is normalized independently to align contrast for morphology filters."
 
   n3:
-    figure_title: "Zoomed Morphology-Guided Overlap and Seed Progression"
+    figure_title: "N3 - Zoomed Morphology-Guided Overlap and Seed Progression"
     # Visual dials (applied to each card in the flowchart).
     card_title_fontsize: 17
     card_titlebar_color: "#9b0000"
@@ -64,7 +64,7 @@ text:
       base: "Full crypt detections"
 
   n4:
-    figure_title: "Scoring and Selection"
+    figure_title: "N4 - Scoring and Selection"
     # Visual dials (colors + font sizes).
     accent_color: "#9b0000"
     cumulative_title_fontsize: 16
