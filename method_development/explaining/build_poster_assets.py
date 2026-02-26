@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import re
 import shutil
 import tempfile
@@ -29,6 +30,7 @@ import numpy as np
 import pandas as pd
 import yaml
 from graphviz import Digraph
+from matplotlib import font_manager
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle
 from matplotlib.text import Text
 from scipy import ndimage as ndi
@@ -40,6 +42,8 @@ EXPLAINING_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = EXPLAINING_DIR / "assets"
 GENERATED_DIR = EXPLAINING_DIR / "generated"
 FIGURE_TEXT_DIR = EXPLAINING_DIR / "figure_text"
+FONTS_DIR = EXPLAINING_DIR / "fonts"
+RED_HAT_DISPLAY_DIR = FONTS_DIR / "red_hat_display"
 DEFAULT_POSTER_DIALS_PATH = EXPLAINING_DIR / "poster_dials.yaml"
 
 PLANNED_ANIMATION_ROOT = Path(
@@ -61,6 +65,27 @@ POSTER_UNIVERSAL_SCORING_WEIGHTS = {
 }
 N4_EXPONENTIAL_QUALITY_STRENGTH = 3.0
 N4_ROW_CROP_WIDTH_MULTIPLIER = 2.0
+
+
+def _configure_fonts() -> None:
+    font_paths = sorted(RED_HAT_DISPLAY_DIR.glob("*.ttf"))
+    for path in font_paths:
+        try:
+            font_manager.fontManager.addfont(str(path))
+        except Exception:
+            continue
+
+    if not font_paths:
+        _log("Red Hat Display font files not found; using Matplotlib defaults.")
+        return
+
+    try:
+        family = font_manager.FontProperties(fname=str(font_paths[0])).get_name()
+    except Exception:
+        family = "Red Hat Display"
+
+    plt.rcParams["font.family"] = family
+    plt.rcParams["font.sans-serif"] = [family, "DejaVu Sans", "Arial", "Liberation Sans"]
 
 
 @dataclass(frozen=True)
@@ -1503,10 +1528,6 @@ def _generate_n3_morphology_seed_flow(
             bgcolor="white",
             pad="0.20",
             dpi="320",
-            label=graph_title,
-            labelloc="t",
-            fontsize=str(n3_graph_title_fontsize),
-            fontname="Helvetica-Bold",
         )
         graph.attr(
             "node",
@@ -1550,7 +1571,21 @@ def _generate_n3_morphology_seed_flow(
         graph.edge("overlap", "seed")
         graph.edge("seed", "base")
 
-        output_path.write_bytes(graph.pipe(format="png"))
+        graph_png = graph.pipe(format="png")
+
+        graph_img = plt.imread(io.BytesIO(graph_png))
+        dpi = 320
+        extra_title_in = 0.55
+        fig_w_in = graph_img.shape[1] / dpi
+        fig_h_in = graph_img.shape[0] / dpi
+        fig = plt.figure(figsize=(fig_w_in, fig_h_in + extra_title_in), dpi=dpi)
+        body_frac = fig_h_in / (fig_h_in + extra_title_in)
+        ax = fig.add_axes([0.0, 0.0, 1.0, body_frac])
+        ax.imshow(graph_img)
+        ax.set_axis_off()
+        fig.suptitle(graph_title, fontsize=n3_graph_title_fontsize, weight="bold", y=0.995)
+        fig.savefig(output_path, dpi=dpi, facecolor="white", bbox_inches="tight", pad_inches=0.02)
+        plt.close(fig)
 
     _log(f"Generated {output_path}")
 
@@ -2429,6 +2464,7 @@ def build_bundle(cfg: SubjectConfig, dry_run: bool, poster_dials_yaml: Path) -> 
 
 def main() -> None:
     args = parse_args()
+    _configure_fonts()
     cfg = SUBJECT_CONFIGS[args.subject_key]
     build_bundle(
         cfg=cfg,
