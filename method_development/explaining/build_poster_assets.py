@@ -229,11 +229,38 @@ def parse_args() -> argparse.Namespace:
         default=str(DEFAULT_POSTER_DIALS_PATH),
         help="YAML file that controls poster dials (weights, N3 crop geometry, figure text, N4 exp strength).",
     )
+    parser.add_argument(
+        "--export-raw-crops",
+        action="store_true",
+        help="Export raw cropped panel images into method_development/explaining/assets/N2, N3, N4.",
+    )
     return parser.parse_args()
 
 
 def _log(message: str) -> None:
     print(f"[build_poster_assets] {message}")
+
+
+def _save_raw_png(image_rgb: np.ndarray, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    img = np.asarray(image_rgb)
+    if img.ndim != 3 or img.shape[2] != 3:
+        raise ValueError(f"Expected RGB image (H,W,3), got shape={img.shape!r}")
+    if img.dtype.kind in {"f"}:
+        img = np.clip(img, 0.0, 1.0)
+    plt.imsave(output_path, img)
+
+
+def _save_axes_png(fig: plt.Figure, ax: plt.Axes, output_path: Path, *, pad_inches: float = 0.02) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    bbox = ax.get_tightbbox(renderer)
+    if bbox is None:
+        raise RuntimeError("Could not compute axes bounding box.")
+    bbox = bbox.expanded(1.01, 1.01)
+    bbox_inches = bbox.transformed(fig.dpi_scale_trans.inverted())
+    fig.savefig(output_path, dpi=320, bbox_inches=bbox_inches, pad_inches=pad_inches)
 
 
 def _as_float(value: Any, default: float, *, min_value: float | None = None) -> float:
@@ -1287,8 +1314,12 @@ def _generate_n1_pipeline_flowchart(
 def _generate_n2_channel_split_standardization(
     cfg: SubjectConfig,
     output_path: Path,
+    scoring_weights: dict[str, float],
     dry_run: bool,
     poster_dials: dict[str, Any],
+    n3_box_dials: dict[str, Any],
+    *,
+    export_raw_crops: bool = False,
 ) -> None:
     if dry_run:
         _log(f"DRY RUN: would generate {output_path}")
@@ -1297,6 +1328,14 @@ def _generate_n2_channel_split_standardization(
     original_overlay = _load_rgb(cfg.paths_for_generation["paired_overlay_original"])
     rfp_std = _load_rgb(cfg.paths_for_generation["crypt_preprocessed"])
     dapi_std = _load_rgb(cfg.paths_for_generation["tissue_preprocessed"])
+    base_labels = _load_rgb(cfg.paths_for_generation["base_labels"])
+
+    _label_img, _scored_regions, crop_box = _compute_analysis_window_context(
+        base_labels_rgb=base_labels,
+        rfp_std_rgb=rfp_std,
+        scoring_weights=scoring_weights,
+        n3_box_dials=n3_box_dials,
+    )
 
     dapi_gray = _grayscale(dapi_std)
     rfp_gray = _grayscale(rfp_std)
@@ -1307,6 +1346,18 @@ def _generate_n2_channel_split_standardization(
     rfp_vis = np.stack(
         [np.clip(1.05 * rfp_gray, 0.0, 1.0), 0.20 * rfp_gray, 0.18 * rfp_gray], axis=-1
     )
+
+    if export_raw_crops:
+        export_dir = ASSETS_DIR / "N2"
+        _save_raw_png(original_overlay, export_dir / "original_paired_overlay.png")
+        _save_raw_png(dapi_vis, export_dir / "dapi_standardized.png")
+        _save_raw_png(rfp_vis, export_dir / "rfp_standardized.png")
+        _save_raw_png(
+            _draw_crop_box(_normalize_for_display(original_overlay), crop_box),
+            export_dir / "original_paired_overlay_with_box.png",
+        )
+        _save_raw_png(_draw_crop_box(dapi_vis, crop_box), export_dir / "dapi_standardized_with_box.png")
+        _save_raw_png(_draw_crop_box(rfp_vis, crop_box), export_dir / "rfp_standardized_with_box.png")
 
     fig = plt.figure(figsize=(16, 9), dpi=320)
     grid = fig.add_gridspec(2, 2, width_ratios=(1.35, 1.0), hspace=0.08, wspace=0.08)
@@ -1387,6 +1438,8 @@ def _generate_n3_morphology_seed_flow(
     dry_run: bool,
     poster_dials: dict[str, Any],
     n3_box_dials: dict[str, Any],
+    *,
+    export_raw_crops: bool = False,
 ) -> None:
     if dry_run:
         _log(f"DRY RUN: would generate {output_path}")
@@ -1487,6 +1540,12 @@ def _generate_n3_morphology_seed_flow(
         "seed": (_crop_rgb(seeds_on_distance, crop_box), default_node_titles["seed"]),
         "base": (base_on_zoom, default_node_titles["base"]),
     }
+
+    if export_raw_crops:
+        export_dir = ASSETS_DIR / "N3"
+        _save_raw_png(original_display, export_dir / "original_no_box.png")
+        for node_id, (img, _title) in node_images.items():
+            _save_raw_png(img, export_dir / f"{node_id}.png")
 
     n3_style_cfg = _dial(poster_dials, "text.n3", {})
     if not isinstance(n3_style_cfg, dict):
@@ -1598,6 +1657,8 @@ def _generate_n4_quality_scoring_breakdown(
     dry_run: bool,
     poster_dials: dict[str, Any],
     n3_box_dials: dict[str, Any],
+    *,
+    export_raw_crops: bool = False,
 ) -> None:
     if dry_run:
         _log(f"DRY RUN: would generate {output_path}")
@@ -1725,6 +1786,31 @@ def _generate_n4_quality_scoring_breakdown(
             cumulative_quality_linear,
             strength=exp_strength,
         )
+        cumulative_overlay_exponential = _render_quality_overlay(
+            context_rgb=source_display,
+            label_img=label_img,
+            label_to_quality=cumulative_quality_exponential,
+            alpha=0.74,
+        )
+    else:
+        scored_indexed = pd.DataFrame()
+        cumulative_overlay_exponential = source_display
+
+    cumulative_overlay_exponential = _overlay_linefit_curve(
+        cumulative_overlay_exponential,
+        linefit_curve,
+        thickness=4,
+    )
+
+    if not scored_regions.empty:
+        scored_indexed = scored_regions.copy()
+        scored_indexed["label_id"] = scored_indexed["label_id"].astype(int)
+        scored_indexed = scored_indexed.set_index("label_id")
+        cumulative_quality_linear = _series_to_quality(scored_indexed["quality_score"])
+        cumulative_quality_exponential = _apply_exponential_quality_scale(
+            cumulative_quality_linear,
+            strength=exp_strength,
+        )
         cumulative_overlay_linear = _render_quality_overlay(
             context_rgb=source_display,
             label_img=label_img,
@@ -1812,6 +1898,8 @@ def _generate_n4_quality_scoring_breakdown(
     }
     cumulative_overlay_linear_boxed = _draw_crop_box(cumulative_overlay_linear, row_context_box)
     cumulative_overlay_exponential_boxed = _draw_crop_box(cumulative_overlay_exponential, row_context_box)
+
+    row_ref_exports: dict[str, np.ndarray] = {}
 
     ax_cumulative_linear.imshow(cumulative_overlay_linear_boxed)
     ax_cumulative_linear.set_title(
@@ -1965,6 +2053,7 @@ def _generate_n4_quality_scoring_breakdown(
             target_aspect=target_aspect,
             center_x=center_x,
         )
+        row_ref_exports[metric] = row_overlay
         overlay_h = max(row_overlay.shape[0], 1)
         overlay_w = max(row_overlay.shape[1], 1)
         overlay_aspect = float(overlay_w) / float(overlay_h)
@@ -2069,7 +2158,198 @@ def _generate_n4_quality_scoring_breakdown(
     )
 
     fig.suptitle(figure_title, fontsize=n4_suptitle_fontsize, weight="bold", y=0.98)
+    if export_raw_crops:
+        export_dir = ASSETS_DIR / "N4"
+        _save_raw_png(cumulative_overlay_linear, export_dir / "cumulative_linear.png")
+        _save_raw_png(cumulative_overlay_exponential, export_dir / "cumulative_exponential.png")
+        _save_raw_png(cumulative_overlay_linear_boxed, export_dir / "cumulative_linear_boxed.png")
+        _save_raw_png(cumulative_overlay_exponential_boxed, export_dir / "cumulative_exponential_boxed.png")
+        for metric, img in row_ref_exports.items():
+            _save_raw_png(img, export_dir / f"table_ref_{metric}.png")
+        _save_axes_png(fig, ax_tbl, export_dir / "table_only.png")
     fig.savefig(output_path, dpi=320, bbox_inches="tight")
+    plt.close(fig)
+    _log(f"Generated {output_path}")
+
+
+def _save_fullframe_asset(
+    image_rgb: np.ndarray,
+    output_path: Path,
+    *,
+    dpi: int = 320,
+) -> None:
+    h, w = image_rgb.shape[:2]
+    if h <= 1 or w <= 1:
+        raise ValueError("Cannot save empty image.")
+    aspect = float(w) / float(h)
+    height_in = 7.5
+    width_in = min(16.0, max(8.0, height_in * aspect))
+    height_in = width_in / max(aspect, 1e-6)
+    fig = plt.figure(figsize=(width_in, height_in), dpi=dpi)
+    ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
+    ax.imshow(image_rgb)
+    ax.set_axis_off()
+    fig.savefig(output_path, dpi=dpi, bbox_inches="tight", pad_inches=0.0)
+    plt.close(fig)
+
+
+def _generate_all_detections_labeled_map(
+    cfg: SubjectConfig,
+    output_path: Path,
+    scoring_weights: dict[str, float],
+    dry_run: bool,
+    poster_dials: dict[str, Any],
+    n3_box_dials: dict[str, Any],
+) -> None:
+    if dry_run:
+        _log(f"DRY RUN: would generate {output_path}")
+        return
+
+    source_overlay = _load_rgb(cfg.paths_for_generation["paired_overlay_original"])
+    rfp_std = _load_rgb(cfg.paths_for_generation["crypt_preprocessed"])
+    base_labels = _load_rgb(cfg.paths_for_generation["base_labels"])
+    source_display = _normalize_for_display(source_overlay)
+
+    label_img, scored_regions, _crop_box = _compute_analysis_window_context(
+        base_labels_rgb=base_labels,
+        rfp_std_rgb=rfp_std,
+        scoring_weights=scoring_weights,
+        n3_box_dials=n3_box_dials,
+    )
+    base_rgb = _to_float_rgb(base_labels)
+    mask = label_img > 0
+    out = source_display.copy()
+    out[mask] = 0.40 * out[mask] + 0.60 * base_rgb[mask]
+
+    edges = ndi.binary_dilation(_label_boundary_mask(label_img), iterations=2)
+    out[edges] = np.clip(0.12 * out[edges] + 0.88 * np.array([1.0, 1.0, 1.0]), 0.0, 1.0)
+
+    max_id_labels = _as_int(_dial(poster_dials, "extras.maps.max_id_labels", 60), 60, min_value=0)
+    if max_id_labels > 0 and not scored_regions.empty:
+        by_area = scored_regions.sort_values("area", ascending=False).head(max_id_labels)
+        fig = plt.figure(figsize=(16, 9), dpi=320)
+        ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
+        ax.imshow(out)
+        ax.set_axis_off()
+        for row in by_area.itertuples(index=False):
+            ax.text(
+                float(row.com_col),
+                float(row.com_row),
+                str(int(row.label_id)),
+                ha="center",
+                va="center",
+                fontsize=8,
+                weight="bold",
+                color="black",
+                bbox=dict(boxstyle="round,pad=0.18", facecolor="white", edgecolor="#9b0000", linewidth=0.9),
+            )
+        fig.savefig(output_path, dpi=320, bbox_inches="tight", pad_inches=0.0)
+        plt.close(fig)
+    else:
+        _save_fullframe_asset(out, output_path)
+
+    _log(f"Generated {output_path}")
+
+
+def _generate_selected_crypts_map(
+    cfg: SubjectConfig,
+    output_path: Path,
+    scoring_weights: dict[str, float],
+    dry_run: bool,
+    poster_dials: dict[str, Any],
+    n3_box_dials: dict[str, Any],
+) -> None:
+    if dry_run:
+        _log(f"DRY RUN: would generate {output_path}")
+        return
+
+    source_overlay = _load_rgb(cfg.paths_for_generation["paired_overlay_original"])
+    rfp_std = _load_rgb(cfg.paths_for_generation["crypt_preprocessed"])
+    base_labels = _load_rgb(cfg.paths_for_generation["base_labels"])
+    source_display = _normalize_for_display(source_overlay)
+
+    label_img, scored_regions, _crop_box = _compute_analysis_window_context(
+        base_labels_rgb=base_labels,
+        rfp_std_rgb=rfp_std,
+        scoring_weights=scoring_weights,
+        n3_box_dials=n3_box_dials,
+    )
+    top_k = _as_int(_dial(poster_dials, "extras.maps.top_k", 5), 5, min_value=1)
+    selected_outline_hex = str(_dial(poster_dials, "extras.maps.selected_outline_color", "#9b0000"))
+    selected_outline = np.asarray(plt.matplotlib.colors.to_rgb(selected_outline_hex), dtype=np.float32)
+
+    if scored_regions.empty:
+        _save_fullframe_asset(source_display, output_path)
+        _log(f"Generated {output_path}")
+        return
+
+    selected = scored_regions.head(top_k).copy()
+    selected_label_ids = [int(v) for v in selected["label_id"].tolist()]
+    selected_mask = np.isin(label_img, np.asarray(selected_label_ids, dtype=np.int32))
+
+    out = source_display.copy()
+    out[selected_mask] = 0.76 * out[selected_mask] + 0.24 * selected_outline
+    boundary = _label_boundary_mask(np.where(selected_mask, label_img, 0))
+    boundary = ndi.binary_dilation(boundary, iterations=3)
+    out[boundary] = selected_outline
+
+    fig = plt.figure(figsize=(16, 9), dpi=320)
+    ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
+    ax.imshow(out)
+    ax.set_axis_off()
+    for rank, row in enumerate(selected.itertuples(index=False), start=1):
+        ax.text(
+            float(row.com_col),
+            float(row.com_row),
+            str(rank),
+            ha="center",
+            va="center",
+            fontsize=10,
+            weight="bold",
+            color="black",
+            bbox=dict(boxstyle="round,pad=0.20", facecolor="white", edgecolor=selected_outline_hex, linewidth=1.2),
+        )
+    fig.savefig(output_path, dpi=320, bbox_inches="tight", pad_inches=0.0)
+    plt.close(fig)
+
+    _log(f"Generated {output_path}")
+
+
+def _generate_quality_scale_axis(
+    output_path: Path,
+    dry_run: bool,
+    poster_dials: dict[str, Any],
+) -> None:
+    if dry_run:
+        _log(f"DRY RUN: would generate {output_path}")
+        return
+
+    title = str(_dial(poster_dials, "extras.quality_scale_axis.title", "quality"))
+    left_label = str(_dial(poster_dials, "extras.quality_scale_axis.left_label", "bad"))
+    right_label = str(_dial(poster_dials, "extras.quality_scale_axis.right_label", "good"))
+    low_hex = str(_dial(poster_dials, "extras.quality_scale_axis.low_color", "#fff1f1"))
+    high_hex = str(_dial(poster_dials, "extras.quality_scale_axis.high_color", "#9b0000"))
+    low = np.asarray(plt.matplotlib.colors.to_rgb(low_hex), dtype=np.float32)
+    high = np.asarray(plt.matplotlib.colors.to_rgb(high_hex), dtype=np.float32)
+
+    w = 1200
+    h = 160
+    t = np.linspace(0.0, 1.0, w, dtype=np.float32)
+    grad = (1.0 - t)[:, None] * low[None, :] + t[:, None] * high[None, :]
+    img = np.repeat(grad[None, :, :], h, axis=0)
+
+    fig = plt.figure(figsize=(8.0, 1.1), dpi=320)
+    ax = fig.add_axes([0.08, 0.35, 0.84, 0.35])
+    ax.imshow(img, aspect="auto")
+    ax.set_yticks([])
+    ax.set_xticks([0, w - 1])
+    ax.set_xticklabels([left_label, right_label], fontsize=10, color="#5a1b1b", weight="bold")
+    for spine in ax.spines.values():
+        spine.set_edgecolor(high_hex)
+        spine.set_linewidth(1.4)
+    ax.tick_params(axis="x", length=0)
+    fig.text(0.5, 0.88, title, ha="center", va="center", fontsize=11, weight="bold", color=high_hex)
+    fig.savefig(output_path, dpi=320, bbox_inches="tight", pad_inches=0.05, facecolor="white")
     plt.close(fig)
     _log(f"Generated {output_path}")
 
@@ -2154,6 +2434,11 @@ def _write_figure_map(dry_run: bool) -> None:
         - `N2` -> `assets/N2_channel_split_standardization.png`: Original field split into standardized DAPI/RFP channels.
         - `N3` -> `assets/N3_morphology_seed_flowchart.png`: Morphology-based likelihood and seed-to-label flow.
         - `N4` -> `assets/N4_quality_scoring_breakdown.png`: Scoring criteria, weights, and quality-saturation interpretation.
+
+        ## Auxiliary assets (A1-A3)
+        - `A1` -> `assets/A1_all_detections_labeled_map.png`: Labeled map of all detections (for context).
+        - `A2` -> `assets/A2_selected_crypts.png`: Selected top-scoring crypt detections.
+        - `A3` -> `assets/A3_quality_scale_axis.png`: Red quality scale axis (bad -> good).
 
         ## Figure text files
         - `figure_text/N1_pipeline_flowchart.txt`
@@ -2309,6 +2594,27 @@ def _write_manifest(
             "use_case": "Quality scoring and weight breakdown figure.",
             "status": "mapped",
         },
+        {
+            "panel_id": "A1",
+            "filename": "A1_all_detections_labeled_map.png",
+            "source_path": str(ASSETS_DIR / "A1_all_detections_labeled_map.png"),
+            "use_case": "Context map: all detections labeled.",
+            "status": "mapped",
+        },
+        {
+            "panel_id": "A2",
+            "filename": "A2_selected_crypts.png",
+            "source_path": str(ASSETS_DIR / "A2_selected_crypts.png"),
+            "use_case": "Selected top-scoring crypt detections.",
+            "status": "mapped",
+        },
+        {
+            "panel_id": "A3",
+            "filename": "A3_quality_scale_axis.png",
+            "source_path": str(ASSETS_DIR / "A3_quality_scale_axis.png"),
+            "use_case": "Quality scale axis (bad to good).",
+            "status": "mapped",
+        },
     ]
 
     text_rows = []
@@ -2380,7 +2686,7 @@ def _validate_references(dry_run: bool) -> None:
     )
 
 
-def build_bundle(cfg: SubjectConfig, dry_run: bool, poster_dials_yaml: Path) -> None:
+def build_bundle(cfg: SubjectConfig, dry_run: bool, poster_dials_yaml: Path, *, export_raw_crops: bool) -> None:
     required = [cfg.scoring_config_path, *cfg.paths_for_generation.values()]
     _verify_exists(required)
     _ensure_dirs(dry_run=dry_run)
@@ -2404,6 +2710,9 @@ def build_bundle(cfg: SubjectConfig, dry_run: bool, poster_dials_yaml: Path) -> 
     n2_path = GENERATED_DIR / "N2_channel_split_standardization.png"
     n3_path = GENERATED_DIR / "N3_morphology_seed_flowchart.png"
     n4_path = GENERATED_DIR / "N4_quality_scoring_breakdown.png"
+    a1_path = GENERATED_DIR / "A1_all_detections_labeled_map.png"
+    a2_path = GENERATED_DIR / "A2_selected_crypts.png"
+    a3_path = GENERATED_DIR / "A3_quality_scale_axis.png"
 
     _generate_n1_pipeline_flowchart(
         output_path=n1_path,
@@ -2413,8 +2722,11 @@ def build_bundle(cfg: SubjectConfig, dry_run: bool, poster_dials_yaml: Path) -> 
     _generate_n2_channel_split_standardization(
         cfg=cfg,
         output_path=n2_path,
+        scoring_weights=scoring_weights,
         dry_run=dry_run,
         poster_dials=poster_dials,
+        n3_box_dials=n3_box_dials,
+        export_raw_crops=export_raw_crops,
     )
     _generate_n3_morphology_seed_flow(
         cfg=cfg,
@@ -2423,6 +2735,7 @@ def build_bundle(cfg: SubjectConfig, dry_run: bool, poster_dials_yaml: Path) -> 
         dry_run=dry_run,
         poster_dials=poster_dials,
         n3_box_dials=n3_box_dials,
+        export_raw_crops=export_raw_crops,
     )
     _generate_n4_quality_scoring_breakdown(
         cfg=cfg,
@@ -2432,10 +2745,40 @@ def build_bundle(cfg: SubjectConfig, dry_run: bool, poster_dials_yaml: Path) -> 
         dry_run=dry_run,
         poster_dials=poster_dials,
         n3_box_dials=n3_box_dials,
+        export_raw_crops=export_raw_crops,
+    )
+    _generate_all_detections_labeled_map(
+        cfg=cfg,
+        output_path=a1_path,
+        scoring_weights=scoring_weights,
+        dry_run=dry_run,
+        poster_dials=poster_dials,
+        n3_box_dials=n3_box_dials,
+    )
+    _generate_selected_crypts_map(
+        cfg=cfg,
+        output_path=a2_path,
+        scoring_weights=scoring_weights,
+        dry_run=dry_run,
+        poster_dials=poster_dials,
+        n3_box_dials=n3_box_dials,
+    )
+    _generate_quality_scale_axis(
+        output_path=a3_path,
+        dry_run=dry_run,
+        poster_dials=poster_dials,
     )
 
     generated_rows = _copy_generated_to_assets(
-        generated_files={"N1": n1_path, "N2": n2_path, "N3": n3_path, "N4": n4_path},
+        generated_files={
+            "N1": n1_path,
+            "N2": n2_path,
+            "N3": n3_path,
+            "N4": n4_path,
+            "A1": a1_path,
+            "A2": a2_path,
+            "A3": a3_path,
+        },
         dry_run=dry_run,
     )
 
@@ -2470,6 +2813,7 @@ def main() -> None:
         cfg=cfg,
         dry_run=bool(args.dry_run),
         poster_dials_yaml=Path(args.poster_dials_yaml),
+        export_raw_crops=bool(args.export_raw_crops),
     )
 
 

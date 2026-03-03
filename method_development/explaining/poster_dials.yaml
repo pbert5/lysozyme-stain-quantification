@@ -92,3 +92,15 @@ text:
       area: "Size consistency (closer to expected crypt area range)."
       line_fit: "Spatial alignment (how well detections follow a consistent axis/curve)."
       red_intensity: "LYZ signal strength (RFP intensity within the detection)."
+
+extras:
+  maps:
+    top_k: 5
+    max_id_labels: 60
+    selected_outline_color: "#9b0000"
+  quality_scale_axis:
+    title: "quality"
+    left_label: "bad"
+    right_label: "good"
+    low_color: "#fff1f1"
+    high_color: "#9b0000"

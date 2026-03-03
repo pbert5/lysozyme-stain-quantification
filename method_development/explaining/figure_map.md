@@ -19,6 +19,11 @@
 - `N3` -> `assets/N3_morphology_seed_flowchart.png`: Morphology-based likelihood and seed-to-label flow.
 - `N4` -> `assets/N4_quality_scoring_breakdown.png`: Scoring criteria, weights, and quality-saturation interpretation.
 
+## Auxiliary assets (A1-A3)
+- `A1` -> `assets/A1_all_detections_labeled_map.png`: Labeled map of all detections (for context).
+- `A2` -> `assets/A2_selected_crypts.png`: Selected top-scoring crypt detections.
+- `A3` -> `assets/A3_quality_scale_axis.png`: Red quality scale axis (bad -> good).
+
 ## Figure text files
 - `figure_text/N1_pipeline_flowchart.txt`
 - `figure_text/N2_channel_split_standardization.txt`
