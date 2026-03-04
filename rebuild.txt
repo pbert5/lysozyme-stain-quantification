@@ -1,0 +1,24 @@
+ok, so were are going to create a spark implementation of the lysozyme analysis tool
+
+were also going to split up some responsibilities ( as in they will be run on their own seperately)
+tho we will have a run.sh script that will basicaly run through these ( tho were going to make sure we have some flexibility for how some chuncks dont need to be rerun)
+1. image discovery and pairing -- it already is somewhat, but were going to make it properly its own module in codebase/image_utils basicaly evolve scientific image finder to be /home/ash/documents/code/lysozyme/scratch_space/karens_data/discover_lysozyme_images.py, it will be nice and pump out a csv
+
+
+2. cluster/local spark set up ( not nesesarily run seperately, but all this logic should be its own module)
+3. analysis, this will basicaly be /home/ash/documents/code/lysozyme/codeBase/crypt_detection_code/lysozyme_stain_quantification, be basicaly a single function endpoint, that is given the two input image paths, relevent meta data, dir to save result images, and returns the data results, it will be set up to run a single subject
+
+4. spark implementation
+    this will be the script that implments it, it will call the local spark setup module to set it up,
+    it will injest csv from then basicaly run the analysis against each row, and return and save the results
+5. run.py
+- this will be a qol centralized manager that will be pointed at a dir to save results into,
+- it will be like an entry point that will hold the users hand for running the whole pipeline
+- its where the backend will be chosen: i.e. dask or spark
+- its primary tasks:
+    - set up the configuration yaml ( if not there, create it)
+        - if have to create it, well basicaly have it pause and have user confirm that it is configured as desired
+    - run the image finder script against the targeted dir, and output the csv ( by default dont recreate if already present, but do validate it)
+    - run the image analysis against the images in the csv
+    - run the stats analysis against result data 
+    

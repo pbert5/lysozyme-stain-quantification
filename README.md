@@ -1,133 +1,129 @@
-# Lysozyme Stain Quantification & Dask Pipeline
+# Lysozyme Analysis Pipeline
 
-Tools for detecting and quantifying lysozyme‑positive intestinal crypts from paired fluorescence images (RFP/lysozyme and DAPI). The core algorithms live in `src/lysozyme_stain_quantification`, and the Dask-based batch pipeline is wired up through small entry-point scripts in this repository.
+This repository contains a modular image-analysis pipeline for lysozyme-positive intestinal crypt quantification with two execution backends:
 
-- Overview video (concept + walkthrough): https://youtu.be/Qp7FabiPl2A
-- Detailed theory and background: `docs/PipelineTheory.md`, `docs/crypt_fluorescence_summary.md`, `docs/WIKI.md`
+- `dask`
+- `spark`
+
+The main entrypoint is now:
+
+- `codeBase/run.py` (Python CLI)
+- `run.sh` (shell wrapper around `codeBase/run.py`)
+
+## Current Run Flow
+
+The pipeline runs in three stages:
+
+1. Discovery: scan configured datasets and build/update `lysozyme_input_data.csv`.
+2. Analysis: process each CSV row with `dask` or `spark`.
+3. Stats: generate summary stats outputs from the image-level CSV.
+
+Each stage can be run independently.
 
 ## Installation
-
-These instructions assume a Unix-like environment and Python ≥3.9.
 
 ```bash
 git clone https://github.com/phillip-silbert/lysozyme.git
 cd lysozyme
 
-# (optional) create and activate a virtualenv
 python -m venv .venv
 source .venv/bin/activate
 
-# install dependencies and this package in editable mode
 pip install -r requirements.txt
 pip install -e .
 ```
 
-After this, you should be able to import the library (e.g. `import lysozyme_stain_quantification`) and run the Dask pipelines below.
+For Spark backend support, also install:
 
-## Input Data Expectations
+```bash
+pip install pyspark
+```
 
-- Images are `.tif`/`.TIF` files organized under a root directory.
-- Each subject is typically a pair of images:
-  - A lysozyme/RFP channel (red)
-  - A DAPI (nuclear) channel (blue)
-- Pairing is done by filename patterns:
-  - For the Karen dataset, files end with `"_RFP"` and `"_DAPI"` (see `src/dask_lysozyme_pipeline.py`).
-  - For the Yen lab dataset, files end with `"c2"` (lysozyme) and `"c1"` (DAPI) (see `yen_detect_crypts.py`).
-- The root directory for a given dataset is configured via `DatasetConfig.image_base_dir`.
+## Quick Start (Recommended)
 
-If your images live somewhere else or use different naming, adapt the `DatasetConfig` in the relevant entry script.
+1. Choose a work directory (where config + CSV live).
+2. Run the orchestrator once to bootstrap config:
 
-## Demo Run (notebook + sample images)
+```bash
+./run.sh --work-dir scratch_space/karens_data --yes --skip-analysis --skip-stats
+```
 
-- A self-contained demo notebook lives at [demo/demo_run.ipynb](demo/demo_run.ipynb).
-- Demo inputs are copied into [demo/images](demo/images) with one Yen pair (`c2`/`c1`) and two Karen pairs (`_RFP`/`_DAPI`).
-- Running the notebook produces overlays and CSVs under `results/demo_yen_single` and `results/demo_karen_batch`.
+3. Edit `scratch_space/karens_data/lysozyme_pipeline_config.yaml`.
+4. Run the full pipeline:
 
-## Running the Dask Pipeline (Karen Dataset)
+```bash
+./run.sh --work-dir scratch_space/karens_data --backend spark
+```
 
-The shared Dask pipeline is configured for the “Karen” dataset in `src/dask_lysozyme_pipeline.py`.
+## Stage-Only Runs
 
-1. Edit the input path if needed  
-   In `src/dask_lysozyme_pipeline.py`, update:
-   ```python
-   KAREN_DATASET = DatasetConfig(
-       image_base_dir=Path("/home/phillip/documents/experimental_data/inputs/karen/lysozyme"),
-       ...
-       channel_keys=("_RFP", "_DAPI"),
-   )
-   ```
-   so that `image_base_dir` points to your Karen image root.
+Discovery only:
 
-2. Run the pipeline
-   ```bash
-   # from the repo root
-   python src/dask_lysozyme_pipeline.py --max-subjects 10
-   ```
+```bash
+./run.sh --work-dir scratch_space/karens_data --discovery-only --rewrite-csv always
+```
 
-   Useful flags (from `src/lysozyme_pipelines/cli.py`):
-   - `--max-subjects N` – limit how many subjects/images are processed.
-   - `--capture-debug-images` / `--no-capture-debug-images` – toggle saving intermediate debug images.
-   - `--debug-stage STAGE` – add one or more stages to the debug whitelist (repeatable).
-   - `--debug-subject-count N` – only capture debug intermediates for the first `N` subjects.
-   - `--debug-subject NAME` – restrict debug capture to specific subject names (repeatable).
+Analysis only:
 
-3. Inspect results  
-   For the Karen dataset, results are written under a run-specific directory, e.g.:
-   - `results/<exp_name>/simple_dask_image_summary.csv`
-   - `results/<exp_name>/simple_dask_image_summary_detailed.csv`
-   - `results/<exp_name>/simple_dask_per_crypt.csv`
-   - `results/<exp_name>/renderings/` – overlay images (RFP/DAPI/crypt labels)
-   - `results/<exp_name>/debug_intermediates/` – optional stepwise debug images
+```bash
+./run.sh --work-dir scratch_space/karens_data --analysis-only --backend dask
+```
 
-   The `exp_name` is set in the `DatasetConfig` (e.g. `"rendering_test_run"`).
+Stats only:
 
-## Running the Dask Pipeline (Yen Lab Dataset)
+```bash
+./run.sh --work-dir scratch_space/karens_data --stats-only
+```
 
-The Yen lab variant is wired up in `yen_detect_crypts.py` and uses the same shared pipeline under the hood.
+You can pass through any `codeBase/run.py` args via `run.sh`.
 
-1. Edit the input path if needed  
-   In `yen_detect_crypts.py`, update:
-   ```python
-   YEN_IMAGE_BASE = Path("/home/phillip/documents/experimental_data/inputs/yen_lab/rfp/Lyz Fabp1")
-   ```
-   so it points to your Yen dataset root. The default expects files ending in `"c2"` (lysozyme) and `"c1"` (DAPI).
+## Main CLI Options
 
-2. Run the pipeline
-   ```bash
-   # from the repo root
-   python yen_detect_crypts.py --max-subjects 10
-   ```
+```bash
+python3 codeBase/run.py --help
+```
 
-   The same debug flags described above are available (`--capture-debug-images`, `--debug-stage`, `--debug-subject`, etc.). Results and CSVs are written under `results/<exp_name>/` where `exp_name` is `"yen_lab_run"` by default.
+Common options:
 
-## Dask Cluster Usage
+- `--work-dir <dir>` or `--config <yaml>`
+- `--backend auto|dask|spark`
+- `--rewrite-csv never|always|ask`
+- `--skip-discovery`
+- `--skip-analysis`
+- `--skip-stats`
+- `--max-subjects <N>`
+- `--spark-partitions <N>`
 
-The shared pipeline (`src/lysozyme_pipelines/pipeline.py`) supports both threaded and distributed execution:
+## Outputs
 
-- By default, the entry scripts (`src/dask_lysozyme_pipeline.py`, `yen_detect_crypts.py`) set `use_cluster=True`.
-- If `dask.distributed` is available, the pipeline will:
-  - Try to connect to an existing local cluster (if `connect_to_existing_cluster=True`).
-  - Otherwise, start a `LocalCluster` with a reasonable number of workers/threads and report:
-    - Scheduler URL
-    - Dashboard URL (typically `http://127.0.0.1:8787/status`)
-- If Dask distributed is not installed or cluster start fails, it falls back to a threaded scheduler.
+Results are written under:
 
-You can monitor progress, memory use, and task graphs by opening the printed Dask dashboard URL in a browser.
+- `<results_root>/results/<exp_name>/`
 
-## What the Pipeline Produces
+Backend outputs:
 
-At a high level, the Dask pipeline:
+- Dask:
+  - `simple_dask_image_summary.csv`
+  - `simple_dask_image_summary_detailed.csv`
+  - `simple_dask_per_crypt.csv`
+- Spark:
+  - `simple_spark_image_summary.csv`
+  - `simple_spark_image_summary_detailed.csv`
+  - `simple_spark_per_crypt.csv`
+  - `simple_spark_errors.csv` (if row failures occurred)
 
-- Discovers and pairs RFP (lysozyme) and DAPI images from a dataset directory.
-- Applies a molphological operation-based segmentation pipeline to identify candidate crypts.
-- Scores regions using morphology and intensity features (circularity, area, alignment, lysozyme intensity, etc.).
-- Selects the best crypt candidates per image.
-- Normalizes lysozyme signal relative to DAPI to enable cross-image comparisons.
-- Writes:
-  - Per-image summaries (`simple_dask_image_summary*.csv`)
-  - Detailed per-image metrics (`simple_dask_image_summary_detailed*.csv`)
-  - Per-crypt tables (`simple_dask_per_crypt.csv`)
-  - Optional overlay and debug images.
+Stats outputs:
 
-For in-depth definitions of these outputs and the biological/statistical rationale, see `docs/crypt_fluorescence_summary.md` and the R scripts in `src/statistical_validation`.
+- `<results_dir>/stats/basic_stats_overall.json`
+- `<results_dir>/stats/basic_stats_by_source_dataset.csv` (when available)
+- `<results_dir>/stats/basic_stats_by_image_source_type.csv` (when available)
 
+## Detailed CodeBase Guide
+
+For a step-by-step guide tied to concrete module paths in `codeBase/`, see:
+
+- `codeBase/README.md`
+
+## Legacy Scripts
+
+Older scripts under `src/` still exist for historical/legacy usage, but the preferred pipeline manager is `codeBase/run.py`.
