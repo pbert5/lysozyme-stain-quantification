@@ -12,7 +12,7 @@ from .cluster import create_local_spark_session
 
 PROJECT_CODEBASE_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-PROJECT_SRC_ROOT = PROJECT_ROOT / "src"
+DEFAULT_MAX_AUTO_PARTITIONS = 8
 
 IMAGE_SUMMARY_COLS = [
     "subject name",
@@ -107,9 +107,6 @@ def _run_single_row(record: Dict[str, Any], runtime_cfg: Dict[str, Any]) -> Dict
         project_root = runtime_cfg.get("project_root")
         if project_root and str(project_root) not in sys.path:
             sys.path.insert(0, str(project_root))
-        src_root = runtime_cfg.get("src_root")
-        if src_root and str(src_root) not in sys.path:
-            sys.path.insert(0, str(src_root))
 
         from crypt_detection_code.lysozyme_stain_quantification import (
             SingleSubjectAnalysisConfig,
@@ -261,12 +258,13 @@ def run_spark_pipeline(
         log_level=log_level,
     )
     created_here = True
+    runtime_bc = None
+    results: List[Dict[str, Any]]
 
     try:
         runtime_cfg: Dict[str, Any] = {
             "codebase_root": str(PROJECT_CODEBASE_ROOT),
             "project_root": str(PROJECT_ROOT),
-            "src_root": str(PROJECT_SRC_ROOT),
             "results_dir": str(results_dir),
             "blob_size_um": float(blob_size_um),
             "max_regions_per_image": int(max_regions_per_image),
@@ -283,15 +281,24 @@ def run_spark_pipeline(
         }
 
         if partitions is None:
-            partitions = min(max(1, spark.sparkContext.defaultParallelism), len(records))
+            auto_parallelism = max(1, spark.sparkContext.defaultParallelism)
+            partitions = min(auto_parallelism, len(records), DEFAULT_MAX_AUTO_PARTITIONS)
+            if debug:
+                print(
+                    "[spark] Auto-selected partitions="
+                    f"{partitions} (defaultParallelism={auto_parallelism}, "
+                    f"records={len(records)}, cap={DEFAULT_MAX_AUTO_PARTITIONS})"
+                )
         partitions = max(1, int(partitions))
         runtime_bc = spark.sparkContext.broadcast(runtime_cfg)
-        results = (
-            spark.sparkContext.parallelize(records, numSlices=partitions)
-            .map(lambda rec: _run_single_row(rec, runtime_bc.value))
-            .collect()
-        )
-        runtime_bc.unpersist()
+        try:
+            results = (
+                spark.sparkContext.parallelize(records, numSlices=partitions)
+                .map(lambda rec: _run_single_row(rec, runtime_bc.value))
+                .collect()
+            )
+        finally:
+            runtime_bc.unpersist(blocking=False)
 
     finally:
         if created_here:

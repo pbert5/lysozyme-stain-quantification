@@ -21,72 +21,38 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-try:
-    from src.scientific_image_finder.finder import find_subject_image_sets
-    from src.lysozyme_stain_quantification.segment_crypts import (
-        segment_crypts,
-        segment_crypts_dual,
-    )
-    from src.lysozyme_stain_quantification.normalize_rfp import compute_normalized_rfp
-    from src.lysozyme_stain_quantification.quantify.crypt_fluorescence_summary import (
-        PER_CRYPT_FIELD_ORDER,
-        SUMMARY_FIELD_ORDER,
-        summarize_crypt_fluorescence,
-        summarize_crypt_fluorescence_per_crypt,
-    )
-    from src.lysozyme_stain_quantification.utils.setup_tools import (
-        plot_all_crypts,
-        setup_results_dir,
-    )
-    from src.lysozyme_stain_quantification.crypts.crypt_detection_solutions.effective_crypt_estimation import (
-        EffectiveCryptEstimation,
-        estimate_effective_selected_crypt_count,
-    )
-    from src.lysozyme_stain_quantification.crypts.scoring_selector_mod import (
-        fit_centroid_curve_from_labels,
-        sample_centroid_curve_points,
-    )
-    from src.lysozyme_stain_quantification.utils.remove_artifacts import (
-        remove_rectangular_artifacts,
-    )
-    from src.lysozyme_stain_quantification.utils.overlays import render_label_overlay
-    from src.lysozyme_stain_quantification.utils.debug_image_saver import (
-        DEFAULT_DEBUG_STAGE_WHITELIST,
-        DebugImageManager,
-    )
-except ImportError:
-    from scientific_image_finder.finder import find_subject_image_sets
-    from lysozyme_stain_quantification.segment_crypts import (
-        segment_crypts,
-        segment_crypts_dual,
-    )
-    from lysozyme_stain_quantification.normalize_rfp import compute_normalized_rfp
-    from lysozyme_stain_quantification.quantify.crypt_fluorescence_summary import (
-        PER_CRYPT_FIELD_ORDER,
-        SUMMARY_FIELD_ORDER,
-        summarize_crypt_fluorescence,
-        summarize_crypt_fluorescence_per_crypt,
-    )
-    from lysozyme_stain_quantification.utils.setup_tools import (
-        plot_all_crypts,
-        setup_results_dir,
-    )
-    from lysozyme_stain_quantification.crypts.crypt_detection_solutions.effective_crypt_estimation import (
-        EffectiveCryptEstimation,
-        estimate_effective_selected_crypt_count,
-    )
-    from lysozyme_stain_quantification.crypts.scoring_selector_mod import (
-        fit_centroid_curve_from_labels,
-        sample_centroid_curve_points,
-    )
-    from lysozyme_stain_quantification.utils.remove_artifacts import (
-        remove_rectangular_artifacts,
-    )
-    from lysozyme_stain_quantification.utils.overlays import render_label_overlay
-    from lysozyme_stain_quantification.utils.debug_image_saver import (
-        DEFAULT_DEBUG_STAGE_WHITELIST,
-        DebugImageManager,
-    )
+from image_utils.scientific_image_finder.finder import find_subject_image_sets
+from lysozyme_stain_quantification.segment_crypts import (
+    segment_crypts,
+    segment_crypts_dual,
+)
+from lysozyme_stain_quantification.normalize_rfp import compute_normalized_rfp
+from lysozyme_stain_quantification.quantify.crypt_fluorescence_summary import (
+    PER_CRYPT_FIELD_ORDER,
+    SUMMARY_FIELD_ORDER,
+    summarize_crypt_fluorescence,
+    summarize_crypt_fluorescence_per_crypt,
+)
+from lysozyme_stain_quantification.utils.setup_tools import (
+    plot_all_crypts,
+    setup_results_dir,
+)
+from lysozyme_stain_quantification.crypts.crypt_detection_solutions.effective_crypt_estimation import (
+    EffectiveCryptEstimation,
+    estimate_effective_selected_crypt_count,
+)
+from lysozyme_stain_quantification.crypts.scoring_selector_mod import (
+    fit_centroid_curve_from_labels,
+    sample_centroid_curve_points,
+)
+from lysozyme_stain_quantification.utils.remove_artifacts import (
+    remove_rectangular_artifacts,
+)
+from lysozyme_stain_quantification.utils.overlays import render_label_overlay
+from lysozyme_stain_quantification.utils.debug_image_saver import (
+    DEFAULT_DEBUG_STAGE_WHITELIST,
+    DebugImageManager,
+)
 # Import image-ops-framework for proper overlay rendering
 #sys.path.insert(0, str(Path.home() / "documents" / "image-ops-framework" / "src"))
 #from image_ops_framework.helpers.overlays import render_label_overlay
@@ -98,13 +64,7 @@ try:
 except ImportError:
     CLUSTER_AVAILABLE = False
 # endregion 
-try:
-    logging.getLogger("lysozyme_stain_quantification.normalize_rfp").setLevel(logging.ERROR)
-except Exception as e:
-    try:
-        logging.getLogger("src.lysozyme_stain_quantification.normalize_rfp").setLevel(logging.ERROR)
-    except Exception:  # pragma: no cover - fallback path
-        raise e
+logging.getLogger("lysozyme_stain_quantification.normalize_rfp").setLevel(logging.ERROR)
 
 DEFAULT_MEMORY_PER_WORKER = "8GB"  # Fallback if psutil is unavailable
 

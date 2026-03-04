@@ -9,12 +9,12 @@ import tifffile
 from skimage import draw
 import sys
 
-# Add src to path for pipeline imports
+# Add codeBase to path for pipeline imports
 SCRIPT_DIR = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 try:
-    from src.lysozyme_pipelines import find_tif_images_by_keys
+    from pipeline_implementations.dask_implementation.pipeline import find_tif_images_by_keys
     PIPELINE_AVAILABLE = True
 except ImportError:
     print("Warning: Pipeline imports not available")

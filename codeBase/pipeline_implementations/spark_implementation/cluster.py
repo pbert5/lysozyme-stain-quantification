@@ -14,6 +14,11 @@ def _resolve_master(*, master: Optional[str], n_workers: Optional[int]) -> str:
     return "local[*]"
 
 
+def _set_default_env(var: str, value: str) -> None:
+    if not os.environ.get(var):
+        os.environ[var] = value
+
+
 def create_local_spark_session(
     *,
     app_name: str = "lysozyme-spark-pipeline",
@@ -39,20 +44,30 @@ def create_local_spark_session(
     python_exec = str(venv_python if venv_python.exists() else Path(sys.executable).resolve())
     os.environ["PYSPARK_PYTHON"] = python_exec
     os.environ["PYSPARK_DRIVER_PYTHON"] = python_exec
+    _set_default_env("OMP_NUM_THREADS", "1")
+    _set_default_env("OPENBLAS_NUM_THREADS", "1")
+    _set_default_env("MKL_NUM_THREADS", "1")
+    _set_default_env("NUMEXPR_NUM_THREADS", "1")
 
     builder = SparkSession.builder.appName(app_name).master(effective_master)
     builder = builder.config("spark.pyspark.driver.python", python_exec)
     builder = builder.config("spark.pyspark.python", python_exec)
     builder = builder.config("spark.executorEnv.PYSPARK_PYTHON", python_exec)
     builder = builder.config("spark.executorEnv.PYSPARK_DRIVER_PYTHON", python_exec)
+    builder = builder.config("spark.executorEnv.OMP_NUM_THREADS", os.environ["OMP_NUM_THREADS"])
+    builder = builder.config("spark.executorEnv.OPENBLAS_NUM_THREADS", os.environ["OPENBLAS_NUM_THREADS"])
+    builder = builder.config("spark.executorEnv.MKL_NUM_THREADS", os.environ["MKL_NUM_THREADS"])
+    builder = builder.config("spark.executorEnv.NUMEXPR_NUM_THREADS", os.environ["NUMEXPR_NUM_THREADS"])
+    builder = builder.config("spark.python.worker.faulthandler.enabled", "true")
+    builder = builder.config("spark.sql.execution.pyspark.udf.faulthandler.enabled", "true")
+    builder = builder.config("spark.python.worker.reuse", "true")
     builder = builder.config("spark.sql.execution.arrow.pyspark.enabled", "true")
     builder = builder.config("spark.ui.showConsoleProgress", "true")
 
     codebase_root = Path(__file__).resolve().parents[2]
     project_root = codebase_root.parent
-    src_root = project_root / "src"
     existing_pythonpath = os.environ.get("PYTHONPATH", "")
-    pythonpath_parts = [str(codebase_root), str(project_root), str(src_root)]
+    pythonpath_parts = [str(codebase_root), str(project_root)]
     if existing_pythonpath.strip():
         pythonpath_parts.append(existing_pythonpath)
     executor_pythonpath = ":".join(pythonpath_parts)

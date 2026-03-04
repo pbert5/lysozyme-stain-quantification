@@ -14,10 +14,10 @@ from skimage.color import label2rgb
 from skimage.exposure import equalize_adapthist
 from skimage.measure import label as sk_label
 from skimage.morphology import (
-    binary_erosion,
     binary_opening,
     disk,
     dilation,
+    erosion,
     local_maxima,
     opening,
     remove_small_objects,
@@ -25,10 +25,7 @@ from skimage.morphology import (
 )
 from skimage.segmentation import expand_labels, watershed
 from skimage.util import invert
-try:
-    from src.lysozyme_stain_quantification.utils.remove_artifacts import remove_rectangles
-except ImportError:
-    from lysozyme_stain_quantification.utils.remove_artifacts import remove_rectangles
+from ...utils.remove_artifacts import remove_rectangles
 
 
 from ..scoring_selector_mod import scoring_selector
@@ -64,6 +61,21 @@ def minmax(x: np.ndarray) -> np.ndarray:
 
 def _odd(n: int) -> int:
     return n if n % 2 == 1 else n + 1
+
+
+def _remove_small_objects_strict(mask: np.ndarray, *, min_size: int) -> np.ndarray:
+    """
+    Remove connected components with area strictly smaller than `min_size`.
+
+    skimage >=0.26 deprecates `min_size` in favor of `max_size`, where objects
+    with area <= threshold are removed. Using `max_size=min_size-1` preserves
+    the old strict-less-than behavior.
+    """
+    strict_min = max(1, int(min_size))
+    try:
+        return remove_small_objects(mask, max_size=max(0, strict_min - 1))
+    except TypeError:
+        return remove_small_objects(mask, min_size=strict_min)
 
 
 # ---------------------------- scale metadata ---------------------------- #
@@ -377,15 +389,15 @@ def identify_potential_crypts_old_like(
     if external_crypt_seeds is None:
         crypt_seeds_bool = crypt_img > np.minimum(tissue_image, crypt_img)
         min_region_area = max(20, int(round((effective_blob**2) / 16.0)))
-        crypt_seeds_bool = binary_erosion(crypt_seeds_bool, footprint=erosion_footprint)
-        crypt_seeds_bool = remove_small_objects(crypt_seeds_bool, min_size=min_region_area)
+        crypt_seeds_bool = erosion(crypt_seeds_bool, footprint=erosion_footprint)
+        crypt_seeds_bool = _remove_small_objects_strict(crypt_seeds_bool, min_size=min_region_area)
         labeled_diff_r: np.ndarray
         labeled_diff_r, _ = ndi_label(crypt_seeds_bool)  # type: ignore
     else:
         external_crypt_seeds = external_crypt_seeds.astype(np.int32)
         crypt_seed_mask = external_crypt_seeds > 0
         min_region_area = max(20, int(round((effective_blob**2) / 16.0)))
-        crypt_seed_mask = remove_small_objects(crypt_seed_mask, min_size=min_region_area)
+        crypt_seed_mask = _remove_small_objects_strict(crypt_seed_mask, min_size=min_region_area)
         labeled_diff_r = sk_label(crypt_seed_mask)  # type: ignore
 
     abs_diff = np.maximum(tissue_image - crypt_img, 0)

@@ -126,4 +126,4 @@ For a step-by-step guide tied to concrete module paths in `codeBase/`, see:
 
 ## Legacy Scripts
 
-Older scripts under `src/` still exist for historical/legacy usage, but the preferred pipeline manager is `codeBase/run.py`.
+Legacy `src/` wrappers have been removed. Use `codeBase/run.py` (or `./run.sh`) as the supported entrypoint.

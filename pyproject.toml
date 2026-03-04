@@ -46,8 +46,8 @@ Repository = "https://github.com/phillip-silbert/lysozyme"
 Documentation = "https://github.com/phillip-silbert/lysozyme/tree/main/docs"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = {"" = "codeBase"}
 
 [tool.setuptools.packages.find]
-where = ["src"]
-include = ["lysozyme_stain_quantification*", "scientific_image_finder*"]
+where = ["codeBase"]
+include = ["*"]

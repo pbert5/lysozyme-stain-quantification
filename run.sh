@@ -11,9 +11,9 @@ else
 fi
 
 if [[ -n "${PYTHONPATH:-}" ]]; then
-  export PYTHONPATH="$SCRIPT_DIR/codeBase:$SCRIPT_DIR/src:$SCRIPT_DIR:$PYTHONPATH"
+  export PYTHONPATH="$SCRIPT_DIR/codeBase:$SCRIPT_DIR:$PYTHONPATH"
 else
-  export PYTHONPATH="$SCRIPT_DIR/codeBase:$SCRIPT_DIR/src:$SCRIPT_DIR"
+  export PYTHONPATH="$SCRIPT_DIR/codeBase:$SCRIPT_DIR"
 fi
 
 ARGS=()
