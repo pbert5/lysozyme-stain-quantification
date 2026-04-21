@@ -337,6 +337,12 @@ def _run_spark_backend(
         partitions=spark_partitions_override if spark_partitions_override is not None else spark_cfg.get("partitions", None),
         save_images=bool(pipeline_cfg.get("save_images", True)),
         save_effective_count_debug=bool(pipeline_cfg.get("save_effective_count_debug", False)),
+        debug_image_capture=bool(pipeline_cfg.get("debug_image_capture", False)),
+        debug_stage_whitelist=(
+            list(pipeline_cfg.get("debug_stage", []))
+            if pipeline_cfg.get("debug_stage", [])
+            else None
+        ),
         log_level=str(spark_cfg.get("log_level", "WARN")),
         debug=bool(pipeline_cfg.get("debug", False) if debug_override is None else debug_override),
     )

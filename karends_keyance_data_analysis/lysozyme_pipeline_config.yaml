@@ -1,0 +1,76 @@
+dataset_config:
+  exp_name: lysozyme_spark_run
+  input_csv: lysozyme_input_data.csv
+  blob_size_um: 22.38
+  max_regions_per_image: 5
+  rfp_gt_threshold: 71
+  rfp_channel_index: 0
+  dapi_channel_index: 2
+  channel_keys:
+  - _RFP
+  - _DAPI
+  scoring_weights:
+    circularity: 0.15
+    area: 0.25
+    line_fit: 0.35
+    red_intensity: 0.85
+    com_consistency: 0.05
+  effective_count_scoring_weights:
+    circularity: 0.35
+    area: 0.15
+    line_fit: 0.45
+    red_intensity: 0.25
+  scale_lookup:
+    default_value: 0.4476
+    keys:
+    - 40x
+    values:
+    - 0.2253
+  discovery:
+    datasets:
+    - name: default_dataset
+      mode: token_match
+      recursive: true
+      root_dir: /home/ash/documents/code/lysozyme/karends_keyance_data_analysis/images
+      include_extensions:
+      - .tif
+      - .tiff
+      - .jpg
+      - .jpeg
+      - .png
+      exclude_name_tokens:
+      - overlay
+      allow_combined_single_file: true
+      microns_per_pixel: 0.4476
+      channel_tokens:
+        lysozyme:
+        - _RFP
+        - _CH2
+        - c2
+        tissue:
+        - _DAPI
+        - _CH4
+        - c1
+pipeline_config:
+  backend: spark
+  results_root: /home/ash/documents/code/lysozyme/karends_keyance_data_analysis
+  use_cluster: true
+  force_respawn_cluster: false
+  connect_to_existing_cluster: false
+  n_workers: null
+  threads_per_worker: null
+  save_images: true
+  debug: false
+  max_subjects: null
+  use_timestamps: false
+  debug_image_capture: true
+  debug_subject_count: 1
+  debug_subject_whitelist: []
+  debug_stage: []
+  discovery_datasets_to_use: []
+  spark:
+    master: null
+    app_name: lysozyme-spark-pipeline
+    partitions: null
+    log_level: WARN
+    config: {}

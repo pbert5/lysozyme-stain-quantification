@@ -1,0 +1,74 @@
+[
+  {
+    "subject_id": "G2/G2EB_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G2_G2EB_01_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G2_G2EB_01_linefit_weights.csv",
+    "label_count": 66,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2ER_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G2_G2ER_01_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G2_G2ER_01_linefit_weights.csv",
+    "label_count": 104,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FB",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G2_G2FB_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G2_G2FB_linefit_weights.csv",
+    "label_count": 10,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3EL_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G3_G3EL_01_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G3_G3EL_01_linefit_weights.csv",
+    "label_count": 184,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FL",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G3_G3FL_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G3_G3FL_linefit_weights.csv",
+    "label_count": 115,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FL_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G3_G3FL_01_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G3_G3FL_01_linefit_weights.csv",
+    "label_count": 157,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5EB",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G5_G5EB_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G5_G5EB_linefit_weights.csv",
+    "label_count": 48,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5EB_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G5_G5EB_01_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps/G5_G5EB_01_linefit_weights.csv",
+    "label_count": 181,
+    "selected_count": 5,
+    "error": ""
+  }
+]

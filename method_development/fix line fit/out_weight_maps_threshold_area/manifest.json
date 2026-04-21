@@ -1,0 +1,326 @@
+[
+  {
+    "subject_id": "G2/G2EB",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2EB_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2EB_threshold_area_linefit_weights.csv",
+    "label_count": 69,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2EB_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2EB_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2EB_01_threshold_area_linefit_weights.csv",
+    "label_count": 66,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2EL",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2EL_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2EL_threshold_area_linefit_weights.csv",
+    "label_count": 35,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2EL_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2EL_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2EL_01_threshold_area_linefit_weights.csv",
+    "label_count": 27,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2ER",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2ER_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2ER_threshold_area_linefit_weights.csv",
+    "label_count": 17,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2ER_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2ER_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2ER_01_threshold_area_linefit_weights.csv",
+    "label_count": 104,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FB",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2FB_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2FB_threshold_area_linefit_weights.csv",
+    "label_count": 10,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FB_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2FB_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2FB_01_threshold_area_linefit_weights.csv",
+    "label_count": 19,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FL",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2FL_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2FL_threshold_area_linefit_weights.csv",
+    "label_count": 82,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FL_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2FL_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2FL_01_threshold_area_linefit_weights.csv",
+    "label_count": 50,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FR",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2FR_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2FR_threshold_area_linefit_weights.csv",
+    "label_count": 39,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FR_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2FR_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G2_G2FR_01_threshold_area_linefit_weights.csv",
+    "label_count": 27,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3EB",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3EB_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3EB_threshold_area_linefit_weights.csv",
+    "label_count": 24,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3EB_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3EB_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3EB_01_threshold_area_linefit_weights.csv",
+    "label_count": 25,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3EL",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3EL_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3EL_threshold_area_linefit_weights.csv",
+    "label_count": 63,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3EL_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3EL_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3EL_01_threshold_area_linefit_weights.csv",
+    "label_count": 184,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3ER",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3ER_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3ER_threshold_area_linefit_weights.csv",
+    "label_count": 36,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3ER_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3ER_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3ER_01_threshold_area_linefit_weights.csv",
+    "label_count": 34,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FB",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3FB_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3FB_threshold_area_linefit_weights.csv",
+    "label_count": 33,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FB_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3FB_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3FB_01_threshold_area_linefit_weights.csv",
+    "label_count": 26,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FL",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3FL_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3FL_threshold_area_linefit_weights.csv",
+    "label_count": 115,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FL_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3FL_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3FL_01_threshold_area_linefit_weights.csv",
+    "label_count": 157,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FR",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3FR_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3FR_threshold_area_linefit_weights.csv",
+    "label_count": 28,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FR_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3FR_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G3_G3FR_01_threshold_area_linefit_weights.csv",
+    "label_count": 30,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5EB",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5EB_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5EB_threshold_area_linefit_weights.csv",
+    "label_count": 48,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5EB_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5EB_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5EB_01_threshold_area_linefit_weights.csv",
+    "label_count": 181,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5EL",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5EL_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5EL_threshold_area_linefit_weights.csv",
+    "label_count": 86,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5EL_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5EL_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5EL_01_threshold_area_linefit_weights.csv",
+    "label_count": 80,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5ER",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5ER_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5ER_threshold_area_linefit_weights.csv",
+    "label_count": 147,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5ER_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5ER_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5ER_01_threshold_area_linefit_weights.csv",
+    "label_count": 193,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5FB",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5FB_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5FB_threshold_area_linefit_weights.csv",
+    "label_count": 23,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5FB_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5FB_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5FB_01_threshold_area_linefit_weights.csv",
+    "label_count": 26,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5FL",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5FL_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5FL_threshold_area_linefit_weights.csv",
+    "label_count": 97,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5FL_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5FL_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5FL_01_threshold_area_linefit_weights.csv",
+    "label_count": 105,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5FR",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5FR_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5FR_threshold_area_linefit_weights.csv",
+    "label_count": 77,
+    "selected_count": 5,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5FR_01",
+    "status": "ok",
+    "figure_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5FR_01_threshold_area_linefit_weightmap.png",
+    "csv_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_weight_maps_threshold_area/G5_G5FR_01_threshold_area_linefit_weights.csv",
+    "label_count": 87,
+    "selected_count": 5,
+    "error": ""
+  }
+]

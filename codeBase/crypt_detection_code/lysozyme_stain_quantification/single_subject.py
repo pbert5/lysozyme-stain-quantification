@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
@@ -21,6 +22,7 @@ from .quantify.crypt_fluorescence_summary import (
     summarize_crypt_fluorescence_per_crypt,
 )
 from .segment_crypts import segment_crypts_dual
+from .utils.debug_image_saver import DEFAULT_DEBUG_STAGE_WHITELIST, DebugImageManager
 from .utils.overlays import render_label_overlay
 
 
@@ -64,6 +66,32 @@ def _to_2d_channel(image: np.ndarray, preferred_index: int = 0) -> np.ndarray:
         return np.asarray(arr[..., idx])
 
     raise ValueError(f"Expected 2D or 3D image for channel extraction, got shape {arr.shape}.")
+
+
+def _combine_tissue_channels(
+    primary: np.ndarray,
+    auxiliary: np.ndarray,
+    *,
+    mode: str,
+) -> np.ndarray:
+    primary_arr = np.asarray(primary, dtype=np.float32)
+    auxiliary_arr = np.asarray(auxiliary, dtype=np.float32)
+    if primary_arr.shape != auxiliary_arr.shape:
+        raise ValueError(
+            f"Tissue channels must match in shape before combining. Got {primary_arr.shape} and {auxiliary_arr.shape}."
+        )
+
+    combine_mode = str(mode or "max").strip().lower()
+    if combine_mode == "max":
+        combined = np.maximum(primary_arr, auxiliary_arr)
+    elif combine_mode == "mean":
+        combined = (primary_arr + auxiliary_arr) / 2.0
+    elif combine_mode == "sum":
+        combined = primary_arr + auxiliary_arr
+    else:
+        raise ValueError(f"Unsupported tissue_combine_mode '{mode}'.")
+
+    return combined
 
 
 def _safe_name(value: str) -> str:
@@ -331,6 +359,8 @@ def analyze_single_subject(
     *,
     lysozyme_path: str | Path,
     tissue_path: str | Path,
+    tissue_aux_path: str | Path | None = None,
+    tissue_combine_mode: str | None = None,
     subject_id: str,
     microns_per_pixel: float,
     output_dir: str | Path,
@@ -338,6 +368,8 @@ def analyze_single_subject(
     config: Optional[SingleSubjectAnalysisConfig] = None,
     save_overlay: bool = True,
     save_effective_count_debug: bool = False,
+    save_debug_intermediates: bool = False,
+    debug_stage_whitelist: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """
     Run complete lysozyme analysis for one subject.
@@ -354,6 +386,11 @@ def analyze_single_subject(
         raise FileNotFoundError(f"Lysozyme image not found: {lysozyme}")
     if not tissue.exists():
         raise FileNotFoundError(f"Tissue image not found: {tissue}")
+    tissue_aux: Path | None = None
+    if tissue_aux_path is not None and str(tissue_aux_path).strip():
+        tissue_aux = Path(tissue_aux_path).expanduser().resolve()
+        if not tissue_aux.exists():
+            raise FileNotFoundError(f"Auxiliary tissue image not found: {tissue_aux}")
 
     out_dir = Path(output_dir).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -361,9 +398,37 @@ def analyze_single_subject(
     source_dataset = str(meta.get("source_dataset", "")).strip()
     source_label = str(meta.get("source_label", "")).strip()
     source_type = str(meta.get("image_source_type", "")).strip() or "csv_input"
+    debug_records: Dict[str, Any] = {}
+
+    debug_session = None
+    if save_debug_intermediates:
+        whitelist = list(debug_stage_whitelist) if debug_stage_whitelist else list(DEFAULT_DEBUG_STAGE_WHITELIST)
+        debug_manager = DebugImageManager(
+            root_dir=out_dir / "debug_intermediates",
+            whitelist=whitelist,
+            enabled=True,
+            stream_records=True,
+        )
+        debug_session = debug_manager.create_session(
+            subject_name=subject_id,
+            source_paths=[lysozyme, tissue],
+            metadata={
+                "source_type": source_type,
+                "source_dataset": source_dataset,
+                "source_label": source_label,
+                "subject_name": subject_id,
+            },
+        )
 
     rfp_img = _to_2d_channel(imread(str(lysozyme)), preferred_index=cfg.rfp_channel_index)
     dapi_img = _to_2d_channel(imread(str(tissue)), preferred_index=cfg.dapi_channel_index)
+    if tissue_aux is not None:
+        dapi_aux = _to_2d_channel(imread(str(tissue_aux)), preferred_index=cfg.dapi_channel_index)
+        dapi_img = _combine_tissue_channels(
+            dapi_img,
+            dapi_aux,
+            mode=str(tissue_combine_mode or "max"),
+        )
     if rfp_img.shape != dapi_img.shape:
         raise ValueError(
             f"RFP and DAPI channel shapes must match for '{subject_id}'. "
@@ -374,9 +439,10 @@ def analyze_single_subject(
         channels=(rfp_img, dapi_img),
         microns_per_px=float(microns_per_pixel),
         blob_size_um=float(cfg.blob_size_um),
-        debug=False,
+        debug=bool(save_debug_intermediates),
         max_regions_best=int(cfg.max_regions_per_image),
         scoring_weights=cfg.scoring_weights,
+        debug_recorder=debug_session,
     )
 
     effective_estimation = estimate_effective_selected_crypt_count(
@@ -391,6 +457,7 @@ def analyze_single_subject(
         scoring_weights=(cfg.effective_count_scoring_weights or cfg.scoring_weights),
         save_debug=bool(save_effective_count_debug),
         expansion_scale=0.5,
+        debug_recorder=debug_session,
     )
 
     normalized_rfp = np.asarray(
@@ -471,6 +538,12 @@ def analyze_single_subject(
         row["source_label"] = source_label
         per_crypt_records.append(row)
 
+    if debug_session is not None:
+        debug_records = debug_session.to_summary()
+        summary_path = debug_session.subject_dir / "summary.json"
+        with summary_path.open("w", encoding="utf-8") as handle:
+            json.dump(debug_records, handle, indent=2, sort_keys=True)
+
     return {
         "subject_name": subject_id,
         "source_type": source_type,
@@ -487,4 +560,5 @@ def analyze_single_subject(
         "initial_detected_count": initial_detected_count,
         "selected_crypt_count": selected_crypt_count,
         "detected_crypt_count": detected_crypt_count,
+        "debug_records": debug_records,
     }

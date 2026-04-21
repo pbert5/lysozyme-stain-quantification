@@ -105,12 +105,8 @@ class SubjectConfig:
     scoring_config_path: Path
 
 
-def _build_subject_configs() -> dict[str, SubjectConfig]:
-    debug_root = (
-        LYSOZYME_ROOT
-        / "karens_data/results/higher_quality_images_karen/debug_intermediates/ileum_CH2_7e0c8b"
-    )
-    curated = (
+def _build_curated_assets(debug_root: Path) -> tuple[CuratedAsset, ...]:
+    return (
         CuratedAsset(
             panel_id="C01",
             filename="C01_ileum_ch2_rfp_input.png",
@@ -179,6 +175,16 @@ def _build_subject_configs() -> dict[str, SubjectConfig]:
         ),
     )
 
+
+def _make_subject_config(
+    *,
+    key: str,
+    subject_label: str,
+    debug_root: Path,
+    overlay_path: Path,
+    scoring_config_path: Path,
+) -> SubjectConfig:
+    curated = _build_curated_assets(debug_root)
     paths_for_generation = {
         "rfp_input": curated[0].source_path,
         "dapi_input": curated[1].source_path,
@@ -193,17 +199,54 @@ def _build_subject_configs() -> dict[str, SubjectConfig]:
         "quality_hue_reference": curated[10].source_path,
         "crypt_clean": debug_root / "identify_crypt_seeds_new/014_crypt_clean.png",
         "opened_split_times_thinned": debug_root / "identify_crypt_seeds_new/019_opened_split_times_thinned.png",
-        "paired_overlay_original": ORIGINAL_OVERLAY_PATH,
+        "paired_overlay_original": overlay_path,
     }
 
-    cfg = SubjectConfig(
-        key="ileum_ch2_debug_story",
-        subject_label="ileum_CH2_7e0c8b",
+    return SubjectConfig(
+        key=key,
+        subject_label=subject_label,
         curated_assets=curated,
         paths_for_generation=paths_for_generation,
-        scoring_config_path=LYSOZYME_ROOT / "karens_data/lysozyme_pipeline_config.yaml",
+        scoring_config_path=scoring_config_path,
     )
-    return {cfg.key: cfg}
+
+
+def _build_subject_configs() -> dict[str, SubjectConfig]:
+    # Canonical functional Keyence channel mix: CH2 lysozyme + CH4 tissue.
+    keyance_results_root = (
+        REPO_ROOT / "scratch_space" / "karends_keyance_data_analysis" / "results" / "keyence_new_spark"
+    )
+    keyance_config_path = (
+        REPO_ROOT / "scratch_space" / "karends_keyance_data_analysis" / "lysozyme_pipeline_config.yaml"
+    )
+
+    cfgs = (
+        _make_subject_config(
+            key="ileum_ch2_debug_story",
+            subject_label="ileum_CH2_7e0c8b",
+            debug_root=(
+                LYSOZYME_ROOT
+                / "karens_data/results/higher_quality_images_karen/debug_intermediates/ileum_CH2_7e0c8b"
+            ),
+            overlay_path=ORIGINAL_OVERLAY_PATH,
+            scoring_config_path=LYSOZYME_ROOT / "karens_data/lysozyme_pipeline_config.yaml",
+        ),
+        _make_subject_config(
+            key="keyance_g2_g2eb",
+            subject_label="G2_G2EB",
+            debug_root=keyance_results_root / "debug_intermediates/G2/G2EB",
+            overlay_path=keyance_results_root / "renderings/G2_G2EB_csv_input_overlay.png",
+            scoring_config_path=keyance_config_path,
+        ),
+        _make_subject_config(
+            key="keyance_g2_g2el_01",
+            subject_label="G2_G2EL_01",
+            debug_root=keyance_results_root / "debug_intermediates/G2/G2EL_01",
+            overlay_path=keyance_results_root / "renderings/G2_G2EL_01_csv_input_overlay.png",
+            scoring_config_path=keyance_config_path,
+        ),
+    )
+    return {cfg.key: cfg for cfg in cfgs}
 
 
 SUBJECT_CONFIGS = _build_subject_configs()
@@ -233,6 +276,15 @@ def parse_args() -> argparse.Namespace:
         "--export-raw-crops",
         action="store_true",
         help="Export raw cropped panel images into method_development/explaining/assets/N2, N3, N4.",
+    )
+    parser.add_argument(
+        "--isolated-output-dir",
+        default=None,
+        help=(
+            "Optional directory for a non-destructive render-only run. "
+            "When set, outputs are written into that labeled subdirectory instead of rewriting "
+            "method_development/explaining/assets or generated."
+        ),
     )
     return parser.parse_args()
 
@@ -1075,14 +1127,19 @@ def _ensure_dirs(dry_run: bool) -> None:
         path.mkdir(parents=True, exist_ok=True)
 
 
-def _copy_curated_assets(cfg: SubjectConfig, dry_run: bool) -> list[dict[str, str]]:
+def _copy_curated_assets_to_dir(
+    cfg: SubjectConfig,
+    dest_dir: Path,
+    dry_run: bool,
+) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     _verify_exists(asset.source_path for asset in cfg.curated_assets)
     for asset in cfg.curated_assets:
-        dest = ASSETS_DIR / asset.filename
+        dest = dest_dir / asset.filename
         if dry_run:
             _log(f"DRY RUN: would copy {asset.source_path} -> {dest}")
         else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(asset.source_path, dest)
         rows.append(
             {
@@ -1094,6 +1151,10 @@ def _copy_curated_assets(cfg: SubjectConfig, dry_run: bool) -> list[dict[str, st
             }
         )
     return rows
+
+
+def _copy_curated_assets(cfg: SubjectConfig, dry_run: bool) -> list[dict[str, str]]:
+    return _copy_curated_assets_to_dir(cfg=cfg, dest_dir=ASSETS_DIR, dry_run=dry_run)
 
 
 def _load_scoring_weights(config_path: Path) -> tuple[dict[str, float], dict[str, float]]:
@@ -1320,6 +1381,7 @@ def _generate_n2_channel_split_standardization(
     n3_box_dials: dict[str, Any],
     *,
     export_raw_crops: bool = False,
+    raw_export_dir: Path | None = None,
 ) -> None:
     if dry_run:
         _log(f"DRY RUN: would generate {output_path}")
@@ -1348,7 +1410,7 @@ def _generate_n2_channel_split_standardization(
     )
 
     if export_raw_crops:
-        export_dir = ASSETS_DIR / "N2"
+        export_dir = raw_export_dir or (ASSETS_DIR / "N2")
         _save_raw_png(original_overlay, export_dir / "original_paired_overlay.png")
         _save_raw_png(dapi_vis, export_dir / "dapi_standardized.png")
         _save_raw_png(rfp_vis, export_dir / "rfp_standardized.png")
@@ -1440,6 +1502,7 @@ def _generate_n3_morphology_seed_flow(
     n3_box_dials: dict[str, Any],
     *,
     export_raw_crops: bool = False,
+    raw_export_dir: Path | None = None,
 ) -> None:
     if dry_run:
         _log(f"DRY RUN: would generate {output_path}")
@@ -1542,7 +1605,7 @@ def _generate_n3_morphology_seed_flow(
     }
 
     if export_raw_crops:
-        export_dir = ASSETS_DIR / "N3"
+        export_dir = raw_export_dir or (ASSETS_DIR / "N3")
         _save_raw_png(original_display, export_dir / "original_no_box.png")
         for node_id, (img, _title) in node_images.items():
             _save_raw_png(img, export_dir / f"{node_id}.png")
@@ -1659,6 +1722,7 @@ def _generate_n4_quality_scoring_breakdown(
     n3_box_dials: dict[str, Any],
     *,
     export_raw_crops: bool = False,
+    raw_export_dir: Path | None = None,
 ) -> None:
     if dry_run:
         _log(f"DRY RUN: would generate {output_path}")
@@ -2159,7 +2223,7 @@ def _generate_n4_quality_scoring_breakdown(
 
     fig.suptitle(figure_title, fontsize=n4_suptitle_fontsize, weight="bold", y=0.98)
     if export_raw_crops:
-        export_dir = ASSETS_DIR / "N4"
+        export_dir = raw_export_dir or (ASSETS_DIR / "N4")
         _save_raw_png(cumulative_overlay_linear, export_dir / "cumulative_linear.png")
         _save_raw_png(cumulative_overlay_exponential, export_dir / "cumulative_exponential.png")
         _save_raw_png(cumulative_overlay_linear_boxed, export_dir / "cumulative_linear_boxed.png")
@@ -2805,10 +2869,173 @@ def build_bundle(cfg: SubjectConfig, dry_run: bool, poster_dials_yaml: Path, *, 
         _log(f"Poster asset bundle complete at: {EXPLAINING_DIR}")
 
 
+def _write_isolated_manifest(
+    output_root: Path,
+    curated_rows: list[dict[str, str]],
+    generated_files: dict[str, Path],
+    dry_run: bool,
+) -> None:
+    target = output_root / "render_manifest.csv"
+    fieldnames = ["panel_id", "filename", "source_path", "use_case", "status"]
+    generated_rows = [
+        {
+            "panel_id": panel_id,
+            "filename": path.name,
+            "source_path": str(path),
+            "use_case": f"Generated figure {panel_id}.",
+            "status": "generated",
+        }
+        for panel_id, path in generated_files.items()
+    ]
+    all_rows = [*curated_rows, *generated_rows]
+    if dry_run:
+        _log(f"DRY RUN: would write {target} with {len(all_rows)} rows")
+        return
+
+    with target.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(all_rows)
+    _log(f"Wrote {target}")
+
+
+def build_bundle_isolated(
+    cfg: SubjectConfig,
+    dry_run: bool,
+    poster_dials_yaml: Path,
+    *,
+    output_root: Path,
+    export_raw_crops: bool,
+) -> None:
+    required = [cfg.scoring_config_path, *cfg.paths_for_generation.values()]
+    _verify_exists(required)
+
+    output_root = output_root.expanduser()
+    source_assets_dir = output_root / "source_assets"
+    raw_crops_root = output_root / "raw_crops"
+
+    if output_root.exists():
+        has_existing_outputs = any(output_root.iterdir())
+        if has_existing_outputs:
+            raise FileExistsError(
+                f"Isolated output directory already exists and is not empty: {output_root}"
+            )
+    elif dry_run:
+        _log(f"DRY RUN: would create directory {output_root}")
+    else:
+        output_root.mkdir(parents=True, exist_ok=False)
+
+    poster_dials = _load_poster_dials(poster_dials_yaml)
+    poster_weights = _dial(poster_dials, "weights.poster_universal", {})
+    if not isinstance(poster_weights, dict):
+        poster_weights = {}
+    n3_box_dials = _dial(poster_dials, "n3_box_relative_dims", {})
+    if not isinstance(n3_box_dials, dict):
+        n3_box_dials = {}
+
+    curated_rows = _copy_curated_assets_to_dir(cfg=cfg, dest_dir=source_assets_dir, dry_run=dry_run)
+    loaded_scoring_weights, loaded_effective_weights = _load_scoring_weights(cfg.scoring_config_path)
+    scoring_weights, effective_weights = _apply_poster_weight_overrides(
+        loaded_scoring_weights,
+        loaded_effective_weights,
+        poster_weights=poster_weights,
+    )
+
+    generated_files = {
+        "N1": output_root / "N1_pipeline_flowchart.png",
+        "N2": output_root / "N2_channel_split_standardization.png",
+        "N3": output_root / "N3_morphology_seed_flowchart.png",
+        "N4": output_root / "N4_quality_scoring_breakdown.png",
+        "A1": output_root / "A1_all_detections_labeled_map.png",
+        "A2": output_root / "A2_selected_crypts.png",
+        "A3": output_root / "A3_quality_scale_axis.png",
+    }
+
+    _generate_n1_pipeline_flowchart(
+        output_path=generated_files["N1"],
+        dry_run=dry_run,
+        poster_dials=poster_dials,
+    )
+    _generate_n2_channel_split_standardization(
+        cfg=cfg,
+        output_path=generated_files["N2"],
+        scoring_weights=scoring_weights,
+        dry_run=dry_run,
+        poster_dials=poster_dials,
+        n3_box_dials=n3_box_dials,
+        export_raw_crops=export_raw_crops,
+        raw_export_dir=raw_crops_root / "N2",
+    )
+    _generate_n3_morphology_seed_flow(
+        cfg=cfg,
+        output_path=generated_files["N3"],
+        scoring_weights=scoring_weights,
+        dry_run=dry_run,
+        poster_dials=poster_dials,
+        n3_box_dials=n3_box_dials,
+        export_raw_crops=export_raw_crops,
+        raw_export_dir=raw_crops_root / "N3",
+    )
+    _generate_n4_quality_scoring_breakdown(
+        cfg=cfg,
+        output_path=generated_files["N4"],
+        scoring_weights=scoring_weights,
+        effective_weights=effective_weights,
+        dry_run=dry_run,
+        poster_dials=poster_dials,
+        n3_box_dials=n3_box_dials,
+        export_raw_crops=export_raw_crops,
+        raw_export_dir=raw_crops_root / "N4",
+    )
+    _generate_all_detections_labeled_map(
+        cfg=cfg,
+        output_path=generated_files["A1"],
+        scoring_weights=scoring_weights,
+        dry_run=dry_run,
+        poster_dials=poster_dials,
+        n3_box_dials=n3_box_dials,
+    )
+    _generate_selected_crypts_map(
+        cfg=cfg,
+        output_path=generated_files["A2"],
+        scoring_weights=scoring_weights,
+        dry_run=dry_run,
+        poster_dials=poster_dials,
+        n3_box_dials=n3_box_dials,
+    )
+    _generate_quality_scale_axis(
+        output_path=generated_files["A3"],
+        dry_run=dry_run,
+        poster_dials=poster_dials,
+    )
+    _write_isolated_manifest(
+        output_root=output_root,
+        curated_rows=curated_rows,
+        generated_files=generated_files,
+        dry_run=dry_run,
+    )
+
+    if dry_run:
+        _log(f"Dry run complete. No files were written to isolated output: {output_root}")
+    else:
+        _log(f"Isolated poster asset bundle complete at: {output_root}")
+
+
 def main() -> None:
     args = parse_args()
     _configure_fonts()
     cfg = SUBJECT_CONFIGS[args.subject_key]
+    isolated_output_dir = args.isolated_output_dir
+    if isolated_output_dir:
+        build_bundle_isolated(
+            cfg=cfg,
+            dry_run=bool(args.dry_run),
+            poster_dials_yaml=Path(args.poster_dials_yaml),
+            output_root=Path(isolated_output_dir),
+            export_raw_crops=bool(args.export_raw_crops),
+        )
+        return
+
     build_bundle(
         cfg=cfg,
         dry_run=bool(args.dry_run),

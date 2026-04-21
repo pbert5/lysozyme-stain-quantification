@@ -116,6 +116,8 @@ def _run_single_row(record: Dict[str, Any], runtime_cfg: Dict[str, Any]) -> Dict
         subject_id = _safe_string(record.get("subject_id"))
         lysozyme_path = _safe_string(record.get("lysozyme_path"))
         tissue_path = _safe_string(record.get("tissue_path"))
+        tissue_aux_path = _safe_string(record.get("tissue_aux_path"))
+        tissue_combine_mode = _safe_string(record.get("tissue_combine_mode"))
 
         mpp = _safe_float(record.get("microns_per_pixel"))
         if mpp is None:
@@ -143,6 +145,8 @@ def _run_single_row(record: Dict[str, Any], runtime_cfg: Dict[str, Any]) -> Dict
         payload = analyze_single_subject(
             lysozyme_path=lysozyme_path,
             tissue_path=tissue_path,
+            tissue_aux_path=tissue_aux_path or None,
+            tissue_combine_mode=tissue_combine_mode or None,
             subject_id=subject_id,
             microns_per_pixel=float(mpp),
             output_dir=runtime_cfg["results_dir"],
@@ -154,6 +158,8 @@ def _run_single_row(record: Dict[str, Any], runtime_cfg: Dict[str, Any]) -> Dict
             config=cfg,
             save_overlay=bool(runtime_cfg.get("save_images", True)),
             save_effective_count_debug=bool(runtime_cfg.get("save_effective_count_debug", False)),
+            save_debug_intermediates=bool(runtime_cfg.get("debug_image_capture", False)),
+            debug_stage_whitelist=runtime_cfg.get("debug_stage_whitelist", None),
         )
         return {"ok": True, "subject_id": subject_id, "payload": payload}
     except Exception as exc:  # pragma: no cover - executed in spark worker
@@ -162,6 +168,7 @@ def _run_single_row(record: Dict[str, Any], runtime_cfg: Dict[str, Any]) -> Dict
             "subject_id": _safe_string(record.get("subject_id")),
             "lysozyme_path": _safe_string(record.get("lysozyme_path")),
             "tissue_path": _safe_string(record.get("tissue_path")),
+            "tissue_aux_path": _safe_string(record.get("tissue_aux_path")),
             "error": str(exc),
             "traceback": traceback.format_exc(),
         }
@@ -188,6 +195,8 @@ def run_spark_pipeline(
     partitions: Optional[int] = None,
     save_images: bool = True,
     save_effective_count_debug: bool = False,
+    debug_image_capture: bool = False,
+    debug_stage_whitelist: Optional[List[str]] = None,
     log_level: str = "WARN",
     debug: bool = False,
 ) -> Dict[str, Any]:
@@ -215,12 +224,18 @@ def run_spark_pipeline(
         if not subject_id:
             skipped_empty_subject += 1
             continue
+        tissue_aux_path = _safe_string(row.get("tissue_aux_path"))
         if not lysozyme_path or not tissue_path:
             skipped_invalid_paths += 1
             continue
         lyso_path_obj = Path(lysozyme_path).expanduser()
         tissue_path_obj = Path(tissue_path).expanduser()
-        if not lyso_path_obj.exists() or not tissue_path_obj.exists():
+        tissue_aux_path_obj = Path(tissue_aux_path).expanduser() if tissue_aux_path else None
+        if (
+            not lyso_path_obj.exists()
+            or not tissue_path_obj.exists()
+            or (tissue_aux_path_obj is not None and not tissue_aux_path_obj.exists())
+        ):
             skipped_missing_paths += 1
             continue
 
@@ -229,6 +244,8 @@ def run_spark_pipeline(
                 "subject_id": subject_id,
                 "lysozyme_path": str(lyso_path_obj.resolve()),
                 "tissue_path": str(tissue_path_obj.resolve()),
+                "tissue_aux_path": str(tissue_aux_path_obj.resolve()) if tissue_aux_path_obj is not None else "",
+                "tissue_combine_mode": _safe_string(row.get("tissue_combine_mode")),
                 "microns_per_pixel": row.get("microns_per_pixel"),
                 "source_dataset": _safe_string(row.get("source_dataset")),
                 "source_label": _safe_string(row.get("source_label")),
@@ -278,6 +295,8 @@ def run_spark_pipeline(
             "rfp_gt_threshold": int(rfp_gt_threshold),
             "save_images": bool(save_images),
             "save_effective_count_debug": bool(save_effective_count_debug),
+            "debug_image_capture": bool(debug_image_capture),
+            "debug_stage_whitelist": list(debug_stage_whitelist) if debug_stage_whitelist is not None else None,
         }
 
         if partitions is None:

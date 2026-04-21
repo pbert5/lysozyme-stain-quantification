@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -87,6 +88,15 @@ def _safe_slug(value: Any, fallback: str = "value") -> str:
     return slug or fallback
 
 
+def _safe_subject_parts(value: Any) -> list[str]:
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        return ["subject"]
+    raw_parts = [part for part in text.replace("\\", "/").split("/") if part.strip()]
+    safe_parts = [_safe_slug(part, fallback="subject") for part in raw_parts]
+    return safe_parts or ["subject"]
+
+
 def _normalize_color(arr: np.ndarray) -> np.ndarray:
     arr = np.nan_to_num(arr.astype(np.float32, copy=False))
     lo = float(np.nanmin(arr))
@@ -160,16 +170,20 @@ class DebugImageSession:
     source_paths: Optional[Sequence[str]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
+    stream_records: bool = False
 
     def __post_init__(self) -> None:
         self.root_dir = Path(self.root_dir)
         self.root_dir.mkdir(parents=True, exist_ok=True)
         self.subject_slug = _safe_slug(self.subject_name or "subject", fallback="subject")
         self.session_id = uuid.uuid4().hex[:6]
-        self.subject_dir = self.root_dir / f"{self.subject_slug}_{self.session_id}"
+        subject_parts = _safe_subject_parts(self.subject_name)
+        self.subject_dir = self.root_dir.joinpath(*subject_parts)
         self.subject_dir.mkdir(parents=True, exist_ok=True)
         self._entries: List[Dict[str, Any]] = []
         self._counter = 0
+        self._manifest_path = self.subject_dir / "records.jsonl"
+        self._entry_count = 0
         if self.whitelist:
             cleaned_tokens = [token.strip().lower() for token in self.whitelist if token and token.strip()]
             self._whitelist_tokens = tuple(sorted(dict.fromkeys(cleaned_tokens)))
@@ -238,22 +252,33 @@ class DebugImageSession:
         if description:
             record["description"] = description
 
-        self._entries.append(record)
+        if self.stream_records:
+            with self._manifest_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, sort_keys=True))
+                handle.write("\n")
+        else:
+            self._entries.append(record)
+        self._entry_count += 1
         self._counter += 1
         return out_path
 
     def to_summary(self) -> Dict[str, Any]:
         """Return a JSON-friendly description of saved intermediates."""
-        return {
+        summary = {
             "subject": self.subject_name,
             "subject_slug": self.subject_slug,
             "session_id": self.session_id,
             "root": str(self.subject_dir.relative_to(self.root_dir)),
             "source_paths": list(self.source_paths or []),
             "metadata": dict(self.metadata),
-            "entries": list(self._entries),
             "whitelist": list(self._whitelist_tokens) if self._whitelist_tokens else None,
+            "entry_count": int(self._entry_count),
         }
+        if self.stream_records:
+            summary["entries_path"] = str(self._manifest_path.relative_to(self.root_dir))
+        else:
+            summary["entries"] = list(self._entries)
+        return summary
 
 
 @dataclass
@@ -263,6 +288,7 @@ class DebugImageManager:
     root_dir: Path
     whitelist: Optional[Sequence[str]] = None
     enabled: bool = True
+    stream_records: bool = False
 
     def __post_init__(self) -> None:
         self.root_dir = Path(self.root_dir)
@@ -290,4 +316,5 @@ class DebugImageManager:
             source_paths=paths,
             metadata=metadata or {},
             enabled=self.enabled,
+            stream_records=self.stream_records,
         )

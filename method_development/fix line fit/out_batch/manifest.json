@@ -1,0 +1,254 @@
+[
+  {
+    "subject_id": "G2/G2EB",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G2_G2EB_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2EB_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G2_G2EB_01_linefit_debug.png",
+    "curve_point_count": 4737,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2EL",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G2_G2EL_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2EL_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G2_G2EL_01_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2ER",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G2_G2ER_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2ER_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G2_G2ER_01_linefit_debug.png",
+    "curve_point_count": 4289,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FB",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G2_G2FB_linefit_debug.png",
+    "curve_point_count": 4531,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FB_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G2_G2FB_01_linefit_debug.png",
+    "curve_point_count": 3349,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FL",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G2_G2FL_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FL_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G2_G2FL_01_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FR",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G2_G2FR_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G2/G2FR_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G2_G2FR_01_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3EB",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G3_G3EB_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3EB_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G3_G3EB_01_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3EL",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G3_G3EL_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3EL_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G3_G3EL_01_linefit_debug.png",
+    "curve_point_count": 4413,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3ER",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G3_G3ER_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3ER_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G3_G3ER_01_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FB",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G3_G3FB_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FB_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G3_G3FB_01_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FL",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G3_G3FL_linefit_debug.png",
+    "curve_point_count": 4243,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FL_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G3_G3FL_01_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FR",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G3_G3FR_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G3/G3FR_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G3_G3FR_01_linefit_debug.png",
+    "curve_point_count": 2606,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5EB",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G5_G5EB_linefit_debug.png",
+    "curve_point_count": 3347,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5EB_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G5_G5EB_01_linefit_debug.png",
+    "curve_point_count": 4611,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5EL",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G5_G5EL_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5EL_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G5_G5EL_01_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5ER",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G5_G5ER_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5ER_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G5_G5ER_01_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5FB",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G5_G5FB_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5FB_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G5_G5FB_01_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5FL",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G5_G5FL_linefit_debug.png",
+    "curve_point_count": 4605,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5FL_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G5_G5FL_01_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5FR",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G5_G5FR_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  },
+  {
+    "subject_id": "G5/G5FR_01",
+    "status": "ok",
+    "output_path": "/home/ash/documents/code/lysozyme/method_development/fix line fit/out_batch/G5_G5FR_01_linefit_debug.png",
+    "curve_point_count": 4800,
+    "error": ""
+  }
+]

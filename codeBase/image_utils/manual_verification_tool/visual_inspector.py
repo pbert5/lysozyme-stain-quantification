@@ -92,6 +92,7 @@ class VisualInspector:
         self.ratings_stem = 'manual_verification_ratings'
         self.ratings_file = self.output_dir / f"{self.ratings_stem}.json"
         self.ratings_csv_file = self.output_dir / f"{self.ratings_stem}.csv"
+        self.shareable_good_csv_file = self.output_dir / "manual_verification_shareable_good_only.csv"
         
         if load_existing:
             self._load_existing_ratings()
@@ -218,8 +219,12 @@ class VisualInspector:
         if 'subject_name' in self.summary_df.columns:
             records = self.summary_df.to_dict(orient='records')
             for record in records:
-                key = self._sanitize_subject_name(str(record['subject_name']))
-                self.metadata_lookup[key] = record
+                base_key = self._sanitize_subject_name(str(record['subject_name']))
+                self.metadata_lookup[base_key] = record
+                image_source_type = record.get('image_source_type')
+                if image_source_type:
+                    typed_key = f"{base_key}_{str(image_source_type).strip()}"
+                    self.metadata_lookup[typed_key] = record
             self.metadata_mode = 'karen'
             return
         
@@ -311,6 +316,29 @@ class VisualInspector:
             ratings_df.to_csv(self.ratings_csv_file, index=False)
             if not quiet_mode:
                 print(f"Ratings also saved to {self.ratings_csv_file}")
+
+            shareable_columns = [
+                'image_file',
+                'display_name',
+                'metadata_key',
+                'rating_text',
+                'subject_name',
+                'image_source_type',
+                'crypt_count',
+                'crypt_area_um2_mean',
+                'crypt_area_um2_std',
+                'rfp_intensity_mean',
+                'rfp_max_intensity_mean',
+                'microns_per_px',
+            ]
+            shareable_df = ratings_df[ratings_df['rating_bool'] == True].copy()
+            available_shareable_columns = [
+                column for column in shareable_columns if column in shareable_df.columns
+            ]
+            shareable_df = shareable_df[available_shareable_columns]
+            shareable_df.to_csv(self.shareable_good_csv_file, index=False)
+            if not quiet_mode:
+                print(f"Good-only shareable export saved to {self.shareable_good_csv_file}")
         
         except Exception as exc:
             print(f"Error saving ratings: {exc}")
@@ -357,8 +385,6 @@ class VisualInspector:
     def _get_metadata_key_from_filename(self, filename):
         """Derive the lookup key for metadata from the image filename."""
         name = self._extract_image_name(filename)
-        if self.metadata_mode == 'karen' and '-' in name:
-            name = name.rsplit('-', 1)[0]
         return name
     
     def _format_float(self, value, decimals=1):

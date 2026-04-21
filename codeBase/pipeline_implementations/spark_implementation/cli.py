@@ -92,6 +92,12 @@ def main() -> None:
         partitions=args.partitions if args.partitions is not None else spark_cfg.get("partitions", None),
         save_images=bool(pipeline_cfg.get("save_images", True)),
         save_effective_count_debug=bool(pipeline_cfg.get("save_effective_count_debug", False)),
+        debug_image_capture=bool(pipeline_cfg.get("debug_image_capture", False)),
+        debug_stage_whitelist=(
+            list(pipeline_cfg.get("debug_stage", []))
+            if pipeline_cfg.get("debug_stage", [])
+            else None
+        ),
         log_level=str(spark_cfg.get("log_level", "WARN")),
         debug=bool(args.debug or pipeline_cfg.get("debug", False)),
     )

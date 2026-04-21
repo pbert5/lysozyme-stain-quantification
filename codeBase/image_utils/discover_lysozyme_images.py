@@ -15,6 +15,8 @@ CSV_FIELDNAMES = (
     "subject_id",
     "lysozyme_path",
     "tissue_path",
+    "tissue_aux_path",
+    "tissue_combine_mode",
     "microns_per_pixel",
     "source_dataset",
     "source_label",
@@ -74,11 +76,18 @@ def _discover_structured_rows(
     channel_file_names: Dict[str, str],
     microns_per_pixel: Optional[float],
     recursive: bool,
+    tissue_combine_mode: str = "max",
 ) -> List[Dict[str, str]]:
     rows: List[Dict[str, str]] = []
     lyso_name = channel_file_names.get("lysozyme")
-    tissue_name = channel_file_names.get("tissue")
-    if not lyso_name or not tissue_name:
+    tissue_name_raw = channel_file_names.get("tissue")
+    if not lyso_name or not tissue_name_raw:
+        return rows
+    if isinstance(tissue_name_raw, (list, tuple)):
+        tissue_names = [str(name).strip() for name in tissue_name_raw if str(name).strip()]
+    else:
+        tissue_names = [str(tissue_name_raw).strip()]
+    if not tissue_names:
         return rows
 
     folders = root.rglob("*") if recursive else root.glob("*")
@@ -86,8 +95,13 @@ def _discover_structured_rows(
         if not folder.is_dir():
             continue
         lyso_path = folder / lyso_name
-        tissue_path = folder / tissue_name
-        if not lyso_path.exists() or not tissue_path.exists():
+        tissue_path = folder / tissue_names[0]
+        tissue_aux_path = folder / tissue_names[1] if len(tissue_names) > 1 else None
+        if (
+            not lyso_path.exists()
+            or not tissue_path.exists()
+            or (tissue_aux_path is not None and not tissue_aux_path.exists())
+        ):
             continue
         subject_id = _subject_from_path(lyso_path, root=root, strategy=subject_strategy)
         rows.append(
@@ -95,6 +109,8 @@ def _discover_structured_rows(
                 "subject_id": subject_id,
                 "lysozyme_path": str(lyso_path.resolve()),
                 "tissue_path": str(tissue_path.resolve()),
+                "tissue_aux_path": "" if tissue_aux_path is None else str(tissue_aux_path.resolve()),
+                "tissue_combine_mode": tissue_combine_mode if tissue_aux_path is not None else "",
                 "microns_per_pixel": "" if microns_per_pixel is None else f"{float(microns_per_pixel):.6f}",
                 "source_dataset": dataset_name,
                 "source_label": "structured_dir",
@@ -183,6 +199,8 @@ def _discover_token_rows(
                 "subject_id": subject_id,
                 "lysozyme_path": str(lyso.resolve()),
                 "tissue_path": str(tissue.resolve()),
+                "tissue_aux_path": "",
+                "tissue_combine_mode": "",
                 "microns_per_pixel": "" if microns_per_pixel is None else f"{float(microns_per_pixel):.6f}",
                 "source_dataset": dataset_name,
                 "source_label": "token_match",
@@ -239,6 +257,7 @@ def discover_rows(config: Dict) -> List[Dict[str, str]]:
                     channel_file_names=channel_file_names,
                     microns_per_pixel=mpp,
                     recursive=recursive,
+                    tissue_combine_mode=str(dataset.get("tissue_combine_mode", "max")),
                 )
             )
             continue
@@ -263,9 +282,14 @@ def discover_rows(config: Dict) -> List[Dict[str, str]]:
             )
         )
 
-    dedup: Dict[Tuple[str, str], Dict[str, str]] = {}
+    dedup: Dict[Tuple[str, str, str, str], Dict[str, str]] = {}
     for row in rows:
-        key = (row["lysozyme_path"], row["tissue_path"])
+        key = (
+            row["lysozyme_path"],
+            row["tissue_path"],
+            row.get("tissue_aux_path", ""),
+            row.get("tissue_combine_mode", ""),
+        )
         dedup[key] = row
     return sorted(dedup.values(), key=lambda r: r["subject_id"].lower())
 
@@ -307,7 +331,9 @@ def validate_existing_csv(csv_path: Path) -> Dict[str, int]:
                 seen.add(subject_id)
             lyso = Path(str(row.get("lysozyme_path", "")).strip())
             tissue = Path(str(row.get("tissue_path", "")).strip())
-            if (not lyso.exists()) or (not tissue.exists()):
+            tissue_aux_raw = str(row.get("tissue_aux_path", "")).strip()
+            tissue_aux = Path(tissue_aux_raw) if tissue_aux_raw else None
+            if (not lyso.exists()) or (not tissue.exists()) or (tissue_aux is not None and not tissue_aux.exists()):
                 missing_rows += 1
     return {
         "rows": rows,
