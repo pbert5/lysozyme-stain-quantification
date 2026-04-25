@@ -22,6 +22,53 @@ Each stage can be run independently.
 
 ## Installation
 
+### Nix / devenv (recommended for reproducibility)
+
+If you already have Nix with flakes enabled, the repository now includes a
+flake-backed `devenv` shell that pins the Python and system dependencies needed
+by the pipeline scripts.
+
+From the repository root, either:
+
+```bash
+nix develop --no-pure-eval
+```
+
+If your checkout lives under a symlinked path, or the flake files are still
+untracked in Git while you are testing local changes, this variant is more
+robust:
+
+```bash
+nix develop --no-pure-eval path:$(pwd -P)
+```
+
+or, if you already have `devenv` installed globally:
+
+```bash
+devenv shell
+```
+
+The shell provides:
+
+- Python 3.12
+- the scientific/image-processing Python stack used by `codeBase/`
+- Dask + Dask Image
+- PySpark + a headless OpenJDK runtime
+- Graphviz CLI + Python bindings
+- `PYTHON_BIN`, `PYTHONPATH`, and Spark Python environment variables prewired for `./run.sh`
+
+Quick smoke checks inside the shell:
+
+```bash
+python codeBase/run.py --help
+./run.sh --help
+```
+
+Why the flag? `devenv` shells embedded in flakes need `--no-pure-eval` so
+`devenv` can determine the working directory during evaluation.
+
+### Python virtualenv (alternative)
+
 ```bash
 git clone https://github.com/phillip-silbert/lysozyme.git
 cd lysozyme

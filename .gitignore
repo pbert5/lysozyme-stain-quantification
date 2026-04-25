@@ -21,6 +21,11 @@ lysozyme.code-workspace
 results/
 *.png
 
+.direnv/
+.devenv/
+result
+result-*
+
 #TODO: its prob super slow bc microns_per_px is not chuncked, need to improve handeling  of run to ensuer everyting passed is chunked
 
 =3.1.0
